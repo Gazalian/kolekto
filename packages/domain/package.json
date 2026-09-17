@@ -1,0 +1,13 @@
+{
+  "name": "@kolekto/domain",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pure domain logic. Integer kobo, no I/O, golden-vector tested.",
+  "exports": { ".": "./src/index.ts" },
+  "engines": { "node": ">=22.6.0" },
+  "scripts": {
+    "test": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  }
+}

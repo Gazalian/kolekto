@@ -1,0 +1,101 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Supabase local configuration
+#
+# ADR 0007. This file describes the LOCAL stack only. No cloud project is
+# referenced here, and `supabase/.temp/` is git-ignored, so a fresh clone can
+# never be pointed at a remote project by accident — which is exactly what
+# happened in the previous backend between 2026-08-06 and 2026-08-31.
+#
+# `major_version` is pinned deliberately. The previous estate ran Postgres 15.8
+# in production and 17.4.1 in test, in different regions, so testing against
+# "test" proved very little. Local, staging and production run the same major
+# version or the difference is a known, written-down risk.
+# ─────────────────────────────────────────────────────────────────────────────
+
+project_id = "kolekto"
+
+[api]
+enabled = true
+port = 54321
+# PostgREST serves `public` only. `app` and `private` hold the helper functions
+# and operational views and are deliberately unreachable over the REST API,
+# whatever their grants say.
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+major_version = 17
+
+[db.pooler]
+enabled = false
+
+[studio]
+enabled = true
+port = 54323
+
+[inbucket]
+enabled = true
+port = 54324
+
+[storage]
+enabled = true
+# PRD 3.2: a community logo is at most 2 MB; a collection cover at most 5 MB.
+file_size_limit = "5MiB"
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["http://127.0.0.1:3000"]
+
+# SEC-04: officer sessions last 7 days with a 12-hour idle timeout. Permission
+# checks run per request regardless, so a stale token still cannot act after a
+# handover (HND-02).
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+
+# SEC-01: phone OTP is the primary sign-in and passwords are optional. The
+# previous system was email + password only, with ZERO enrolled MFA factors
+# across 623 accounts including every staff member who could authorise a payout.
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = true
+enable_confirmations = true
+# The previous project had an OTP expiry over an hour, flagged by Supabase's own
+# advisor. SEC-05 wants five minutes.
+otp_expiry = 300
+otp_length = 6
+max_frequency = "60s"
+
+[auth.sms]
+enable_signup = true
+enable_confirmations = true
+otp_expiry = 300
+otp_length = 6
+max_frequency = "60s"
+# No provider configured locally: codes appear in the CLI logs. The production
+# provider is part of DEC-17, together with the WhatsApp Business Platform
+# decision, because the same number strategy governs both.
+
+[auth.mfa]
+# SEC-02: owners and treasurers must hold a second factor before adding a
+# withdrawal account or withdrawing. Enrolment is enforced in the application at
+# the point of the action; the factor type is enabled here.
+max_enrolled_factors = 10
+
+[auth.mfa.totp]
+enroll_enabled = true
+verify_enabled = true
+
+[analytics]
+enabled = false
+
+[edge_runtime]
+# ADR 0005: there are no Edge Functions in this repository, and there will not
+# be. Webhooks and cron targets are route handlers in apps/web, deployed by CI.
+enabled = false

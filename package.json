@@ -1,0 +1,24 @@
+{
+  "name": "kolekto",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Kolekto — the financial operating system for communities.",
+  "type": "module",
+  "engines": { "node": ">=22.6.0" },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc --build --verbose",
+    "test": "npm run test --workspaces --if-present",
+    "test:domain": "npm run test --workspace packages/domain",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:reset": "supabase db reset",
+    "db:diff": "supabase db diff",
+    "db:test": "supabase test db",
+    "invariants": "node scripts/invariants/run-all.mjs",
+    "verify": "npm run typecheck && npm run invariants && npm run test"
+  }
+}

@@ -1,0 +1,40 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment — NOTHING but the example is ever committed.
+# See docs/adr/0007-environment-isolation.md
+.env
+.env.*
+!.env.example
+
+# Supabase CLI local state. `supabase/.temp/linked-project.json` was tracked in
+# kolekto-be-old from 2026-08-06 to 2026-08-31 and pointed a fresh clone at the
+# PRODUCTION project. It never happens again.
+supabase/.temp/
+supabase/.branches/
+
+# Logs, OS, editor
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# Test output
+coverage/
+playwright-report/
+test-results/
+
+# Local scratch
+/tmp/
+*.local

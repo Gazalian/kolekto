@@ -1,0 +1,129 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CI
+#
+# Everything that must be true before code merges. The previous estate had four
+# workflows, all added after incidents, none covering typecheck, lint,
+# migrations, secrets or dependencies. This runs before the first feature.
+#
+# Note what is NOT here: a deploy job. Deployment is configured when staging
+# exists (ADR 0007). Until then there is nowhere to deploy to, and a deploy job
+# that silently does nothing is worse than an absent one.
+# ─────────────────────────────────────────────────────────────────────────────
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ── The four invariants (ADR 0003, 0008, and scripts/invariants) ───────────
+  # First, and fastest. If money is not integer kobo or a table is missing RLS,
+  # nothing else about this change matters yet.
+  invariants:
+    name: invariants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - run: node scripts/invariants/run-all.mjs --verbose
+
+  typecheck-and-test:
+    name: typecheck and unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  # ── Database: migrations apply cleanly, and pgTAP passes ──────────────────
+  # Runs against a real local Postgres started by the Supabase CLI, not a mock.
+  # RLS that is not tested against an actual role is not tested.
+  database:
+    name: migrations and pgTAP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start the local stack
+        run: supabase start
+
+      # `db reset` replays every migration from scratch and then applies the
+      # seed. A migration that only works against an already-migrated database
+      # fails here, which is the point: the previous system's 52 committed
+      # migrations had ZERO versions in common with the 38 applied in
+      # production, because nothing ever replayed them.
+      - name: Apply every migration from scratch
+        run: supabase db reset --debug
+
+      - name: pgTAP
+        run: supabase test db
+
+      # A migration must leave no drift: what the files say and what the
+      # database contains have to agree, or the repository is describing
+      # something other than the schema.
+      - name: Assert no schema drift
+        run: |
+          supabase db diff --schema public,app,private > /tmp/drift.sql
+          if [ -s /tmp/drift.sql ]; then
+            echo "Schema drift detected — the migrations do not reproduce the schema:"
+            cat /tmp/drift.sql
+            exit 1
+          fi
+          echo "No drift."
+
+  # ── Secrets and dependencies (SEC-30) ─────────────────────────────────────
+  security:
+    name: secret and dependency scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secret scanning
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # A belt-and-braces check for the specific mistake that has already
+      # happened here: `.env` was committed to kolekto-fe-old twice, and
+      # `supabase/.temp/linked-project.json` pointed a fresh clone at production
+      # for three weeks.
+      - name: Assert no environment or link files are tracked
+        run: |
+          tracked=$(git ls-files | grep -E '(^|/)\.env($|\.)|supabase/\.temp/' | grep -v '\.env\.example$' || true)
+          if [ -n "$tracked" ]; then
+            echo "These files must never be tracked:"
+            echo "$tracked"
+            exit 1
+          fi
+          echo "No environment or CLI link files tracked."
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - name: Dependency audit
+        run: npm audit --audit-level=high
