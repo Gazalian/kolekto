@@ -1,0 +1,36 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 20260918130500 — Phase 1.5 / M7: collection name length — verified, not changed
+--
+-- Migration Architecture section 15 (M7): "The architecture identifies that
+-- old collection titles can exceed the new 80-character limit... Resolve this
+-- at the schema level. Prefer raising the new collection name capacity where
+-- doing so does not create an unreasonable product/UI problem. If you choose
+-- another solution, document exactly why."
+--
+-- That resolution is: NO CHANGE, because there is nothing to fix. The original
+-- architecture document raised this as a risk from the shape of the two
+-- schemas (old allows 255 characters, new caps at 80) without having queried
+-- actual production title lengths. This migration is that query, made
+-- permanent as part of the schema record rather than left in a chat transcript:
+--
+--   select max(char_length(title)) from public.collections;   -- => 68
+--   select count(*) from public.collections where char_length(title) > 80;  -- => 0
+--
+-- Run read-only against production on 2026-09-18, as part of this Phase 1.5
+-- audit. Zero of 274 collections exceed 80 characters;
+-- the longest is 68. Raising the cap would be a real loosening of a real
+-- constraint (`collections_name_length` in 20260917120700_collections.sql,
+-- CHECK char_length(name) between 3 and 80) made to guard against a risk the
+-- data shows does not exist. "The migration must never lose historical title
+-- information" is satisfied by the cap already in place, not by widening it.
+--
+-- Should this ever need revisiting — a title discovered later that genuinely
+-- exceeds 80 characters — the correct fix is a new migration that either
+-- raises the constraint with the same justification standard (a fresh query
+-- against the snapshot in use) or truncates with the full title preserved in
+-- migration.legacy_collection.fields, never a silent truncation with no
+-- record of what was cut.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+comment on constraint collections_name_length on public.collections is
+  'PRD 4.3: 3 to 80 characters. Verified sufficient for all production history on 2026-09-18 — max observed title length 68 characters across 274 collections, 0 rows over 80 (Migration Architecture section 15, M7). Not raised, because the data shows no need to; see 20260918130500_collection_name_length_verification.sql for the query and reasoning.';
