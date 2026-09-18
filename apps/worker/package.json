@@ -1,0 +1,17 @@
+{
+  "name": "@kolekto/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Long-lived process consuming the pgmq queue (ADR 0005). Idle until Phase 3/4 background work exists (reminders, recurring collections, reconciliation).",
+  "scripts": {
+    "build": "tsc --build",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kolekto/config": "*",
+    "@kolekto/db": "*",
+    "@kolekto/domain": "*"
+  }
+}

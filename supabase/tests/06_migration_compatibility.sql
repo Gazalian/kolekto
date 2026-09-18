@@ -64,8 +64,12 @@ select has_column('migration', 'unattributed_payments', 'import_run_id',      'h
 insert into auth.users (id, instance_id, aud, role, email) values
   ('66666666-6666-4666-8666-666666666666', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'migration-test@example.test');
 
+-- ON CONFLICT DO UPDATE: the auth.users insert above already fired
+-- app.handle_new_auth_user() (20260918140000), which created a placeholder
+-- public.users row for this id.
 insert into public.users (id, full_name, email) values
-  ('66666666-6666-4666-8666-666666666666', 'Migration Test Owner', 'migration-test@example.test');
+  ('66666666-6666-4666-8666-666666666666', 'Migration Test Owner', 'migration-test@example.test')
+on conflict (id) do update set full_name = excluded.full_name, email = excluded.email;
 
 insert into public.communities (id, slug, name, type, is_personal, created_by) values
   ('77777777-7777-4777-8777-777777777777', 'migration-test-assoc', 'Migration Test Association', 'university_association', false, '66666666-6666-4666-8666-666666666666');

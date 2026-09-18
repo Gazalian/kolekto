@@ -21,18 +21,23 @@ only as actors — `created_by`, `requested_by`, `approved_by`.
 
 ## Status
 
-**Phase 1 — Foundation.** This repository currently contains the schema,
-authorization model, testing and CI foundation. It does **not** contain
-payment or withdrawal functionality, deliberately.
+**Phase 2 — Application foundation.** Phase 1 (schema, authorization,
+testing, CI) and Phase 1.5 (migration compatibility, production hardening)
+are complete. This phase built the application shell on top of them. It does
+**not** contain payment or withdrawal functionality, deliberately.
 
 | Area | State |
 |---|---|
 | Repository, CI, invariant gates | Built |
 | Environment isolation (local / staging / production) | Configured; no cloud projects created |
-| Identity, communities, members, groups, officers, invites | Migrated |
-| Audit log | Migrated |
-| Collections, tiers, obligations | Migrated (no money applied) |
+| Identity, communities, members, groups, officers, invites (schema) | Migrated |
+| Sign-up bootstrap (personal community + owner term) | Built (20260918140000) |
+| Application write functions (communities, members, invites, officer terms) | Built (20260918140100/140200, ADR 0011) |
+| Audit log | Migrated, written by every application write function |
+| Collections, tiers, obligations | Migrated (no money applied); UI is a placeholder |
 | Money primitives (integer kobo) + fee engine | Ported, tested, **not wired to anything** |
+| `apps/web`: auth (email/phone OTP), community switcher, members, invitations, settings, RBAC-aware nav | Built |
+| Design system (`packages/ui`) | Baseline built |
 | Ledger, payment attempts, transactions, contributions, withdrawals | **Not built** — gated on DEC-01/DEC-03 |
 | Paystack integration | **Not built** — gated on DEC-01/DEC-02/DEC-03 |
 | Notifications (WhatsApp/SMS/email) | **Not built** — gated on DEC-17 |
@@ -74,6 +79,22 @@ npm run db:test         # pgTAP suite
 
 You do not need a cloud Supabase project to work on this repository, and you
 should not point a local checkout at one.
+
+### Running the web app
+
+```bash
+npm run db:start                        # local Supabase, if not already up
+cp .env.example apps/web/.env.local     # Next.js loads env files from its own
+                                         # directory, not the repo root — fill
+                                         # in the same values as the root one
+npm run dev --workspace apps/web        # http://127.0.0.1:3000
+```
+
+Sign in with any email address — the local stack has no real mail provider,
+so open Mailpit (`supabase status` prints `MAILPIT_URL`, typically
+`http://127.0.0.1:54324`) to read the OTP code it "sent". A brand-new
+sign-up gets a personal community immediately (COM-01); create a named one
+from `/communities`.
 
 ## The four invariants
 

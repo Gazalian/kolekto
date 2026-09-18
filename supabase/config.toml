@@ -79,6 +79,18 @@ otp_expiry = 300
 otp_length = 6
 max_frequency = "60s"
 
+# Default templates render only a confirmation link ({{ .ConfirmationURL }}),
+# not the numeric code — see supabase/templates/otp.html's own comment. Both
+# mail actions signInWithOtp can trigger (a new sign-up vs. a returning user)
+# are pointed at the same file so the code appears either way.
+[auth.email.template.confirmation]
+subject = "Your Kolekto sign-in code"
+content_path = "./supabase/templates/otp.html"
+
+[auth.email.template.magic_link]
+subject = "Your Kolekto sign-in code"
+content_path = "./supabase/templates/otp.html"
+
 [auth.sms]
 enable_signup = true
 enable_confirmations = true

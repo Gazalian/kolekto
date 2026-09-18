@@ -1,0 +1,14 @@
+{
+  "name": "@kolekto/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Environment loading and guards (ADR 0007). No I/O beyond process.env.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": { "node": ">=22.6.0" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  }
+}

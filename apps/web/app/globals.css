@@ -1,0 +1,61 @@
+@import "tailwindcss";
+@import "../../../packages/ui/src/tokens.css";
+
+/* Tailwind v4 scans the app tree automatically; the design system lives in a
+   sibling workspace package, so it needs an explicit @source or its classes
+   (bg-[var(--color-primary)], etc.) never make it into the generated CSS. */
+@source "../../../packages/ui/src/**/*.{ts,tsx}";
+
+@theme inline {
+  --color-bg: var(--color-bg);
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+}
+
+*:focus-visible {
+  outline: none;
+}
+
+/* Responsive tables (section 22): below `sm`, a row becomes a labelled
+   stack instead of forcing horizontal scroll, which hides columns a touch
+   user cannot discover. Applied only when a table opts in via
+   data-responsive, so a table that already fits (few columns) keeps its
+   normal layout. */
+@media (max-width: 639px) {
+  table[data-responsive] thead {
+    display: none;
+  }
+  table[data-responsive],
+  table[data-responsive] tbody,
+  table[data-responsive] tr,
+  table[data-responsive] td {
+    display: block;
+    width: 100%;
+  }
+  table[data-responsive] tr {
+    border-bottom: 1px solid var(--color-border);
+    padding: 0.75rem 0;
+  }
+  table[data-responsive] td {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.25rem 1rem;
+    text-align: right;
+  }
+  table[data-responsive] td[data-label]::before {
+    content: attr(data-label);
+    font-weight: 500;
+    color: var(--color-text-muted);
+    text-align: left;
+  }
+}

@@ -1,6 +1,13 @@
 {
   "files": [],
   "references": [
-    { "path": "packages/domain" }
+    { "path": "packages/domain" },
+    { "path": "packages/config" },
+    { "path": "packages/validation" },
+    { "path": "packages/db" },
+    { "path": "packages/ui" },
+    { "path": "packages/adapters" },
+    { "path": "apps/web" },
+    { "path": "apps/worker" }
   ]
 }

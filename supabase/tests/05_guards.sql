@@ -15,8 +15,12 @@ select plan(9);
 insert into auth.users (id, instance_id, aud, role, email) values
   ('55555555-5555-4555-8555-555555555555', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'guard@example.test');
 
+-- ON CONFLICT DO UPDATE: the auth.users insert above already fired
+-- app.handle_new_auth_user() (20260918140000), which created a placeholder
+-- public.users row for this id.
 insert into public.users (id, full_name, email) values
-  ('55555555-5555-4555-8555-555555555555', 'Guard Person', 'guard@example.test');
+  ('55555555-5555-4555-8555-555555555555', 'Guard Person', 'guard@example.test')
+on conflict (id) do update set full_name = excluded.full_name, email = excluded.email;
 
 insert into public.communities (id, slug, name, type, is_personal, created_by) values
   ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'guard-assoc', 'Guard Association', 'fellowship', false, '55555555-5555-4555-8555-555555555555');

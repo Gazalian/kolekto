@@ -26,10 +26,12 @@ insert into public.users (id, full_name, phone_e164, email, identity_level) valu
   ('00000000-0000-4000-8000-000000000003', 'Ngozi Okonkwo', '+2348000000003', 'ngozi@example.test', 'none')
 on conflict (id) do nothing;
 
--- COM-01: every user gets a personal community. Seeded explicitly here; in the
--- application this happens at sign-up.
+-- COM-01: every user gets a personal community. As of Phase 2
+-- (20260918140000_user_bootstrap.sql) this happens automatically — the
+-- `on_auth_user_created` trigger already created Aisha's personal community
+-- and her owner officer_term the moment her auth.users row was inserted
+-- above. Only the named community is seeded explicitly here.
 insert into public.communities (id, slug, name, type, is_personal, created_by) values
-  ('10000000-0000-4000-8000-000000000001', 'aishas-collections', 'Aisha''s collections', 'personal', true,  '00000000-0000-4000-8000-000000000001'),
   ('10000000-0000-4000-8000-000000000002', 'csc-unilorin',       'Computer Science Students'' Association', 'university_association', false, '00000000-0000-4000-8000-000000000001');
 
 insert into public.community_labels (community_id, key, label) values
@@ -38,8 +40,10 @@ insert into public.community_labels (community_id, key, label) values
 insert into public.leadership_terms (id, community_id, name, starts_on) values
   ('11000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '2026/2027 Executive', '2026-09-01');
 
+-- Aisha's owner term on her personal community was created by the bootstrap
+-- trigger along with the community itself; only her role in the named
+-- community is seeded explicitly here.
 insert into public.officer_terms (community_id, user_id, role, title, leadership_term_id, actor_name_snapshot, start_reason) values
-  ('10000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000001', 'owner',     null,                  null,                                   'Aisha Bello',   'created'),
   ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'owner',     'President',           '11000000-0000-4000-8000-000000000001', 'Aisha Bello',   'created'),
   ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000002', 'treasurer', 'Financial Secretary', '11000000-0000-4000-8000-000000000001', 'Tunde Adeyemi', 'invited'),
   ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000003', 'collector', 'Class Rep, 300L',     '11000000-0000-4000-8000-000000000001', 'Ngozi Okonkwo', 'invited');

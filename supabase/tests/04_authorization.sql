@@ -23,11 +23,16 @@ values
   ('33333333-3333-4333-8333-333333333333', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'viewer@example.test'),
   ('44444444-4444-4444-8444-444444444444', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'outsider@example.test');
 
+-- ON CONFLICT DO UPDATE, not DO NOTHING: the auth.users insert above already
+-- fired app.handle_new_auth_user() (20260918140000), which created a
+-- placeholder public.users row per id. This overwrites it with the names the
+-- rest of this file expects.
 insert into public.users (id, full_name, email) values
   ('11111111-1111-4111-8111-111111111111', 'Owner Person',     'owner@example.test'),
   ('22222222-2222-4222-8222-222222222222', 'Treasurer Person', 'treasurer@example.test'),
   ('33333333-3333-4333-8333-333333333333', 'Viewer Person',    'viewer@example.test'),
-  ('44444444-4444-4444-8444-444444444444', 'Outsider Person',  'outsider@example.test');
+  ('44444444-4444-4444-8444-444444444444', 'Outsider Person',  'outsider@example.test')
+on conflict (id) do update set full_name = excluded.full_name, email = excluded.email;
 
 insert into public.communities (id, slug, name, type, is_personal, created_by) values
   ('aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'test-assoc',  'Test Association', 'university_association', false, '11111111-1111-4111-8111-111111111111'),

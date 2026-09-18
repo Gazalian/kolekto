@@ -1,0 +1,19 @@
+{
+  "name": "@kolekto/db",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Generated database types and the direct-Postgres query helper for app-schema write functions (server only — never imported by client code).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": { "node": ">=22.6.0" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "gen-types": "supabase gen types typescript --local > src/generated-types.ts"
+  },
+  "dependencies": {
+    "@kolekto/config": "*",
+    "postgres": "^3.4.5"
+  }
+}

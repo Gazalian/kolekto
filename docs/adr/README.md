@@ -16,3 +16,4 @@ so the reasoning survives.
 | [0008](0008-authorization-model.md) | Authorization is RLS + `has_permission`, enforced twice | Accepted |
 | [0009](0009-staff-realm-separation.md) | Kolekto staff hold a separate identity realm | Accepted |
 | [0010](0010-tiers-are-rows.md) | Tiers are rows with identity; an amount is never an identifier | Accepted |
+| [0011](0011-application-writes-via-direct-connection.md) | Application writes call `app` schema functions over a direct Postgres connection, never PostgREST RPC | Accepted |

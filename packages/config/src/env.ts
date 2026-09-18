@@ -142,6 +142,31 @@ export function loadServiceRoleKey(): string {
   return required("SUPABASE_SERVICE_ROLE_KEY");
 }
 
+/**
+ * Direct Postgres connection string. Separated from `loadConfig` for the same
+ * reason as `loadServiceRoleKey`: obtaining it is a deliberate act, not a side
+ * effect of reading general configuration.
+ *
+ * Used by `@kolekto/db` to call the `app` schema's SECURITY DEFINER write
+ * functions (20260918140100_application_write_functions.sql) — PostgREST
+ * serves `public` only (supabase/config.toml, `[api] schemas = ["public"]`),
+ * so `app.create_member` and the rest are reachable only over a direct
+ * connection, never through `supabase.rpc()`. The connection then sets
+ * `role` and `request.jwt.claims` per call to impersonate the acting user
+ * (or `anon`), the same pattern `supabase/tests` uses — so the write
+ * functions' `app.has_permission` checks and RLS both still apply. Never sent
+ * to the browser.
+ */
+export function loadDatabaseUrl(): string {
+  if (typeof window !== "undefined") {
+    throw new ConfigError(
+      "loadDatabaseUrl() was called in a browser context. A direct Postgres connection string must never reach " +
+        "the client. This is a bug, not a configuration problem.",
+    );
+  }
+  return required("SUPABASE_DB_URL");
+}
+
 /** Reset the cache. Tests only. */
 export function resetConfigCache(): void {
   cached = undefined;

@@ -1,0 +1,101 @@
+/**
+ * tokens.css — the Kolekto design system's color, spacing and radius tokens.
+ *
+ * Restrained financial-software palette (section 15): a deep green for trust
+ * and primary action, amber reserved for warnings/pending states, red for
+ * destructive/error only. No gradients, no glassmorphism. Light and dark are
+ * both first-class — this is a dashboard people leave open all day.
+ */
+
+:root {
+  --color-bg: #f7f8f6;
+  --color-surface: #ffffff;
+  --color-surface-raised: #ffffff;
+  --color-border: #e2e5e0;
+  --color-border-strong: #c9cfc4;
+
+  --color-text: #14231b;
+  --color-text-muted: #52604f;
+  --color-text-faint: #7c8a78;
+
+  --color-primary: #14532d;
+  --color-primary-strong: #0d3b20;
+  --color-primary-fg: #f3f8f4;
+
+  --color-accent: #b45309;
+  --color-accent-fg: #fffaf0;
+
+  --color-success: #166534;
+  --color-success-bg: #eef7f0;
+  --color-warning: #92400e;
+  --color-warning-bg: #fef6e8;
+  --color-danger: #b91c1c;
+  --color-danger-bg: #fdecec;
+  --color-info: #1d4ed8;
+  --color-info-bg: #eef2fd;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --shadow-sm: 0 1px 2px rgb(20 35 27 / 0.06);
+  --shadow-md: 0 4px 12px rgb(20 35 27 / 0.08);
+
+  --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-primary);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --color-bg: #0f1512;
+    --color-surface: #161d19;
+    --color-surface-raised: #1c2521;
+    --color-border: #2a342e;
+    --color-border-strong: #3a463e;
+
+    --color-text: #eef2ec;
+    --color-text-muted: #a9b6a4;
+    --color-text-faint: #7c8a78;
+
+    --color-primary: #4ade80;
+    --color-primary-strong: #86efac;
+    --color-primary-fg: #0d1f14;
+
+    --color-accent: #fbbf24;
+    --color-accent-fg: #1f1502;
+
+    --color-success: #4ade80;
+    --color-success-bg: #10281a;
+    --color-warning: #fbbf24;
+    --color-warning-bg: #2b1f06;
+    --color-danger: #f87171;
+    --color-danger-bg: #2c1414;
+    --color-info: #60a5fa;
+    --color-info-bg: #121e33;
+
+    --focus-ring: 0 0 0 2px var(--color-bg), 0 0 0 4px var(--color-primary);
+  }
+}
+
+:root[data-theme="dark"] {
+  --color-bg: #0f1512;
+  --color-surface: #161d19;
+  --color-surface-raised: #1c2521;
+  --color-border: #2a342e;
+  --color-border-strong: #3a463e;
+  --color-text: #eef2ec;
+  --color-text-muted: #a9b6a4;
+  --color-text-faint: #7c8a78;
+  --color-primary: #4ade80;
+  --color-primary-strong: #86efac;
+  --color-primary-fg: #0d1f14;
+  --color-accent: #fbbf24;
+  --color-accent-fg: #1f1502;
+  --color-success: #4ade80;
+  --color-success-bg: #10281a;
+  --color-warning: #fbbf24;
+  --color-warning-bg: #2b1f06;
+  --color-danger: #f87171;
+  --color-danger-bg: #2c1414;
+  --color-info: #60a5fa;
+  --color-info-bg: #121e33;
+}

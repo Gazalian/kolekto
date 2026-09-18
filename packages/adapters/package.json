@@ -1,0 +1,17 @@
+{
+  "name": "@kolekto/adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Paystack, settlement, WhatsApp, SMS, email, KYC. The ONLY outbound callers (ADR 0001, ADR 0002). Interfaces only until Phase 3/4 (docs/adr/0006-ledger-deferred.md).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": { "node": ">=22.6.0" },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kolekto/domain": "*"
+  }
+}
