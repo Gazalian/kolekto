@@ -85,9 +85,9 @@ regression. It was a **deployment/source-of-truth failure**:
    "safe to paste directly into the Supabase web console editor" — i.e., the
    live function can also be edited completely outside git.
 3. Using the Supabase CLI (already authenticated and linked to project
-   `busfgcmbndleljklrcbd` in this environment), I pulled the **live deployed
+   `<PRODUCTION_PROJECT_REF-redacted>` in this environment), I pulled the **live deployed
    source** read-only (`supabase functions download initiate-paystack-payment
-   --project-ref busfgcmbndleljklrcbd`) and byte-diffed it against git HEAD:
+   --project-ref <PRODUCTION_PROJECT_REF-redacted>`) and byte-diffed it against git HEAD:
    **867 lines of difference**. The live function was the **pre-fix**
    version — missing the entire FPE-engine migration and the `matchTier`
    hardening from commit `8294d28`.

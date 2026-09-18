@@ -36,7 +36,9 @@ enabled = false
 enabled = true
 port = 54323
 
-[inbucket]
+# Local email testing. Renamed from [inbucket] in CLI 2.108.0 — the service is
+# Mailpit now, not InBucket. The old section still parses but warns.
+[local_smtp]
 enabled = true
 port = 54324
 
@@ -50,9 +52,14 @@ enabled = true
 site_url = "http://127.0.0.1:3000"
 additional_redirect_urls = ["http://127.0.0.1:3000"]
 
-# SEC-04: officer sessions last 7 days with a 12-hour idle timeout. Permission
-# checks run per request regardless, so a stale token still cannot act after a
-# handover (HND-02).
+# Access-token lifetime. One hour, so a token cannot outlive a handover by more
+# than that; permission checks also run per request, so an ended officer term
+# stops granting anything immediately regardless (HND-02).
+#
+# NOTE: SEC-04 also wants a 7-day session with a 12-hour idle timeout. That is
+# NOT configured here — it belongs in [auth.sessions] (timebox,
+# inactivity_timeout), which this file does not yet set. Left unconfigured
+# deliberately rather than half-stated; raise it as its own change.
 jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
@@ -75,12 +82,21 @@ max_frequency = "60s"
 [auth.sms]
 enable_signup = true
 enable_confirmations = true
-otp_expiry = 300
-otp_length = 6
 max_frequency = "60s"
-# No provider configured locally: codes appear in the CLI logs. The production
-# provider is part of DEC-17, together with the WhatsApp Business Platform
-# decision, because the same number strategy governs both.
+# SEC-05 wants the SMS OTP to be 6 digits and expire in 5 minutes, as the email
+# OTP above does. Neither is settable here. CLI 2.109.1 accepts only
+# enable_signup, enable_confirmations, template, max_frequency, test_otp and the
+# provider subsections under [auth.sms]; there is no SMS equivalent of
+# otp_expiry or otp_length anywhere in config.toml. They are project-level
+# settings (sms_otp_exp, sms_otp_length) applied to a hosted project, so they
+# belong with the DEC-17 provider decision and the hosted-project checklist, not
+# in this file.
+#
+# Nothing is lost locally: no SMS provider is configured, so the local stack
+# sends no SMS and prints codes to the CLI log instead.
+#
+# MFA phone factors are the one OTP that IS configurable locally, under
+# [auth.mfa.phone].
 
 [auth.mfa]
 # SEC-02: owners and treasurers must hold a second factor before adding a

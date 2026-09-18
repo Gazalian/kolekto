@@ -8,7 +8,7 @@ inference, not on a recorded fact.** Closing that last gap needs one schema
 change (§7.1), which is specified but not shipped.
 
 Scope: `kolekto-be-old` (Express API), `kolekto-fe-old/supabase/functions`
-(edge functions), and the production database `busfgcmbndleljklrcbd`.
+(edge functions), and the production database `<PRODUCTION_PROJECT_REF-redacted>`.
 
 ---
 

@@ -144,11 +144,21 @@ comment on function app.normalise_phone(text, text) is
 
 
 -- ── Kobo ─────────────────────────────────────────────────────────────────────
--- ADR 0003. Money is bigint kobo everywhere, and this domain makes an
--- accidental `numeric` column visible in review. A domain rather than a type
--- alias so the CHECK travels with it.
-create domain app.kobo as bigint
-  constraint kobo_is_whole check (value is not null);
+-- ADR 0003. Money is bigint kobo everywhere. The domain is what makes an
+-- accidental `numeric` money column obvious in review, and it is what
+-- supabase/tests/03_money_invariants.sql asserts is bigint-backed.
+--
+-- It carries NO constraint, deliberately. `bigint` is already whole, so there is
+-- nothing to check — and a domain CHECK is evaluated against NULL, unlike a
+-- table CHECK. An earlier version of this line read
+-- `constraint kobo_is_whole check (value is not null)`, which is the documented
+-- way to make a domain NOT NULL: it silently made every nullable money column
+-- mandatory and rejected a tiered collection with no fixed amount.
+-- Nullability belongs on the column, not on the type.
+--
+-- Signedness also belongs on the column: ledger entries are directional, so the
+-- domain permits negatives and non-ledger columns add CHECK (col >= 0).
+create domain app.kobo as bigint;
 
 comment on domain app.kobo is
-  'A whole number of kobo. 100 kobo = 1 naira. ADR 0003: money is never floating point and never numeric. Sign is allowed because ledger entries are directional; non-ledger columns add CHECK (col >= 0).';
+  'A whole number of kobo. 100 kobo = 1 naira. ADR 0003: money is never floating point and never numeric. Carries no constraint: nullability and sign are column-level decisions.';

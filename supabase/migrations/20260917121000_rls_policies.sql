@@ -26,6 +26,66 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 
 
+-- ── app.has_permission_for_collection (SEC-10) ───────────────────────────────
+-- The collection-scoped counterpart to app.has_permission, which lives in
+-- 20260917120400_roles_and_officers.sql with the rest of the authorization
+-- helpers.
+--
+-- It is defined HERE, and not there, for one reason: its body reads
+-- public.collections, and a `language sql` function body is parsed and its
+-- objects resolved at CREATE time. Defining it alongside the other helpers —
+-- three migrations before the collections table exists — fails the migration
+-- with `relation "public.collections" does not exist`.
+--
+-- This file is the right home rather than a workaround. It is the first point
+-- at which every table the authorization surface touches exists, and the
+-- function is created immediately before the obligations policy that calls it,
+-- so the dependency is visible rather than implied. `language sql` is kept
+-- deliberately: switching to plpgsql would defer body resolution and make the
+-- migration pass, but it would hide the ordering constraint rather than satisfy
+-- it, and it would add per-call overhead on a function that runs inside RLS on
+-- the member-status table (NFR-08).
+--
+-- Kept separate from has_permission so an unscoped caller cannot accidentally
+-- get a scoped answer, and so the scope join is visible at every call site.
+create or replace function app.has_permission_for_collection(
+  p_collection_id uuid,
+  p_permission    text
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1
+    from public.collections c
+    join public.officer_terms ot
+      on ot.community_id = c.community_id
+     and ot.user_id      = auth.uid()
+     and ot.ended_at is null
+     and ot.started_at <= now()
+    join public.role_permissions rp
+      on rp.role = ot.role
+     and rp.permission = p_permission
+    where c.id = p_collection_id
+      and (
+        not rp.scoped
+        or ot.scope is null
+        or (ot.scope -> 'collection_ids') is null
+        or (ot.scope -> 'collection_ids') @> to_jsonb(c.id::text)
+      )
+  );
+$$;
+
+comment on function app.has_permission_for_collection(uuid, text) is
+  'SEC-10: like has_permission, but honours collector scope by joining the officer scope to the collection. The community is re-derived from the collection, never taken from the caller (SEC-18).';
+
+revoke all on function app.has_permission_for_collection(uuid, text) from public;
+-- GRANT is in 20260917121100_grants.sql. See the note there.
+
+
 -- ── users ────────────────────────────────────────────────────────────────────
 -- A user sees their own row and nothing else. Officer directories are served by
 -- server functions that return only the fields the viewer is entitled to.
@@ -282,7 +342,6 @@ as $$
   order by t.sort_order, t.name;
 $$;
 
-revoke all on function app.get_public_collection(text, text)       from public;
-revoke all on function app.get_public_collection_tiers(uuid)       from public;
-grant execute on function app.get_public_collection(text, text)    to anon, authenticated;
-grant execute on function app.get_public_collection_tiers(uuid)    to anon, authenticated;
+revoke all on function app.get_public_collection(text, text) from public;
+revoke all on function app.get_public_collection_tiers(uuid) from public;
+-- GRANTs to anon are in 20260917121100_grants.sql. See the note there.

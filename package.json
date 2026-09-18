@@ -11,6 +11,8 @@
   ],
   "scripts": {
     "typecheck": "tsc --build --verbose",
+    "lint": "echo \"No lint config yet — nothing outside packages/domain is built. Configure when apps/web exists (Phase 2).\"",
+    "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:domain": "npm run test --workspace packages/domain",
     "db:start": "supabase start",
@@ -20,5 +22,9 @@
     "db:test": "supabase test db",
     "invariants": "node scripts/invariants/run-all.mjs",
     "verify": "npm run typecheck && npm run invariants && npm run test"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.0",
+    "@types/node": "^22.6.0"
   }
 }

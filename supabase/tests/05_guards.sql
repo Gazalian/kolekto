@@ -124,6 +124,18 @@ select throws_ok(
 
 
 -- ── ROLE-02: a community always keeps an owner ───────────────────────────────
+-- `officer_terms_assert_owner` is DEFERRABLE INITIALLY DEFERRED, because a
+-- handover legitimately ends the outgoing owner's term and starts the incoming
+-- one in the same transaction — checking per-statement would reject the valid
+-- case. The consequence for testing is that the trigger fires at COMMIT, and
+-- pgTAP never commits: it wraps each file in a transaction and rolls back. So
+-- without this line the UPDATE below succeeds, the exception is never raised,
+-- and the test reports a guard that does not work when in fact it does.
+--
+-- SET CONSTRAINTS ALL IMMEDIATE moves the check to statement end for the rest
+-- of this transaction, which is what lets throws_ok see it.
+set constraints all immediate;
+
 select throws_ok(
   $$ update public.officer_terms
      set ended_at = now(), end_reason = 'resigned'

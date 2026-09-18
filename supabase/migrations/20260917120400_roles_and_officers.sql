@@ -348,42 +348,14 @@ $$;
 comment on function app.has_permission(uuid, text) is
   'SEC-09: does the caller hold this permission in this community, right now? Reads active officer terms only. Used by every RLS policy and re-checked in every server function (SEC-13, SEC-17).';
 
--- SEC-10: a collector holds a scoped permission only inside their scope. Kept
--- separate from has_permission so an unscoped caller cannot accidentally get a
--- scoped answer, and so the scope join is visible at every call site.
-create or replace function app.has_permission_for_collection(
-  p_collection_id uuid,
-  p_permission    text
-)
-returns boolean
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select exists (
-    select 1
-    from public.collections c
-    join public.officer_terms ot
-      on ot.community_id = c.community_id
-     and ot.user_id      = auth.uid()
-     and ot.ended_at is null
-     and ot.started_at <= now()
-    join public.role_permissions rp
-      on rp.role = ot.role
-     and rp.permission = p_permission
-    where c.id = p_collection_id
-      and (
-        not rp.scoped
-        or ot.scope is null
-        or (ot.scope -> 'collection_ids') is null
-        or (ot.scope -> 'collection_ids') @> to_jsonb(c.id::text)
-      )
-  );
-$$;
-
-comment on function app.has_permission_for_collection(uuid, text) is
-  'SEC-10: like has_permission, but honours collector scope by joining the officer scope to the collection. The community is re-derived from the collection, never taken from the caller (SEC-18).';
+-- SEC-10, the collection-scoped counterpart of the function above, is NOT
+-- defined here. It reads public.collections, which does not exist until
+-- 20260917120700_collections.sql, and a `language sql` body is parsed and
+-- resolved when the function is created — so defining it at this stage fails
+-- the migration outright.
+--
+-- It lives in 20260917121000_rls_policies.sql, immediately before the policies
+-- that call it. See that file for the definition and the reasoning.
 
 -- The set of communities the caller currently holds any role in. Used by list
 -- policies so a dashboard query is one index scan rather than a per-row
@@ -402,9 +374,9 @@ as $$
     and ot.started_at <= now();
 $$;
 
-revoke all on function app.has_permission(uuid, text)                 from public;
-revoke all on function app.has_permission_for_collection(uuid, text)  from public;
-revoke all on function app.current_user_community_ids()               from public;
-grant execute on function app.has_permission(uuid, text)                to authenticated;
-grant execute on function app.has_permission_for_collection(uuid, text) to authenticated;
-grant execute on function app.current_user_community_ids()              to authenticated;
+revoke all on function app.has_permission(uuid, text)   from public;
+revoke all on function app.current_user_community_ids() from public;
+-- The matching GRANTs are in 20260917121100_grants.sql, not here. That
+-- migration revokes EXECUTE on every function in this schema from PUBLIC
+-- retroactively, so a grant written here would simply be undone. One file
+-- decides what a client role can reach.

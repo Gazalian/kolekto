@@ -1,6 +1,6 @@
 # Phase 3 — Payment Capture Ledger & Guaranteed Recovery
 
-**Date:** 2026-08-07 · **Environment:** production (`busfgcmbndleljklrcbd`)
+**Date:** 2026-08-07 · **Environment:** production (`<PRODUCTION_PROJECT_REF-redacted>`)
 
 ---
 

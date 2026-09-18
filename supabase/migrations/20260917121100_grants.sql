@@ -92,18 +92,50 @@ revoke insert, update, delete, truncate on public.audit_logs from authenticated,
 -- ── Function execution ───────────────────────────────────────────────────────
 -- Postgres grants EXECUTE to PUBLIC on every new function by default, which is
 -- how three payment-state functions ended up callable by `anon` in the previous
--- system. Withdraw it globally, then grant back by name.
+-- system. Withdraw it, then grant back by name.
 --
--- The named grants live beside each function in its own migration, so a
--- function and its reachability are reviewed together:
---   · app.has_permission, app.has_permission_for_collection,
---     app.current_user_community_ids  → authenticated
---   · app.get_public_collection, app.get_public_collection_tiers
---     → anon, authenticated  (the whitelisted public page)
---   · app.write_audit_log            → nobody; server code via service_role
-alter default privileges in schema public revoke execute on functions from public;
-alter default privileges in schema app    revoke execute on functions from public;
+-- TWO revokes are needed, and missing either one leaves a hole:
+--
+--   1. A RETROACTIVE revoke, below. `alter default privileges` only affects
+--      functions created AFTER it runs, so it does nothing for the seventeen
+--      helpers created in the migrations before this one. Without this,
+--      `anon` inherits PUBLIC's default EXECUTE on every one of them.
+--      supabase/tests/02_grant_matrix.sql caught exactly that.
+--
+--   2. A DEFAULT-PRIVILEGE revoke, for functions added by later migrations.
+--
+-- Note that `revoke ... from anon, authenticated` is NOT sufficient for either:
+-- the privilege is held by PUBLIC, which both roles inherit, so it has to be
+-- revoked FROM PUBLIC by name.
+revoke execute on all functions in schema public  from public, anon, authenticated;
+revoke execute on all functions in schema app     from public, anon, authenticated;
+revoke execute on all functions in schema private from public, anon, authenticated;
+
+alter default privileges in schema public  revoke execute on functions from public;
+alter default privileges in schema app     revoke execute on functions from public;
 alter default privileges in schema private revoke execute on functions from public;
+
+-- Now grant back, by name. This is the whole of the executable surface for
+-- client roles, and supabase/tests/02_grant_matrix.sql asserts it exactly.
+--
+-- The grants live HERE rather than beside each function, because the blanket
+-- revoke above would undo them wherever else they were written. One file
+-- decides what a client can reach.
+--
+--   · has_permission / has_permission_for_collection / current_user_community_ids
+--       → authenticated. Called from inside RLS policies, so the role
+--         evaluating the policy must be able to execute them.
+--   · get_public_collection / get_public_collection_tiers
+--       → anon and authenticated. The whitelisted public collection page
+--         (SEC-12), and the only thing `anon` may call anywhere.
+--   · write_audit_log, and every trigger and guard function
+--       → nobody. Server code reaches them through the service role, and
+--         trigger functions are invoked by the trigger, not by the client.
+grant execute on function app.has_permission(uuid, text)                to authenticated;
+grant execute on function app.has_permission_for_collection(uuid, text) to authenticated;
+grant execute on function app.current_user_community_ids()              to authenticated;
+grant execute on function app.get_public_collection(text, text)         to anon, authenticated;
+grant execute on function app.get_public_collection_tiers(uuid)         to anon, authenticated;
 
 
 -- ── Future objects default to closed ─────────────────────────────────────────

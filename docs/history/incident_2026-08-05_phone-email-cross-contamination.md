@@ -40,7 +40,7 @@ No database columns were widened. The fix is entirely at the mapping/validation 
 ### Objective 3 — cross-contamination search
 Grepped the whole backend for other `phone`/`email` write sites into financial tables. Found and fixed the two Node-backend gaps above (`deposit.js`, `contribution.js`). `controllers/auth.js` also has a `phone` field but it's passed to `supabase.auth.signUp()` — Supabase Auth's own `auth.users.phone`, a completely different table/domain than `contributions.phone`, not the crash pattern from this incident, and out of Phase 1 scope; left untouched.
 
-## 3. Deployment record (production, `busfgcmbndleljklrcbd`)
+## 3. Deployment record (production, `<PRODUCTION_PROJECT_REF-redacted>`)
 
 | Function | Before | After | Notes |
 |---|---|---|---|

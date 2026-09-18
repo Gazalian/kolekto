@@ -1,6 +1,6 @@
 # Final Payment Integrity Report
 
-**Date:** 2026-08-07 · **Environment:** production (`busfgcmbndleljklrcbd`)
+**Date:** 2026-08-07 · **Environment:** production (`<PRODUCTION_PROJECT_REF-redacted>`)
 **Scope:** closing every remaining payment-integrity risk identified across
 Phases 1–3.
 
@@ -259,8 +259,8 @@ The ledger keeps recording; only the guarantees stop being enforced.
 **Tier 2 — revert the edge functions:**
 ```bash
 git revert <commit>
-supabase functions deploy verify-paystack-payment --project-ref busfgcmbndleljklrcbd --no-verify-jwt --use-api
-supabase functions deploy scheduled-payment-recovery --project-ref busfgcmbndleljklrcbd --no-verify-jwt --use-api
+supabase functions deploy verify-paystack-payment --project-ref <PRODUCTION_PROJECT_REF-redacted> --no-verify-jwt --use-api
+supabase functions deploy scheduled-payment-recovery --project-ref <PRODUCTION_PROJECT_REF-redacted> --no-verify-jwt --use-api
 npm run verify:edge-parity   # MUST print PASS
 ```
 Safe: the ledger columns are additive, so an older function that ignores them
@@ -326,7 +326,7 @@ PostgreSQL? **Answer: HTTP, over the public internet.** Verified, not assumed.
 pg_cron job 5, schedule */5 * * * *, username postgres, database postgres:
 
   select net.http_post(
-    url:='https://busfgcmbndleljklrcbd.supabase.co/functions/v1/scheduled-payment-recovery',
+    url:='https://<PRODUCTION_PROJECT_REF-redacted>.supabase.co/functions/v1/scheduled-payment-recovery',
     headers:=jsonb_build_object('Content-Type','application/json'),   <-- as found
     body:='{}'::jsonb,
     timeout_milliseconds:=20000

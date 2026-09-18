@@ -38,21 +38,27 @@ select is_empty(
 -- Anything that looks like an amount is bigint kobo. The naming convention is
 -- load-bearing: a money column ends in `_kobo`, which makes a review of "is
 -- this money?" a grep rather than a judgement call.
+-- Domains are resolved to their base type rather than matched by name. The
+-- money columns are declared as `app.kobo`, so format_type() reports "kobo",
+-- and a name comparison against 'bigint' fails on correct code. What matters is
+-- what the value actually IS underneath, which is what this checks — and it
+-- keeps working whether a column is declared bigint or app.kobo.
 select is_empty(
   $$
     select c.relname || '.' || a.attname || ' is ' || format_type(a.atttypid, a.atttypmod)
     from pg_attribute a
     join pg_class c     on c.oid = a.attrelid
     join pg_namespace n on n.oid = c.relnamespace
+    join pg_type t      on t.oid = a.atttypid
     where n.nspname = 'public'
       and c.relkind = 'r'
       and a.attnum > 0
       and not a.attisdropped
       and a.attname like '%\_kobo'
-      and format_type(a.atttypid, a.atttypmod) not in ('bigint')
+      and coalesce(nullif(t.typbasetype, 0), t.oid) <> 'pg_catalog.int8'::regtype
     order by 1
   $$,
-  'every *_kobo column is bigint (ADR 0003)'
+  'every *_kobo column resolves to bigint, whether declared bigint or app.kobo (ADR 0003)'
 );
 
 -- The inverse: a column that holds money must say so. Catches
