@@ -48,7 +48,9 @@ select is_empty(
 -- anon may execute exactly the whitelisted public functions in `app`, and
 -- nothing else. Naming them means adding one more is a visible decision.
 -- Phase 2 (20260918140200) adds redeem_invite_link: MEM-05's one anonymous
--- write path, for a member who joins with no Kolekto account.
+-- write path, for a member who joins with no Kolekto account. Phase 3
+-- (20260919120100) adds get_public_collection_fields, the third read the
+-- published collection page needs — the questions the form asks.
 select bag_eq(
   $$
     select p.proname::text
@@ -57,7 +59,8 @@ select bag_eq(
     where n.nspname = 'app'
       and has_function_privilege('anon', p.oid, 'EXECUTE')
   $$,
-  $$ values ('get_public_collection'), ('get_public_collection_tiers'), ('redeem_invite_link') $$,
+  $$ values ('get_public_collection'), ('get_public_collection_tiers'),
+            ('get_public_collection_fields'), ('redeem_invite_link') $$,
   'anon can execute exactly the whitelisted public-collection-page functions plus redeem_invite_link (MEM-05)'
 );
 
