@@ -81,10 +81,29 @@ nvm use                 # Node 22
 npm install
 cp .env.example .env.local
 npm run db:start        # local Supabase via the CLI
-npm run db:reset        # apply every migration + seed
+npm run db:reset        # DESTRUCTIVE — see below. First run only.
 npm run verify          # typecheck, invariant gates, tests
 npm run db:test         # pgTAP suite
 ```
+
+### Applying a migration without losing your work
+
+`npm run db:reset` drops the database and re-seeds it. That includes every
+community, collection and member you created by hand while using the app, and
+`auth.users` — so your next sign-in creates a *new* account and the app looks
+like it forgot everything. It is the right command exactly once, on a fresh
+clone, and almost never afterwards.
+
+```bash
+npm run db:migrate      # apply pending migrations, keep all data
+npm run db:backup       # snapshot your rows to backups/<timestamp>.sql
+npm run db:restore      # put them back (after a reset, or on another machine)
+```
+
+The backup carries data only — the schema always comes from
+`supabase/migrations` (ADR 0007) — and includes your `auth.users` row, so the
+same email signs back into the same account with its history intact. `backups/`
+is git-ignored.
 
 You do not need a cloud Supabase project to work on this repository, and you
 should not point a local checkout at one.

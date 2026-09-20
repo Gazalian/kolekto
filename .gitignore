@@ -38,3 +38,7 @@ test-results/
 # Local scratch
 /tmp/
 *.local
+
+# Local database snapshots (npm run db:backup). Never committed: they contain
+# whatever the developer created locally, including their sign-in row.
+backups/

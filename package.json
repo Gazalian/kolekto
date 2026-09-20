@@ -4,7 +4,9 @@
   "version": "0.0.0",
   "description": "Kolekto — the financial operating system for communities.",
   "type": "module",
-  "engines": { "node": ">=22.6.0" },
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "workspaces": [
     "apps/*",
     "packages/*"
@@ -22,7 +24,10 @@
     "db:test": "supabase test db",
     "test:e2e": "playwright test",
     "invariants": "node scripts/invariants/run-all.mjs",
-    "verify": "npm run typecheck && npm run invariants && npm run test"
+    "verify": "npm run typecheck && npm run invariants && npm run test",
+    "db:migrate": "supabase migration up --local",
+    "db:backup": "node scripts/db/backup.mjs",
+    "db:restore": "node scripts/db/restore.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.0",
