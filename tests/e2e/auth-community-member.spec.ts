@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { readOtpCode } from "./helpers/mailpit.ts";
+import { signInAsNewUser } from "./helpers/auth.ts";
 
 /**
  * The golden path this phase exists to support (section 30): sign in, create
@@ -7,23 +7,10 @@ import { readOtpCode } from "./helpers/mailpit.ts";
  * the real local stack — no mocked Supabase client, no seeded session.
  */
 test("sign in via email OTP, create a community, and add a member", async ({ page }) => {
-  const email = `e2e-${Date.now()}@example.test`;
-
-  await page.goto("/login");
-  // Without this, a click can land before the page finishes hydrating and
-  // falls through to the <form>'s native GET submission instead of React's
-  // onSubmit handler — observed directly against this build; Next.js gives
-  // no other DOM signal that hydration has completed.
-  await page.waitForLoadState("networkidle");
-  await page.getByLabel("Email address").fill(email);
-  await page.getByRole("button", { name: "Send code" }).click();
-
-  await expect(page.getByText(email)).toBeVisible();
-  const code = await readOtpCode(email);
-  await page.getByLabel("6-digit code").fill(code);
-  await page.getByRole("button", { name: "Verify and sign in" }).click();
-
-  await expect(page).toHaveURL(/\/communities/);
+  // The OTP flow itself, including the hydration wait and the retry the local
+  // stack occasionally needs, lives in helpers/auth.ts — it is the first step of
+  // every journey in this suite, and its reasoning is worth stating once.
+  await signInAsNewUser(page);
 
   // COM-01: a brand-new sign-up already has their personal community.
   await expect(page.getByText("Personal")).toBeVisible();

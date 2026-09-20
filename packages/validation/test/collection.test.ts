@@ -1,0 +1,210 @@
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+import {
+  assignObligationsSchema,
+  createCollectionSchema,
+  exemptObligationSchema,
+  nairaAmountSchema,
+  setCollectionFieldsSchema,
+  setCollectionTiersSchema,
+  transitionCollectionStatusSchema,
+  waiveObligationSchema,
+} from "../src/collection.ts";
+
+const COMMUNITY_ID = "01930000-0000-7000-8000-00000000000a";
+const COLLECTION_ID = "01930000-0000-7000-8000-00000000000c";
+
+function fixedCollection(overrides: Record<string, unknown> = {}) {
+  return {
+    communityId: COMMUNITY_ID,
+    name: "Departmental Dues 2026",
+    category: "dues",
+    participationMode: "managed",
+    amountModel: "fixed",
+    fixedAmount: "5000",
+    ...overrides,
+  };
+}
+
+describe("nairaAmountSchema", () => {
+  it("accepts the shapes a Nigerian user types (UX-07)", () => {
+    for (const input of ["5000", "5,000", "₦5,000", "5000.50", "20k"]) {
+      assert.equal(nairaAmountSchema.safeParse(input).success, true, input);
+    }
+  });
+
+  it("rejects zero, negatives and anything that is not an amount", () => {
+    for (const input of ["0", "0.00", "-5000", "five thousand", "5000.999", ""]) {
+      assert.equal(nairaAmountSchema.safeParse(input).success, false, input);
+    }
+  });
+});
+
+describe("createCollectionSchema", () => {
+  it("accepts a fixed managed collection with an amount", () => {
+    assert.equal(createCollectionSchema.safeParse(fixedCollection()).success, true);
+  });
+
+  it("requires an amount when everyone pays the same", () => {
+    const result = createCollectionSchema.safeParse(fixedCollection({ fixedAmount: undefined }));
+    assert.equal(result.success, false);
+  });
+
+  it("refuses a single amount on a collection that is not fixed", () => {
+    const result = createCollectionSchema.safeParse(
+      fixedCollection({ amountModel: "open_amount", fixedAmount: "5000" }),
+    );
+    assert.equal(result.success, false);
+  });
+
+  it("refuses a range on anything but an open-amount collection", () => {
+    const result = createCollectionSchema.safeParse(
+      fixedCollection({ amountModel: "tiers", fixedAmount: undefined, minAmount: "1000" }),
+    );
+    assert.equal(result.success, false);
+  });
+
+  it("refuses a per-member amount on an open collection — there is no member list", () => {
+    const result = createCollectionSchema.safeParse(
+      fixedCollection({ amountModel: "per_member", fixedAmount: undefined, participationMode: "open" }),
+    );
+    assert.equal(result.success, false);
+  });
+
+  it("refuses installments without a deadline (COL-03)", () => {
+    const result = createCollectionSchema.safeParse(fixedCollection({ paymentPlan: "installments_allowed" }));
+    assert.equal(result.success, false);
+  });
+
+  it("refuses installments on an open-amount collection — each contribution is already complete", () => {
+    const result = createCollectionSchema.safeParse(
+      fixedCollection({
+        amountModel: "open_amount",
+        fixedAmount: undefined,
+        paymentPlan: "installments_allowed",
+        deadlineAt: "2026-12-31T23:59",
+      }),
+    );
+    assert.equal(result.success, false);
+  });
+
+  it("refuses a deadline before the start date", () => {
+    const result = createCollectionSchema.safeParse(
+      fixedCollection({ startsAt: "2026-12-01T09:00", deadlineAt: "2026-11-01T09:00" }),
+    );
+    assert.equal(result.success, false);
+  });
+
+  it("defaults the fields an organiser should not have to think about", () => {
+    const parsed = createCollectionSchema.parse(fixedCollection());
+    assert.equal(parsed.paymentPlan, "full_only");
+    assert.equal(parsed.schedule, "one_time");
+    assert.equal(parsed.visibility, "unlisted");
+    assert.equal(parsed.allowAnonymous, false);
+  });
+});
+
+describe("setCollectionTiersSchema", () => {
+  it("accepts options with distinct names", () => {
+    const result = setCollectionTiersSchema.safeParse({
+      collectionId: COLLECTION_ID,
+      tiers: [
+        { name: "Standard", price: "5,000" },
+        { name: "VIP", price: "20000" },
+      ],
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("refuses two options with the same name, ignoring case (ADR 0010)", () => {
+    const result = setCollectionTiersSchema.safeParse({
+      collectionId: COLLECTION_ID,
+      tiers: [
+        { name: "Standard", price: "5000" },
+        { name: "standard", price: "9000" },
+      ],
+    });
+    assert.equal(result.success, false);
+  });
+
+  it("refuses an empty list and a free option", () => {
+    assert.equal(setCollectionTiersSchema.safeParse({ collectionId: COLLECTION_ID, tiers: [] }).success, false);
+    assert.equal(
+      setCollectionTiersSchema.safeParse({ collectionId: COLLECTION_ID, tiers: [{ name: "Free", price: "0" }] })
+        .success,
+      false,
+    );
+  });
+});
+
+describe("setCollectionFieldsSchema", () => {
+  it("accepts up to ten questions", () => {
+    const fields = Array.from({ length: 10 }, (_, index) => ({
+      key: `question_${index}`,
+      label: `Question ${index}`,
+      type: "text" as const,
+    }));
+    assert.equal(setCollectionFieldsSchema.safeParse({ collectionId: COLLECTION_ID, fields }).success, true);
+  });
+
+  it("refuses an eleventh question (PRD 4.3)", () => {
+    const fields = Array.from({ length: 11 }, (_, index) => ({
+      key: `question_${index}`,
+      label: `Question ${index}`,
+      type: "text" as const,
+    }));
+    assert.equal(setCollectionFieldsSchema.safeParse({ collectionId: COLLECTION_ID, fields }).success, false);
+  });
+
+  it("refuses a key that is not a safe identifier, and a choice with no options", () => {
+    assert.equal(
+      setCollectionFieldsSchema.safeParse({
+        collectionId: COLLECTION_ID,
+        fields: [{ key: "Matric Number", label: "Matric number", type: "text" }],
+      }).success,
+      false,
+    );
+    assert.equal(
+      setCollectionFieldsSchema.safeParse({
+        collectionId: COLLECTION_ID,
+        fields: [{ key: "level", label: "Level", type: "single_select" }],
+      }).success,
+      false,
+    );
+  });
+});
+
+describe("lifecycle and obligations", () => {
+  it("carries the status the caller believes the collection is in (compare-and-set)", () => {
+    const result = transitionCollectionStatusSchema.safeParse({
+      collectionId: COLLECTION_ID,
+      expected: "draft",
+      target: "active",
+    });
+    assert.equal(result.success, true);
+  });
+
+  it("caps a bulk assignment at 500 members per call", () => {
+    const memberIds = Array.from({ length: 501 }, () => crypto.randomUUID());
+    assert.equal(assignObligationsSchema.safeParse({ collectionId: COLLECTION_ID, memberIds }).success, false);
+    assert.equal(
+      assignObligationsSchema.safeParse({ collectionId: COLLECTION_ID, memberIds: memberIds.slice(0, 500) }).success,
+      true,
+    );
+  });
+
+  it("requires a reason to exempt or waive — members and officers read it (OBL-07, OBL-08)", () => {
+    const obligationId = crypto.randomUUID();
+    assert.equal(exemptObligationSchema.safeParse({ obligationId, reason: "" }).success, false);
+    assert.equal(exemptObligationSchema.safeParse({ obligationId, reason: "Graduated" }).success, true);
+    assert.equal(
+      waiveObligationSchema.safeParse({ obligationId, waivedAmount: "2000", reason: "" }).success,
+      false,
+    );
+    assert.equal(
+      waiveObligationSchema.safeParse({ obligationId, waivedAmount: "2000", reason: "Hardship" }).success,
+      true,
+    );
+  });
+});

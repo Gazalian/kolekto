@@ -17,9 +17,16 @@ export default defineConfig({
   timeout: 60_000,
   // The default 5s expect timeout produced flaky failures on the resource-
   // constrained sandbox this suite was authored on (a full Supabase stack
-  // plus Next.js plus the browser sharing ~4 CPUs / 4GB RAM); 15s gave
-  // consistent results there without masking a real hang elsewhere.
-  expect: { timeout: 15_000 },
+  // plus Next.js plus the browser sharing ~4 CPUs / 4GB RAM).
+  //
+  // Raised from 15s to 30s when Phase 3's journeys joined the suite. The
+  // failure it fixes looked exactly like a product bug and was not: a sign-in
+  // whose OTP request took longer than 15s under three specs' worth of load,
+  // while the same request from a plain browser against the same stack
+  // answered in about a second. Measured, not guessed — 30s is still short
+  // enough that a genuinely hung request fails the run rather than stalling
+  // it for the full per-test budget.
+  expect: { timeout: 30_000 },
   reporter: [["list"]],
   use: {
     baseURL: "http://127.0.0.1:3010",

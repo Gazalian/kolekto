@@ -21,10 +21,12 @@ only as actors — `created_by`, `requested_by`, `approved_by`.
 
 ## Status
 
-**Phase 2 — Application foundation.** Phase 1 (schema, authorization,
-testing, CI) and Phase 1.5 (migration compatibility, production hardening)
-are complete. This phase built the application shell on top of them. It does
-**not** contain payment or withdrawal functionality, deliberately.
+**Phase 3 — Collections, obligations and the contributor experience.** Phases 1
+(schema, authorization, testing, CI), 1.5 (migration compatibility, production
+hardening) and 2 (application foundation) are complete. This phase made the
+collection a working product object: configured, published, shared as one link,
+and answerable to "who is expected to pay?". It still does **not** move money,
+deliberately — see [`docs/adr/0012`](docs/adr/0012-collections-stop-at-the-money-boundary.md).
 
 | Area | State |
 |---|---|
@@ -34,13 +36,20 @@ are complete. This phase built the application shell on top of them. It does
 | Sign-up bootstrap (personal community + owner term) | Built (20260918140000) |
 | Application write functions (communities, members, invites, officer terms) | Built (20260918140100/140200, ADR 0011) |
 | Audit log | Migrated, written by every application write function |
-| Collections, tiers, obligations | Migrated (no money applied); UI is a placeholder |
-| Money primitives (integer kobo) + fee engine | Ported, tested, **not wired to anything** |
+| Collection write functions, lifecycle, tiers, questions, obligations | Built (20260919120000/120100) |
+| Collections UI: list, guided creation, detail, settings, sharing | Built |
+| Published collection page + contributor form (no account needed) | Built |
+| Money primitives (integer kobo) + fee engine | Ported, tested; used to price a selection, **wired to no payment** |
 | `apps/web`: auth (email/phone OTP), community switcher, members, invitations, settings, RBAC-aware nav | Built |
 | Design system (`packages/ui`) | Baseline built |
 | Ledger, payment attempts, transactions, contributions, withdrawals | **Not built** — gated on DEC-01/DEC-03 |
 | Paystack integration | **Not built** — gated on DEC-01/DEC-02/DEC-03 |
 | Notifications (WhatsApp/SMS/email) | **Not built** — gated on DEC-17 |
+
+Because payment is not built, no screen anywhere reports an amount received, a
+contributor count or a progress bar, and no obligation can be marked paid. A
+contributor who completes the public form is told plainly that nothing has been
+charged and nothing has been stored.
 
 Why the gates matter is in [`docs/adr/0006-ledger-deferred.md`](docs/adr/0006-ledger-deferred.md).
 The decisions themselves live in the PRD's Decision Register (section 25).

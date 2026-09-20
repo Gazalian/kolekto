@@ -140,6 +140,121 @@ export interface OfficerInvitation {
   created_at: string;
 }
 
+export type CollectionCategory = "dues" | "contribution" | "event" | "fundraiser" | "items" | "other";
+export type ParticipationMode = "open" | "managed";
+export type AmountModel = "fixed" | "open_amount" | "tiers" | "per_member";
+export type PaymentPlan = "full_only" | "installments_allowed";
+export type CollectionSchedule = "one_time" | "recurring";
+export type CollectionStatus = "draft" | "scheduled" | "active" | "paused" | "closed" | "suspended" | "archived";
+export type CollectionVisibility = "public" | "unlisted" | "members_only";
+export type FeeMode = "community_absorbs" | "contributor_pays";
+export type MemberAttributeType = "text" | "number" | "single_select" | "date";
+export type ObligationStatus = "unpaid" | "in_installments" | "overdue" | "paid" | "exempt" | "cancelled";
+
+/**
+ * Kobo columns read through PostgREST arrive as JSON numbers (see
+ * `generated-types.ts`). They are whole numbers well inside the safe integer
+ * range at any plausible collection size, and every display and comparison
+ * converts through `@kolekto/domain`'s `kobo()` rather than doing arithmetic on
+ * them here — ADR 0003's rule is that money is manipulated in exactly one
+ * module, not that it may never cross a JSON boundary.
+ */
+export interface Collection {
+  id: string;
+  community_id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  cover_image_url: string | null;
+  category: CollectionCategory;
+  participation_mode: ParticipationMode;
+  amount_model: AmountModel;
+  payment_plan: PaymentPlan;
+  schedule: CollectionSchedule;
+  fixed_amount_kobo: number | null;
+  min_amount_kobo: number | null;
+  max_amount_kobo: number | null;
+  target_amount_kobo: number | null;
+  starts_at: string | null;
+  deadline_at: string | null;
+  status: CollectionStatus;
+  visibility: CollectionVisibility;
+  display_options: Record<string, boolean>;
+  fee_mode: FeeMode;
+  allow_non_members: boolean;
+  codes_enabled: boolean;
+  allow_anonymous: boolean;
+  thank_you_message: string | null;
+  created_by: string;
+  published_by: string | null;
+  published_at: string | null;
+  closed_at: string | null;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectionTier {
+  id: string;
+  collection_id: string;
+  community_id: string;
+  name: string;
+  description: string | null;
+  price_kobo: number;
+  quantity_limit: number | null;
+  per_order_limit: number | null;
+  code_prefix: string | null;
+  hidden: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectionField {
+  id: string;
+  collection_id: string;
+  community_id: string;
+  key: string;
+  label: string;
+  type: MemberAttributeType;
+  options: string[] | null;
+  required: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+/**
+ * What one member is expected to pay toward one collection.
+ *
+ * There is no `amount_paid`, and its absence is the design (OBL-01, ADR 0006):
+ * what has been paid is derived from contributions, which do not exist yet. A
+ * screen that wants to show a balance shows `expected_amount_kobo` minus
+ * `waived_amount_kobo` and says what that figure is — never a paid total.
+ */
+export interface Obligation {
+  id: string;
+  community_id: string;
+  collection_id: string;
+  member_id: string;
+  cycle_key: string | null;
+  expected_amount_kobo: number;
+  waived_amount_kobo: number;
+  waived_reason: string | null;
+  waived_by: string | null;
+  waived_at: string | null;
+  due_at: string | null;
+  exempt: boolean;
+  exempt_reason: string | null;
+  exempt_by: string | null;
+  exempt_at: string | null;
+  status: ObligationStatus;
+  version: number;
+  assigned_by: string | null;
+  created_at: string;
+  updated_at: string;
+  cancelled_at: string | null;
+}
+
 export interface Permission {
   key: string;
   description: string;

@@ -1,20 +1,34 @@
-import { EmptyState } from "@kolekto/ui";
-import { Gift } from "lucide-react";
+import type { Collection, Community } from "@kolekto/db";
+import { notFound } from "next/navigation";
+import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
+import { createClient } from "../../../../lib/supabase/server.ts";
+import { CollectionsClient } from "./CollectionsClient.tsx";
 
 export const metadata = { title: "Collections" };
 
-export default function CollectionsPage() {
+export default async function CollectionsPage({ params }: { params: Promise<{ slug: string }> }) {
+  const { slug } = await params;
+  const supabase = await createClient();
+
+  const { data: community } = await supabase.from("communities").select("*").eq("slug", slug).maybeSingle();
+  if (!community) notFound();
+  const c = community as Community;
+
+  const access = await getCommunityAccess(c.id);
+
+  // collections_select_officer (RLS) already limits this to communities the
+  // caller holds a role in; the filter is for the query plan, not for safety.
+  const { data: collections } = await supabase
+    .from("collections")
+    .select("*")
+    .eq("community_id", c.id)
+    .order("created_at", { ascending: false });
+
   return (
-    <div className="flex flex-col gap-6">
-      <h1 className="text-xl font-semibold text-[var(--color-text)]">Collections</h1>
-      {/* Collection creation and the contributor payment flow are Phase 3
-          (ADR 0006 gates money on DEC-01/DEC-02/DEC-03). This is the
-          architectural placeholder the brief asks for, not a stub feature. */}
-      <EmptyState
-        icon={<Gift className="h-8 w-8" aria-hidden="true" />}
-        title="Collections are coming in the next phase"
-        description="Creating a collection and accepting contributions is being built on top of this foundation next."
-      />
-    </div>
+    <CollectionsClient
+      slug={slug}
+      collections={(collections ?? []) as Collection[]}
+      canCreate={hasPermission(access, "collection.draft")}
+    />
   );
 }

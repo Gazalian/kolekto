@@ -4,8 +4,37 @@ import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_PATHS = ["/login", "/invite", "/accept-invite"];
 
+/**
+ * First path segments that belong to the application itself, and therefore
+ * cannot be a community's public address. A community slug is at least three
+ * characters (communities_slug_format), so "c" could never collide; the rest
+ * could, and a community whose slug is one of these words would have its
+ * public page shadowed by the app's own route. Slug allocation does not yet
+ * exclude them — noted in the Phase 3 report as a follow-up, because fixing it
+ * means changing how Phase 2 allocates community slugs.
+ */
+const APP_SEGMENTS = new Set(["c", "communities", "login", "logout", "invite", "accept-invite", "api"]);
+
+/**
+ * `/{community-slug}/{collection-slug}` — the published collection page. It is
+ * public because a contributor has no account and is never asked for one
+ * (section 16 of the Phase 3 brief; SEC-12 in the schema).
+ *
+ * The page itself reads through `app.get_public_collection`, which returns
+ * whitelisted columns for published collections only. This check decides
+ * whether to bounce the request to a sign-in page, nothing more.
+ */
+function isPublicCollectionPath(pathname: string): boolean {
+  const segments = pathname.split("/").filter(Boolean);
+  return segments.length === 2 && !APP_SEGMENTS.has(segments[0]!);
+}
+
 function isPublicPath(pathname: string): boolean {
-  return pathname === "/" || PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+  return (
+    pathname === "/" ||
+    PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
+    isPublicCollectionPath(pathname)
+  );
 }
 
 /**

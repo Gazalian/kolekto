@@ -79,6 +79,20 @@ otp_expiry = 300
 otp_length = 6
 max_frequency = "60s"
 
+# LOCAL STACK ONLY. This file configures `supabase start`; it is not what
+# configures the hosted project, and nothing in this repository pushes it there
+# (ADR 0007 keeps environments apart).
+#
+# The CLI's default allows two OTP emails per hour, which is a sensible default
+# for a real project and a wall for a test suite: the E2E specs sign in as a
+# fresh person per journey — three per run once Phase 3's collection journeys
+# joined Phase 2's — and the third sign-in silently failed to send, so a test
+# waited fifteen seconds for an email that was never going to arrive. Raised
+# here rather than worked around in the tests, because sharing one signed-in
+# session between specs would make them depend on each other's order.
+[auth.rate_limit]
+email_sent = 100
+
 # Default templates render only a confirmation link ({{ .ConfirmationURL }}),
 # not the numeric code — see supabase/templates/otp.html's own comment. Both
 # mail actions signInWithOtp can trigger (a new sign-up vs. a returning user)

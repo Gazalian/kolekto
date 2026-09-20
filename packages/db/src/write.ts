@@ -12,7 +12,20 @@
 
 import type { TransactionSql } from "postgres";
 import { type CallerContext, runWrite, withCallerContext } from "./client.ts";
-import type { CommunityType, InviteStatus, MemberStatus, OfficerRole } from "./types.ts";
+import type {
+  AmountModel,
+  CollectionCategory,
+  CollectionSchedule,
+  CollectionStatus,
+  CollectionVisibility,
+  CommunityType,
+  InviteStatus,
+  MemberAttributeType,
+  MemberStatus,
+  OfficerRole,
+  ParticipationMode,
+  PaymentPlan,
+} from "./types.ts";
 
 async function call<T>(caller: CallerContext, fn: (tx: TransactionSql) => Promise<T>): Promise<T> {
   return runWrite(() => withCallerContext(caller, fn));
@@ -192,4 +205,228 @@ export async function declineOfficerInvitation(caller: CallerContext, token: str
 
 export async function endOfficerTerm(caller: CallerContext, officerTermId: string, reason?: string | undefined): Promise<void> {
   await call(caller, (tx) => tx`select app.end_officer_term(${officerTermId}, ${reason ?? null})`);
+}
+
+// ── Collections (20260919120000) ───────────────────────────────────────────
+//
+// Every amount is a `bigint` of kobo, converted from what a person typed by
+// `@kolekto/domain`'s `fromNaira` in the server action before it reaches here.
+// Nothing in this file parses, rounds or adds money.
+
+export interface CollectionConfigInput {
+  name: string;
+  category: CollectionCategory;
+  description?: string | undefined;
+  paymentPlan?: PaymentPlan | undefined;
+  fixedAmountKobo?: bigint | undefined;
+  minAmountKobo?: bigint | undefined;
+  maxAmountKobo?: bigint | undefined;
+  targetAmountKobo?: bigint | undefined;
+  startsAt?: string | undefined;
+  deadlineAt?: string | undefined;
+  visibility?: CollectionVisibility | undefined;
+  allowNonMembers?: boolean | undefined;
+  allowAnonymous?: boolean | undefined;
+  thankYouMessage?: string | undefined;
+}
+
+export async function createCollection(
+  caller: CallerContext,
+  input: CollectionConfigInput & {
+    communityId: string;
+    participationMode: ParticipationMode;
+    amountModel: AmountModel;
+    schedule?: CollectionSchedule | undefined;
+  },
+): Promise<string> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ id: string }[]>`select app.create_collection(
+      ${input.communityId}, ${input.name}, ${input.category},
+      ${input.participationMode}, ${input.amountModel}, ${input.description ?? null},
+      ${input.paymentPlan ?? "full_only"}, ${input.schedule ?? "one_time"},
+      ${input.fixedAmountKobo?.toString() ?? null}, ${input.minAmountKobo?.toString() ?? null},
+      ${input.maxAmountKobo?.toString() ?? null}, ${input.targetAmountKobo?.toString() ?? null},
+      ${input.startsAt ?? null}, ${input.deadlineAt ?? null},
+      ${input.visibility ?? "unlisted"}, ${input.allowNonMembers ?? false},
+      ${input.allowAnonymous ?? false}, ${input.thankYouMessage ?? null}
+    ) as id`,
+  );
+  return row!.id;
+}
+
+/** Full-replace, like updateCommunityProfile. The slug is not editable: a shared link is a promise (COM-04's reasoning, applied to collections). */
+export async function updateCollection(
+  caller: CallerContext,
+  input: CollectionConfigInput & {
+    collectionId: string;
+    amountModel?: AmountModel | undefined;
+    participationMode?: ParticipationMode | undefined;
+  },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.update_collection(
+      ${input.collectionId}, ${input.name}, ${input.category}, ${input.description ?? null},
+      ${input.amountModel ?? null}, ${input.participationMode ?? null}, ${input.paymentPlan ?? null},
+      ${input.fixedAmountKobo?.toString() ?? null}, ${input.minAmountKobo?.toString() ?? null},
+      ${input.maxAmountKobo?.toString() ?? null}, ${input.targetAmountKobo?.toString() ?? null},
+      ${input.startsAt ?? null}, ${input.deadlineAt ?? null},
+      ${input.visibility ?? "unlisted"}, ${input.allowNonMembers ?? false},
+      ${input.allowAnonymous ?? false}, ${input.thankYouMessage ?? null}
+    )`,
+  );
+}
+
+export async function deleteDraftCollection(caller: CallerContext, collectionId: string): Promise<void> {
+  await call(caller, (tx) => tx`select app.delete_draft_collection(${collectionId})`);
+}
+
+/**
+ * STM-01. `expected` is the status the caller believes the collection is in;
+ * a concurrent change fails the call rather than applying to a state the
+ * operator never saw. Returns the status the collection actually reached —
+ * publishing a collection with a future start date resolves to `scheduled`,
+ * which is the database's decision, not the caller's.
+ */
+export async function transitionCollectionStatus(
+  caller: CallerContext,
+  input: { collectionId: string; expected: CollectionStatus; target: CollectionStatus; reason?: string | undefined },
+): Promise<CollectionStatus> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ status: CollectionStatus }[]>`select app.transition_collection_status(
+      ${input.collectionId}, ${input.expected}, ${input.target}, ${input.reason ?? null}
+    ) as status`,
+  );
+  return row!.status;
+}
+
+export interface TierPayload {
+  /** Present for an existing option. ADR 0010: identity is the id, never the name. */
+  id?: string | undefined;
+  name: string;
+  description?: string | undefined;
+  priceKobo: bigint;
+  quantityLimit?: number | undefined;
+  perOrderLimit?: number | undefined;
+  codePrefix?: string | undefined;
+  hidden?: boolean | undefined;
+  sortOrder?: number | undefined;
+}
+
+export async function setCollectionTiers(
+  caller: CallerContext,
+  input: { collectionId: string; tiers: readonly TierPayload[] },
+): Promise<number> {
+  // price_kobo crosses as a string, not a JSON number: `JSON.stringify` cannot
+  // represent a bigint at all, and a number would be a silent precision
+  // decision in a money path (ADR 0003). The function casts it back to bigint.
+  const payload = input.tiers.map((tier, index) => ({
+    id: tier.id ?? null,
+    name: tier.name,
+    description: tier.description ?? null,
+    price_kobo: tier.priceKobo.toString(),
+    quantity_limit: tier.quantityLimit ?? null,
+    per_order_limit: tier.perOrderLimit ?? null,
+    code_prefix: tier.codePrefix ?? null,
+    hidden: tier.hidden ?? false,
+    sort_order: tier.sortOrder ?? index,
+  }));
+
+  const [row] = await call(caller, (tx) =>
+    tx<{ count: number }[]>`select app.set_collection_tiers(${input.collectionId}, ${tx.json(payload)}) as count`,
+  );
+  return row!.count;
+}
+
+export async function setTierHidden(caller: CallerContext, tierId: string, hidden: boolean): Promise<void> {
+  await call(caller, (tx) => tx`select app.set_tier_hidden(${tierId}, ${hidden})`);
+}
+
+export interface CollectionFieldPayload {
+  key: string;
+  label: string;
+  type: MemberAttributeType;
+  options?: readonly string[] | undefined;
+  required?: boolean | undefined;
+  sortOrder?: number | undefined;
+}
+
+export async function setCollectionFields(
+  caller: CallerContext,
+  input: { collectionId: string; fields: readonly CollectionFieldPayload[] },
+): Promise<number> {
+  const payload = input.fields.map((field, index) => ({
+    key: field.key,
+    label: field.label,
+    type: field.type,
+    options: field.options ?? null,
+    required: field.required ?? false,
+    sort_order: field.sortOrder ?? index,
+  }));
+
+  const [row] = await call(caller, (tx) =>
+    tx<{ count: number }[]>`select app.set_collection_fields(${input.collectionId}, ${tx.json(payload)}) as count`,
+  );
+  return row!.count;
+}
+
+// ── Obligations (20260919120000) ───────────────────────────────────────────
+
+/**
+ * Returns how many obligations were created. Members who already have one are
+ * skipped by the unique index rather than by a prior read, so two officers
+ * assigning the same list at the same time cannot produce duplicates.
+ *
+ * `expectedAmountKobo` is read only for a per-member collection. Everywhere
+ * else the collection states the amount and the function uses it, whatever is
+ * passed here.
+ */
+export async function assignObligations(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    memberIds: readonly string[];
+    expectedAmountKobo?: bigint | undefined;
+    dueAt?: string | undefined;
+  },
+): Promise<number> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ count: number }[]>`select app.assign_obligations(
+      ${input.collectionId}, ${[...input.memberIds]}, ${input.expectedAmountKobo?.toString() ?? null}, ${input.dueAt ?? null}
+    ) as count`,
+  );
+  return row!.count;
+}
+
+export async function updateObligationAmount(
+  caller: CallerContext,
+  input: { obligationId: string; expectedAmountKobo: bigint },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.update_obligation_amount(${input.obligationId}, ${input.expectedAmountKobo.toString()})`,
+  );
+}
+
+export async function cancelObligation(
+  caller: CallerContext,
+  input: { obligationId: string; reason?: string | undefined },
+): Promise<void> {
+  await call(caller, (tx) => tx`select app.cancel_obligation(${input.obligationId}, ${input.reason ?? null})`);
+}
+
+/** OBL-07. Not a payment: an exemption says this member is not expected to pay, and why. */
+export async function exemptObligation(
+  caller: CallerContext,
+  input: { obligationId: string; reason: string },
+): Promise<void> {
+  await call(caller, (tx) => tx`select app.exempt_obligation(${input.obligationId}, ${input.reason})`);
+}
+
+/** OBL-08. Also not a payment: part of the balance is forgiven, and the record says so. */
+export async function waiveObligationAmount(
+  caller: CallerContext,
+  input: { obligationId: string; waivedAmountKobo: bigint; reason: string },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.waive_obligation_amount(${input.obligationId}, ${input.waivedAmountKobo.toString()}, ${input.reason})`,
+  );
 }
