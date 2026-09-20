@@ -43,12 +43,16 @@ const args = [
   CONTAINER,
   "pg_dump",
   "-U",
-  "postgres",
+  "supabase_admin",
   "--data-only",
   "--disable-triggers",
   "--no-owner",
-  "--schema",
-  "public",
+  // Every selection is a --table pattern, deliberately. Mixing --schema public
+  // with --table auth.users produced a dump containing the auth tables and
+  // nothing else: the schema selection was ignored, the public data was never
+  // written, and the backup looked fine at 22 KB. Found by restoring it.
+  "--table",
+  "public.*",
   "--table",
   "auth.users",
   "--table",

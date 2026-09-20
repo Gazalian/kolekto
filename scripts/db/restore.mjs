@@ -37,11 +37,39 @@ if (!source || !existsSync(source)) {
   process.exit(1);
 }
 
-// A restore adds rows the database may already hold — the seed writes some of
-// them on every reset. Existing rows are left alone rather than duplicated or
-// overwritten: ON CONFLICT DO NOTHING is not something pg_dump emits, so the
-// insert is wrapped per statement and conflicts are reported, not fatal.
-const sql = readFileSync(source, "utf8");
+const dump = readFileSync(source, "utf8");
+
+/**
+ * Clear the tables this dump is about to refill, then refill them.
+ *
+ * Not an optimisation — a correctness fix found by testing the restore rather
+ * than assuming it. `pg_dump --data-only` writes one COPY per table, and a COPY
+ * is a single statement: if one row collides with a row already there, the whole
+ * COPY fails and that table restores NOTHING. After `supabase db reset` the seed
+ * has already written rows with the same fixed ids the backup holds, so every
+ * interesting table collided on its first row and the restore silently did
+ * nothing at all.
+ *
+ * A restore means "make the database match this snapshot", so the tables it
+ * covers are emptied first. Tables the dump does not mention are left alone.
+ *
+ * session_replication_role = replica turns off foreign keys and triggers for
+ * this session, which is what lets the tables be filled in whatever order
+ * pg_dump wrote them and stops auth.users' sign-up bootstrap firing and
+ * creating a second personal community for every user restored.
+ */
+const tables = [...dump.matchAll(/^COPY ([^\s(]+)/gm)].map((match) => match[1]);
+if (tables.length === 0) {
+  console.error(`${source} contains no table data.`);
+  process.exit(1);
+}
+
+const sql = [
+  "set session_replication_role = replica;",
+  `truncate table ${[...new Set(tables)].join(", ")} cascade;`,
+  dump,
+  "set session_replication_role = default;",
+].join("\n");
 
 try {
   execFileSync("docker", ["exec", CONTAINER, "true"], { stdio: "ignore" });
@@ -54,7 +82,7 @@ console.log(`Restoring ${source}`);
 
 const result = spawnSync(
   "docker",
-  ["exec", "-i", CONTAINER, "psql", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=0", "--quiet"],
+  ["exec", "-i", CONTAINER, "psql", "-U", "supabase_admin", "-d", "postgres", "-v", "ON_ERROR_STOP=0", "--quiet"],
   { input: sql, encoding: "utf8", maxBuffer: 512 * 1024 * 1024 },
 );
 
