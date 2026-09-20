@@ -33,6 +33,7 @@ export const COLLECTION_STATUSES = [
   "archived",
 ] as const;
 export const COLLECTION_FIELD_TYPES = ["text", "number", "single_select", "date"] as const;
+export const COLLECTION_AUDIENCE_MODES = ["all_members", "groups", "selected_members", "public"] as const;
 
 export type CollectionCategory = (typeof COLLECTION_CATEGORIES)[number];
 export type ParticipationMode = (typeof PARTICIPATION_MODES)[number];
@@ -42,6 +43,7 @@ export type CollectionSchedule = (typeof COLLECTION_SCHEDULES)[number];
 export type CollectionVisibility = (typeof COLLECTION_VISIBILITIES)[number];
 export type CollectionStatus = (typeof COLLECTION_STATUSES)[number];
 export type CollectionFieldType = (typeof COLLECTION_FIELD_TYPES)[number];
+export type CollectionAudienceMode = (typeof COLLECTION_AUDIENCE_MODES)[number];
 
 /**
  * The shapes `fromNaira` accepts, minus the negatives it would also parse: an
@@ -303,3 +305,37 @@ export const waiveObligationSchema = z.object({
 });
 
 export type WaiveObligationInput = z.infer<typeof waiveObligationSchema>;
+
+// ── Audience (§12, §37) ─────────────────────────────────────────────────────
+
+/**
+ * Who a collection is for.
+ *
+ * `groups` needs at least one group — an audience of no groups is nobody, which
+ * is never what someone meant. The other three carry no group list: "everyone",
+ * "these named people" and "anyone with the link" are complete on their own.
+ */
+export const setCollectionAudienceSchema = z
+  .object({
+    collectionId: z.string().uuid(),
+    audienceMode: z.enum(COLLECTION_AUDIENCE_MODES),
+    groupIds: z.array(z.string().uuid()).max(100).default([]),
+  })
+  .superRefine((value, ctx) => {
+    if (value.audienceMode === "groups" && value.groupIds.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["groupIds"],
+        message: "Choose at least one group, or make the collection for all members",
+      });
+    }
+  });
+
+export type SetCollectionAudienceInput = z.infer<typeof setCollectionAudienceSchema>;
+
+/** Materialising obligations from the audience. The amount is read only for a per-member collection; elsewhere the collection states it. */
+export const syncObligationsSchema = z.object({
+  collectionId: z.string().uuid(),
+  expectedAmount: optionalNairaAmountSchema,
+  dueAt: optionalDateTimeSchema,
+});

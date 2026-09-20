@@ -96,6 +96,8 @@ export function CollectionDetailClient({
   fields,
   obligations,
   assignableMembers,
+  audienceGroups,
+  audienceCounts,
   activity,
   permissions,
 }: {
@@ -106,6 +108,8 @@ export function CollectionDetailClient({
   fields: CollectionField[];
   obligations: ObligationRow[];
   assignableMembers: AssignableMember[];
+  audienceGroups: string[];
+  audienceCounts: { eligible: number; with_obligation: number; awaiting: number };
   activity: AuditLog[];
   permissions: CollectionPermissions;
 }) {
@@ -286,6 +290,8 @@ export function CollectionDetailClient({
           collection={collection}
           obligations={obligations}
           assignableMembers={assignableMembers}
+          audienceGroups={audienceGroups}
+          audienceCounts={audienceCounts}
           canAssign={permissions.canAssign}
           canExempt={permissions.canExempt}
         />

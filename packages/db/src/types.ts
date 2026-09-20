@@ -202,6 +202,7 @@ export type PaymentPlan = "full_only" | "installments_allowed";
 export type CollectionSchedule = "one_time" | "recurring";
 export type CollectionStatus = "draft" | "scheduled" | "active" | "paused" | "closed" | "suspended" | "archived";
 export type CollectionVisibility = "public" | "unlisted" | "members_only";
+export type CollectionAudienceModeValue = "all_members" | "groups" | "selected_members" | "public";
 export type FeeMode = "community_absorbs" | "contributor_pays";
 export type MemberAttributeType = "text" | "number" | "single_select" | "date";
 export type ObligationStatus = "unpaid" | "in_installments" | "overdue" | "paid" | "exempt" | "cancelled";
@@ -223,6 +224,8 @@ export interface Collection {
   cover_image_url: string | null;
   category: CollectionCategory;
   participation_mode: ParticipationMode;
+  /** Who the collection is for. Paired with participation_mode by a database constraint, so the two cannot disagree. */
+  audience_mode: CollectionAudienceModeValue;
   amount_model: AmountModel;
   payment_plan: PaymentPlan;
   schedule: CollectionSchedule;

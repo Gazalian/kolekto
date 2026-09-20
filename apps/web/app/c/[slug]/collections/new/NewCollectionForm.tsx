@@ -5,9 +5,13 @@ import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
+import type { MemberGroup } from "@kolekto/db";
+import type { CollectionAudienceMode } from "@kolekto/validation";
 import { AMOUNT_MODEL_LABEL } from "../../../../../lib/collection-display.ts";
+import { AudiencePicker, AUDIENCE_LABELS } from "../AudiencePicker.tsx";
 import {
   createCollectionAction,
+  setCollectionAudienceAction,
   setCollectionFieldsAction,
   setCollectionTiersAction,
 } from "../actions.ts";
@@ -86,10 +90,12 @@ export function NewCollectionForm({
   slug,
   communityId,
   memberCount,
+  groups,
 }: {
   slug: string;
   communityId: string;
   memberCount: number;
+  groups: MemberGroup[];
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
@@ -112,11 +118,16 @@ export function NewCollectionForm({
   const [tiers, setTiers] = useState<TierDraft[]>([emptyTier()]);
   const [questions, setQuestions] = useState<QuestionDraft[]>([]);
   const [visibility, setVisibility] = useState<"public" | "unlisted">("unlisted");
+  const [audienceMode, setAudienceMode] = useState<CollectionAudienceMode>(
+    INTENTS[0]!.participationMode === "open" ? "public" : "all_members",
+  );
+  const [audienceGroupIds, setAudienceGroupIds] = useState<string[]>([]);
 
   function chooseIntent(next: Intent): void {
     setIntent(next);
     setAmountModel(next.amountModel);
     setParticipationMode(next.participationMode);
+    setAudienceMode(next.participationMode === "open" ? "public" : "all_members");
     setStep(1);
   }
 
@@ -158,6 +169,21 @@ export function NewCollectionForm({
 
       const href = `/c/${slug}/collections/${created.collectionSlug}`;
       setDraftHref(href);
+
+      // The collection is created with the audience its participation mode
+      // implies — public, or all members. Anything narrower is a second,
+      // explicit decision, and still creates no obligation for anyone.
+      if (audienceMode === "groups" || audienceMode === "selected_members") {
+        const audience = await setCollectionAudienceAction(slug, created.collectionSlug, {
+          collectionId: created.collectionId,
+          audienceMode,
+          groupIds: audienceGroupIds,
+        });
+        if (audience.error) {
+          setError(`The draft was created, but who it is for was not saved: ${audience.error}`);
+          return;
+        }
+      }
 
       if (amountModel === "tiers") {
         const tierResult = await setCollectionTiersAction(slug, created.collectionSlug, {
@@ -326,19 +352,22 @@ export function NewCollectionForm({
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Who is expected to contribute?</h2>
 
-          <SelectField
-            label="Who can pay"
-            value={participationMode}
-            onChange={(event) => setParticipationMode(event.target.value as Intent["participationMode"])}
-            hint={
-              participationMode === "managed"
-                ? `You add members to this collection and Kolekto tracks who still owes. This community has ${memberCount} member${memberCount === 1 ? "" : "s"}.`
-                : "Anyone with the link can contribute. Nobody needs a Kolekto account."
-            }
-          >
-            <option value="open">Anyone with the link</option>
-            <option value="managed">A list of members I choose</option>
-          </SelectField>
+          <p className="text-sm text-[var(--color-text-muted)]">
+            This community has {memberCount} member{memberCount === 1 ? "" : "s"}. Choosing a group or the whole roll
+            does not ask anyone for money yet — you add the obligations yourself, once the collection is published.
+          </p>
+
+          <AudiencePicker
+            value={audienceMode}
+            groups={groups}
+            selectedGroupIds={audienceGroupIds}
+            allowPublic={amountModel !== "per_member"}
+            onChange={(mode) => {
+              setAudienceMode(mode);
+              setParticipationMode(mode === "public" ? "open" : "managed");
+            }}
+            onGroupsChange={setAudienceGroupIds}
+          />
 
           <SelectField
             label="Visibility"
@@ -384,7 +413,7 @@ export function NewCollectionForm({
               <Row label="Range" value={`${minAmount || "any"} to ${maxAmount || "any"}`} />
             )}
             {targetAmount && <Row label="Target" value={targetAmount} />}
-            <Row label="Who can pay" value={participationMode === "managed" ? "A list of members" : "Anyone with the link"} />
+            <Row label="Who it is for" value={AUDIENCE_LABELS[audienceMode].title} />
             <Row label="Deadline" value={deadlineAt || "None"} />
             <Row label="Questions" value={questions.length === 0 ? "None" : questions.map((q) => q.label).join(", ")} />
           </dl>

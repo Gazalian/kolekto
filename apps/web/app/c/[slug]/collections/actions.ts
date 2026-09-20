@@ -8,8 +8,10 @@ import {
   DatabaseError,
   deleteDraftCollection,
   exemptObligation,
+  setCollectionAudience,
   setCollectionFields,
   setCollectionTiers,
+  syncCollectionObligations,
   setTierHidden,
   transitionCollectionStatus,
   updateCollection,
@@ -21,8 +23,10 @@ import {
   cancelObligationSchema,
   createCollectionSchema,
   exemptObligationSchema,
+  setCollectionAudienceSchema,
   setCollectionFieldsSchema,
   setCollectionTiersSchema,
+  syncObligationsSchema,
   transitionCollectionStatusSchema,
   updateCollectionSchema,
   updateObligationAmountSchema,
@@ -240,6 +244,55 @@ export async function deleteDraftCollectionAction(slug: string, collectionId: st
   }
   revalidateCollection(slug);
   return { ok: true };
+}
+
+// ── Audience ────────────────────────────────────────────────────────────────
+
+export async function setCollectionAudienceAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult> {
+  const parsed = setCollectionAudienceSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Choose who this collection is for" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionAudience(caller, parsed.data);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save who this collection is for") };
+  }
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
+/**
+ * Materialises obligations for members who are eligible and have none.
+ *
+ * Deliberately an action someone takes, never a trigger: a member joining a
+ * group must not acquire a debt on their own, and this is the button that
+ * decides otherwise. It never removes an obligation.
+ */
+export async function syncObligationsAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult & { created?: number }> {
+  const parsed = syncObligationsSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Could not add these obligations" };
+
+  const caller = await requireCallerContext();
+  try {
+    const created = await syncCollectionObligations(caller, {
+      collectionId: parsed.data.collectionId,
+      expectedAmountKobo: toKobo(parsed.data.expectedAmount),
+      dueAt: parsed.data.dueAt,
+    });
+    revalidateCollection(slug, collectionSlug);
+    return { ok: true, created };
+  } catch (error) {
+    return { error: messageFrom(error, "Could not add these obligations") };
+  }
 }
 
 // ── Obligations ─────────────────────────────────────────────────────────────

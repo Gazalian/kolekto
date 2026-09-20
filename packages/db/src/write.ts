@@ -521,6 +521,50 @@ export async function transitionCollectionStatus(
   return row!.status;
 }
 
+// ── Collection audience (20260920150000) ───────────────────────────────────
+//
+// Audience is configuration; an obligation is a record. These two never merge:
+// setting an audience creates nothing, and syncing obligations is a deliberate
+// act someone performs, never a consequence of a member joining a group.
+
+export type CollectionAudienceMode = "all_members" | "groups" | "selected_members" | "public";
+
+export async function setCollectionAudience(
+  caller: CallerContext,
+  input: { collectionId: string; audienceMode: CollectionAudienceMode; groupIds?: readonly string[] | undefined },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.set_collection_audience(
+      ${input.collectionId}, ${input.audienceMode}, ${input.groupIds ? [...input.groupIds] : []}
+    )`,
+  );
+}
+
+/** `awaiting` is what the "N newly eligible members" prompt counts — eligible, with no obligation yet. */
+export async function countCollectionAudience(
+  caller: CallerContext,
+  collectionId: string,
+): Promise<{ eligible: number; with_obligation: number; awaiting: number }> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ eligible: number; with_obligation: number; awaiting: number }[]>`
+      select * from app.count_collection_audience(${collectionId})`,
+  );
+  return row ?? { eligible: 0, with_obligation: 0, awaiting: 0 };
+}
+
+/** Returns how many obligations were created. Idempotent, and it never deletes one. */
+export async function syncCollectionObligations(
+  caller: CallerContext,
+  input: { collectionId: string; expectedAmountKobo?: bigint | undefined; dueAt?: string | undefined },
+): Promise<number> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ count: number }[]>`select app.sync_collection_obligations(
+      ${input.collectionId}, ${input.expectedAmountKobo?.toString() ?? null}, ${input.dueAt ?? null}
+    ) as count`,
+  );
+  return row!.count;
+}
+
 export interface TierPayload {
   /** Present for an existing option. ADR 0010: identity is the id, never the name. */
   id?: string | undefined;

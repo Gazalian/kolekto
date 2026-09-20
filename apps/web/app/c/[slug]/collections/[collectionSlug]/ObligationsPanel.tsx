@@ -5,6 +5,8 @@ import {
   Badge,
   Banner,
   Button,
+  Card,
+  CardBody,
   Dialog,
   EmptyState,
   Table,
@@ -22,6 +24,7 @@ import {
   assignObligationsAction,
   cancelObligationAction,
   exemptObligationAction,
+  syncObligationsAction,
   waiveObligationAction,
 } from "../actions.ts";
 import type { AssignableMember, ObligationRow } from "./CollectionDetailClient.tsx";
@@ -41,6 +44,8 @@ export function ObligationsPanel({
   collection,
   obligations,
   assignableMembers,
+  audienceGroups,
+  audienceCounts,
   canAssign,
   canExempt,
 }: {
@@ -48,6 +53,8 @@ export function ObligationsPanel({
   collection: Collection;
   obligations: ObligationRow[];
   assignableMembers: AssignableMember[];
+  audienceGroups: string[];
+  audienceCounts: { eligible: number; with_obligation: number; awaiting: number };
   canAssign: boolean;
   canExempt: boolean;
 }) {
@@ -80,6 +87,33 @@ export function ObligationsPanel({
         These are the members expected to contribute and what each one is asked for. Nothing here can be marked paid:
         an obligation is only settled by a verified payment, and payments are not switched on yet.
       </Banner>
+
+      <Card>
+        <CardBody className="flex flex-col gap-2">
+          <p className="text-sm font-medium text-[var(--color-text)]">
+            {collection.audience_mode === "all_members"
+              ? "For everyone on the roll"
+              : collection.audience_mode === "groups"
+                ? `For ${audienceGroups.join(" and ") || "selected groups"}`
+                : "For members you pick"}
+          </p>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {audienceCounts.eligible} eligible · {audienceCounts.with_obligation} already expected to pay
+          </p>
+
+          {/* §38: eligibility is resolved live, but becoming eligible never
+              creates a debt on its own. This is the prompt that asks a person
+              to decide, and the only thing that materialises obligations. */}
+          {canAssign && audienceCounts.awaiting > 0 && collection.audience_mode !== "selected_members" && (
+            <SyncPrompt
+              slug={slug}
+              collection={collection}
+              awaiting={audienceCounts.awaiting}
+              onError={setError}
+            />
+          )}
+        </CardBody>
+      </Card>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[var(--color-text-muted)]">
@@ -227,6 +261,63 @@ export function ObligationsPanel({
           onError={setError}
         />
       )}
+    </div>
+  );
+}
+
+/**
+ * "3 new members are eligible — Review & Add Obligations" (§38).
+ *
+ * The button is the whole point. A member joining 300 Level makes them eligible
+ * for the dues that group is being charged; it does not make them owe anything.
+ * Somebody decides that, here, and the decision is audited.
+ */
+function SyncPrompt({
+  slug,
+  collection,
+  awaiting,
+  onError,
+}: {
+  slug: string;
+  collection: Collection;
+  awaiting: number;
+  onError: (message: string) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [amount, setAmount] = useState("");
+  const needsAmount = collection.amount_model !== "fixed";
+
+  return (
+    <div className="mt-2 flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-warning-bg)]/40 p-3">
+      <p className="text-sm text-[var(--color-text)]">
+        {awaiting} eligible member{awaiting === 1 ? " is" : "s are"} not expected to pay yet.
+      </p>
+
+      {needsAmount && (
+        <TextField
+          label="Amount to expect from each"
+          hint="In naira."
+          value={amount}
+          onChange={(event) => setAmount(event.target.value)}
+        />
+      )}
+
+      <Button
+        size="sm"
+        loading={isPending}
+        disabled={needsAmount && amount.trim() === ""}
+        onClick={() =>
+          startTransition(async () => {
+            const result = await syncObligationsAction(slug, collection.slug, {
+              collectionId: collection.id,
+              expectedAmount: needsAmount ? amount : "",
+            });
+            if (result.error) onError(result.error);
+          })
+        }
+      >
+        Add {awaiting} obligation{awaiting === 1 ? "" : "s"}
+      </Button>
     </div>
   );
 }

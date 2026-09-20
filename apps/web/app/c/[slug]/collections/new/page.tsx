@@ -1,4 +1,4 @@
-import type { Community } from "@kolekto/db";
+import type { Community, MemberGroup } from "@kolekto/db";
 import { notFound, redirect } from "next/navigation";
 import { getCommunityAccess, hasPermission } from "../../../../../lib/permissions.ts";
 import { createClient } from "../../../../../lib/supabase/server.ts";
@@ -19,10 +19,22 @@ export default async function NewCollectionPage({ params }: { params: Promise<{ 
   const access = await getCommunityAccess(c.id);
   if (!hasPermission(access, "collection.draft")) redirect(`/c/${slug}/collections`);
 
-  const { count: memberCount } = await supabase
-    .from("members")
-    .select("id", { count: "exact", head: true })
-    .eq("community_id", c.id);
+  const [{ count: memberCount }, { data: groups }] = await Promise.all([
+    supabase.from("members").select("id", { count: "exact", head: true }).eq("community_id", c.id),
+    supabase
+      .from("member_groups")
+      .select("*")
+      .eq("community_id", c.id)
+      .is("archived_at", null)
+      .order("sort_order"),
+  ]);
 
-  return <NewCollectionForm slug={slug} communityId={c.id} memberCount={memberCount ?? 0} />;
+  return (
+    <NewCollectionForm
+      slug={slug}
+      communityId={c.id}
+      memberCount={memberCount ?? 0}
+      groups={(groups ?? []) as MemberGroup[]}
+    />
+  );
 }

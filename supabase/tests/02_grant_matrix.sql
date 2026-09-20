@@ -97,7 +97,8 @@ select bag_eq(
       ('community_member_code_settings'),
       ('invite_links'), ('officer_invitations'),
       ('collections'), ('collection_tiers'), ('collection_fields'),
-      ('collection_code_settings'), ('obligations'), ('audit_logs')
+      ('collection_code_settings'), ('collection_audience_groups'),
+      ('obligations'), ('audit_logs')
   $$,
   'authenticated can SELECT exactly the allowlisted tables and no others'
 );
