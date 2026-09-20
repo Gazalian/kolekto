@@ -29,7 +29,6 @@ import { useMemo, useState, useTransition } from "react";
 import {
   approveMemberAction,
   archiveMemberAction,
-  createInviteLinkAction,
   createMemberAction,
   findDuplicatesAction,
   rejectMemberAction,
@@ -38,6 +37,7 @@ import {
   setMemberGroupsAction,
   updateMemberAction,
 } from "./actions.ts";
+import { InviteLinkDialog } from "./InviteLinkDialog.tsx";
 import { MemberProfileConfig } from "./MemberProfileConfig.tsx";
 import { GroupsManager, type GroupRow } from "./GroupsManager.tsx";
 
@@ -305,7 +305,13 @@ export function MembersClient({
       {archiving && <ArchiveDialog slug={slug} row={archiving} onClose={() => setArchiving(null)} />}
 
       {canInvite && inviteOpen && (
-        <CreateInviteLinkDialog slug={slug} communityId={communityId} onClose={() => setInviteOpen(false)} />
+        <InviteLinkDialog
+          slug={slug}
+          communityId={communityId}
+          definitions={definitions}
+          groups={groups}
+          onClose={() => setInviteOpen(false)}
+        />
       )}
 
       {canConfigure && groupsOpen && (
@@ -640,58 +646,6 @@ function ArchiveDialog({ slug, row, onClose }: { slug: string; row: MemberRow; o
           Archive member
         </Button>
       </form>
-    </Dialog>
-  );
-}
-
-function CreateInviteLinkDialog({
-  slug,
-  communityId,
-  onClose,
-}: {
-  slug: string;
-  communityId: string;
-  onClose: () => void;
-}) {
-  const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-  const [link, setLink] = useState<string | null>(null);
-
-  return (
-    <Dialog open onClose={onClose} title="Create invite link">
-      {link ? (
-        <div className="flex flex-col gap-3">
-          <Banner tone="success">Link created. Copy it now — it is shown only once.</Banner>
-          <TextField label="Invite link" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-          <Button onClick={() => void navigator.clipboard.writeText(link)}>Copy link</Button>
-        </div>
-      ) : (
-        <form
-          className="flex flex-col gap-4"
-          action={(formData) =>
-            startTransition(async () => {
-              const approveJoiners = formData.get("approveJoiners") === "on";
-              const label = (formData.get("label") as string) || undefined;
-              const result = await createInviteLinkAction(slug, communityId, { approveJoiners, label });
-              if (result.error) setError(result.error);
-              else if (result.token) {
-                setError(null);
-                setLink(`${window.location.origin}/invite/${result.token}`);
-              }
-            })
-          }
-        >
-          <TextField label="Label" name="label" hint="Optional, for your own reference." />
-          <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
-            <input type="checkbox" name="approveJoiners" className="h-4 w-4 rounded border-[var(--color-border-strong)]" />
-            Require officer approval before joiners appear on the roster
-          </label>
-          {error && <Banner tone="danger">{error}</Banner>}
-          <Button type="submit" loading={isPending}>
-            Create link
-          </Button>
-        </form>
-      )}
     </Dialog>
   );
 }

@@ -60,7 +60,8 @@ select bag_eq(
       and has_function_privilege('anon', p.oid, 'EXECUTE')
   $$,
   $$ values ('get_public_collection'), ('get_public_collection_tiers'),
-            ('get_public_collection_fields'), ('redeem_invite_link') $$,
+            ('get_public_collection_fields'), ('redeem_invite_link'),
+            ('get_public_invite') $$,
   'anon can execute exactly the whitelisted public-collection-page functions plus redeem_invite_link (MEM-05)'
 );
 

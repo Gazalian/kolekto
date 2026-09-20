@@ -1,38 +1,98 @@
 "use client";
 
-import { Banner, Button, TextField } from "@kolekto/ui";
+import type { PublicInvite } from "@kolekto/db";
+import { Banner, Button, SelectField, TextField } from "@kolekto/ui";
 import { useState, useTransition } from "react";
 import { redeemInviteLinkAction, type JoinResult } from "./actions.ts";
 
-export function JoinForm({ token }: { token: string }) {
+/**
+ * The join form, built from the community's own member profile.
+ *
+ * A school asks for a matric number and a level; an estate asks for a house
+ * number. Neither is hardcoded here — the fields come from the invitation,
+ * which got them from `member_attribute_definitions`, and the answers are
+ * stored against those same definitions.
+ *
+ * Required-ness is shown here and enforced in the database: the form marking a
+ * field optional would not let a joiner skip one the invitation requires.
+ */
+export function JoinForm({
+  token,
+  communityName,
+  fields,
+  approveJoiners,
+}: {
+  token: string;
+  communityName: string;
+  fields: PublicInvite["fields"];
+  approveJoiners: boolean;
+}) {
   const [isPending, startTransition] = useTransition();
-  const [result, setResult] = useState<JoinResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [joined, setJoined] = useState<JoinResult | null>(null);
 
-  if (result?.status) {
+  if (joined?.memberCode) {
     return (
-      <Banner tone="success">
-        {result.status === "pending_approval"
-          ? "You're on the list — an officer needs to approve your request before you appear on the roster."
-          : "You've joined the roster."}
-      </Banner>
+      <div className="flex flex-col gap-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
+        <h2 className="text-lg font-semibold text-[var(--color-text)]">
+          {joined.status === "pending_approval" ? "Request sent" : `Welcome to ${communityName}`}
+        </h2>
+
+        <div>
+          <p className="text-sm text-[var(--color-text-muted)]">Your member ID</p>
+          <p className="font-mono text-xl font-semibold text-[var(--color-text)]">{joined.memberCode}</p>
+        </div>
+
+        <p className="text-sm text-[var(--color-text-muted)]">
+          {joined.status === "pending_approval"
+            ? "An officer will review your details before you appear on the roster. Keep your member ID — it is how you will be found."
+            : "Keep your member ID. It is how you identify yourself when contributing to a collection."}
+        </p>
+      </div>
     );
   }
 
   return (
     <form
-      className="flex flex-col gap-4"
+      className="flex w-full flex-col gap-4"
       action={(formData) =>
         startTransition(async () => {
-          setResult(await redeemInviteLinkAction(token, formData));
+          const result = await redeemInviteLinkAction(token, formData);
+          if (result.error) setError(result.error);
+          else setJoined(result);
         })
       }
     >
-      <TextField label="Full name" name="fullName" required />
-      <TextField label="Phone number" name="phoneE164" placeholder="+2348012345678" required />
-      <TextField label="Email" name="email" type="email" hint="Optional." />
-      {result?.error && <Banner tone="danger">{result.error}</Banner>}
+      <TextField label="Full name" name="fullName" required autoComplete="name" />
+      <TextField label="Phone number" name="phoneE164" placeholder="+2348012345678" required autoComplete="tel" />
+      <TextField label="Email" name="email" type="email" autoComplete="email" hint="Optional." />
+
+      {fields.map((field) =>
+        field.type === "single_select" ? (
+          <SelectField key={field.key} label={field.label} name={`attr:${field.key}`} required={field.required}>
+            <option value="">Choose one</option>
+            {(field.options ?? []).map((option) => (
+              <option key={option} value={option}>
+                {option}
+              </option>
+            ))}
+          </SelectField>
+        ) : (
+          <TextField
+            key={field.key}
+            label={field.label}
+            name={`attr:${field.key}`}
+            required={field.required}
+            type={field.type === "date" ? "date" : "text"}
+            inputMode={field.type === "number" ? "numeric" : undefined}
+          />
+        ),
+      )}
+
+      {error && <Banner tone="danger">{error}</Banner>}
+
       <Button type="submit" loading={isPending}>
-        Join
+        {approveJoiners ? "Request to join" : "Join"}
       </Button>
     </form>
   );

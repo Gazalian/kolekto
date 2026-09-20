@@ -28,6 +28,7 @@ import {
   archiveGroupSchema,
   archiveMemberSchema,
   createGroupSchema,
+  createInviteLinkSchema,
   createMemberSchema,
   findMemberDuplicatesSchema,
   memberCodeSettingsSchema,
@@ -185,12 +186,14 @@ export async function rejectMemberAction(slug: string, memberId: string): Promis
 
 export async function createInviteLinkAction(
   slug: string,
-  communityId: string,
-  input: { approveJoiners: boolean; maxUses?: number | undefined; label?: string | undefined },
+  input: unknown,
 ): Promise<ActionResult & { token?: string }> {
+  const parsed = createInviteLinkSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the link settings and try again" };
+
   const caller = await requireCallerContext();
   try {
-    const { token } = await createInviteLink(caller, { communityId, ...input });
+    const { token } = await createInviteLink(caller, parsed.data);
     revalidateMembers(slug);
     return { ok: true, token };
   } catch (error) {

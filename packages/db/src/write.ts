@@ -11,7 +11,7 @@
  */
 
 import type { TransactionSql } from "postgres";
-import { type CallerContext, runWrite, withCallerContext } from "./client.ts";
+import { ANONYMOUS, type CallerContext, runWrite, withCallerContext } from "./client.ts";
 import type {
   AmountModel,
   CollectionCategory,
@@ -291,6 +291,13 @@ export async function setMemberGroups(
 
 // ── Member invite links (MEM-05) ──────────────────────────────────────────
 
+/**
+ * `askedAttributeKeys` are the community's own member fields the join form
+ * shows; `requiredAttributeKeys` must be a subset of them. Both are enforced by
+ * the database at redemption, so a joiner cannot skip a required answer by
+ * leaving it out of the request, or write a field the invitation never asked
+ * for.
+ */
 export async function createInviteLink(
   caller: CallerContext,
   input: {
@@ -302,13 +309,17 @@ export async function createInviteLink(
     expiresAt?: string | undefined;
     maxUses?: number | undefined;
     label?: string | undefined;
+    askedAttributeKeys?: readonly string[] | undefined;
+    requiredAttributeKeys?: readonly string[] | undefined;
   },
 ): Promise<{ id: string; token: string }> {
   const [row] = await call(caller, (tx) =>
     tx<{ id: string; token: string }[]>`select * from app.create_invite_link(
       ${input.communityId}, ${input.groupIds ?? []}, ${input.allowGroupChoice ?? false},
       ${input.allowMultiGroup ?? false}, ${input.approveJoiners ?? false}, ${input.expiresAt ?? null},
-      ${input.maxUses ?? null}, ${input.label ?? null}
+      ${input.maxUses ?? null}, ${input.label ?? null},
+      ${input.askedAttributeKeys ? [...input.askedAttributeKeys] : []},
+      ${input.requiredAttributeKeys ? [...input.requiredAttributeKeys] : []}
     )`,
   );
   return row!;
@@ -318,17 +329,55 @@ export async function revokeInviteLink(caller: CallerContext, inviteLinkId: stri
   await call(caller, (tx) => tx`select app.revoke_invite_link(${inviteLinkId})`);
 }
 
-/** The one function ever called with `ANONYMOUS` (MEM-05). */
+/**
+ * The one function ever called with `ANONYMOUS` (MEM-05).
+ *
+ * Returns the community member code, because the person who just joined should
+ * be told who they now are (§16) rather than left to ask an officer.
+ */
 export async function redeemInviteLink(
   caller: CallerContext,
-  input: { token: string; fullName: string; phoneE164: string; email?: string | undefined; groupIds?: string[] | undefined },
-): Promise<{ memberId: string; status: MemberStatus }> {
+  input: {
+    token: string;
+    fullName: string;
+    phoneE164: string;
+    email?: string | undefined;
+    groupIds?: string[] | undefined;
+    attributes?: MemberAttributes | undefined;
+  },
+): Promise<{ memberId: string; status: MemberStatus; memberCode: string }> {
   const [row] = await call(caller, (tx) =>
-    tx<{ member_id: string; status: MemberStatus }[]>`select * from app.redeem_invite_link(
-      ${input.token}, ${input.fullName}, ${input.phoneE164}, ${input.email ?? null}, ${input.groupIds ?? []}
+    tx<{ member_id: string; status: MemberStatus; member_code: string }[]>`select * from app.redeem_invite_link(
+      ${input.token}, ${input.fullName}, ${input.phoneE164}, ${input.email ?? null}, ${input.groupIds ?? []},
+      ${tx.json(input.attributes ?? {})}
     )`,
   );
-  return { memberId: row!.member_id, status: row!.status };
+  return { memberId: row!.member_id, status: row!.status, memberCode: row!.member_code };
+}
+
+/** What an invite link shows the person opening it: the community, the groups they will land in, and the fields to ask. `null` when the link is unknown, revoked, expired or used up. */
+export interface PublicInvite {
+  community_name: string;
+  community_logo_url: string | null;
+  label: string | null;
+  approve_joiners: boolean;
+  allow_group_choice: boolean;
+  allow_multi_group: boolean;
+  preset_group_names: string[];
+  fields: {
+    key: string;
+    label: string;
+    type: MemberAttributeType;
+    options: string[] | null;
+    required: boolean;
+  }[];
+}
+
+export async function getPublicInvite(token: string): Promise<PublicInvite | null> {
+  const rows = await withCallerContext(ANONYMOUS, (tx) =>
+    tx<PublicInvite[]>`select * from app.get_public_invite(${token})`,
+  );
+  return rows[0] ?? null;
 }
 
 export async function approvePendingMember(caller: CallerContext, memberId: string): Promise<void> {
