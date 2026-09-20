@@ -24,6 +24,7 @@ import {
   Tr,
 } from "@kolekto/ui";
 import { Plus, Settings2, UserPlus, Users } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import {
   approveMemberAction,
@@ -223,7 +224,14 @@ export function MembersClient({
                 <Td data-label="Member ID">
                   <span className="font-mono text-xs text-[var(--color-text)]">{row.member.member_code ?? "—"}</span>
                 </Td>
-                <Td data-label="Name">{row.member.full_name}</Td>
+                <Td data-label="Name">
+                  <Link
+                    href={`/c/${slug}/members/${row.member.id}`}
+                    className="font-medium text-[var(--color-primary)] hover:underline"
+                  >
+                    {row.member.full_name}
+                  </Link>
+                </Td>
                 {primary && <Td data-label={primary.label}>{row.attributes[primary.key] ?? "—"}</Td>}
                 {secondary.map((definition) => (
                   <Td key={definition.id} data-label={definition.label}>

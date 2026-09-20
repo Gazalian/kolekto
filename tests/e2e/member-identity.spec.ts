@@ -95,6 +95,17 @@ test("configure member identity, add members, and handle duplicates", async ({ p
   await page.getByRole("dialog").getByRole("button", { name: "Archive member" }).click();
   await expect(page.getByText("KWASU/0002")).toHaveCount(0);
 
+  // The member detail page: identity, contact, community fields, groups,
+  // activity — and no invented payment history.
+  await page.getByRole("link", { name: "Chidi Eze", exact: true }).click();
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByRole("heading", { name: "Chidi Eze" })).toBeVisible();
+  await expect(page.getByText("KWASU/0001")).toBeVisible();
+  await expect(page.getByText("20/53A/021")).toBeVisible();
+  await expect(page.getByText(/Payment history will appear here/)).toBeVisible();
+  await page.getByRole("link", { name: "← Members" }).click();
+  await page.waitForLoadState("networkidle");
+
   await page.getByRole("button", { name: "Show archived" }).click();
   await expect(page.getByText("KWASU/0002")).toBeVisible();
   await page.getByRole("button", { name: "Restore" }).click();
