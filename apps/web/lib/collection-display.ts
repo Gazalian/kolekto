@@ -68,6 +68,7 @@ export const AMOUNT_MODEL_LABEL: Record<string, string> = {
   open_amount: "Contributors choose the amount",
   tiers: "Options to choose from",
   per_member: "A different amount per member",
+  items: "Items with their own prices",
 };
 
 export const PARTICIPATION_LABEL: Record<string, string> = {
@@ -110,6 +111,8 @@ export function describeAmount(collection: {
     }
     case "tiers":
       return "Options to choose from";
+    case "items":
+      return "Priced per item";
     case "per_member":
       return "Set per member";
     default:

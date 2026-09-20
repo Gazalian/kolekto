@@ -70,8 +70,10 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await page.getByLabel("Amount each person pays").fill("5000");
   await page.getByRole("button", { name: "Continue" }).click();
 
-  // Who pays — a managed collection, which is what the intent preset chose.
-  await expect(page.getByLabel("Who can pay")).toHaveValue("managed");
+  // Who pays — the dues preset picks the whole roll, which is what makes the
+  // collection managed. (Until M5 this step was a "Who can pay" select; it is
+  // now the audience picker, and this assertion was left behind.)
+  await expect(page.getByRole("radio", { name: /Everyone on the roll/ })).toBeChecked();
   await page.getByRole("button", { name: "Continue" }).click();
 
   // Questions — one, so the public form has something beyond contact details.
@@ -154,7 +156,10 @@ test("a tiered collection prices a contribution from the option the contributor 
   await page.getByRole("link", { name: "New collection" }).click();
   await page.waitForLoadState("networkidle");
 
-  await page.getByRole("button", { name: /Tickets or registration/ }).click();
+  // "Options at different prices" rather than the ticketed preset: this test is
+  // about pricing from the chosen option, and a ticketed collection would also
+  // ask for a date and a venue (covered in collection-types.spec.ts).
+  await page.getByRole("button", { name: /Options at different prices/ }).click();
   await page.getByLabel("What is this collection called?").fill("Alumni Dinner 2026");
   await page.getByRole("button", { name: "Continue" }).click();
 

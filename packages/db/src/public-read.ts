@@ -28,13 +28,19 @@ export interface PublicCollection {
   cover_image_url: string | null;
   category: string;
   participation_mode: "open" | "managed";
-  amount_model: "fixed" | "open_amount" | "tiers" | "per_member";
+  amount_model: "fixed" | "open_amount" | "tiers" | "per_member" | "items";
   payment_plan: "full_only" | "installments_allowed";
   fixed_amount_kobo: string | null;
   min_amount_kobo: string | null;
   max_amount_kobo: string | null;
   target_amount_kobo: string | null;
+  /** One-tap choices on an open collection. A suggestion, never a charge — the amount is still resolved server-side. */
+  suggested_amounts_kobo: string[];
   deadline_at: Date | null;
+  /** When the event is, as opposed to when the collection closes. */
+  event_starts_at: Date | null;
+  event_ends_at: Date | null;
+  venue: string | null;
   status: "active" | "paused" | "closed";
   display_options: Record<string, boolean>;
   fee_mode: "community_absorbs" | "contributor_pays";
@@ -51,6 +57,18 @@ export interface PublicCollectionTier {
   price_kobo: string;
   quantity_limit: number | null;
   per_order_limit: number | null;
+  sort_order: number;
+}
+
+export interface PublicCollectionItem {
+  item_id: string;
+  name: string;
+  description: string | null;
+  price_kobo: string;
+  /** How many are left to sell. `null` is unlimited, which is not the same as none. */
+  quantity_available: number | null;
+  max_per_order: number | null;
+  image_url: string | null;
   sort_order: number;
 }
 
@@ -78,6 +96,14 @@ export async function getPublicCollection(
 export async function getPublicCollectionTiers(collectionId: string): Promise<PublicCollectionTier[]> {
   const rows = await withCallerContext(ANONYMOUS, (tx) =>
     tx<PublicCollectionTier[]>`select * from app.get_public_collection_tiers(${collectionId})`,
+  );
+  return [...rows];
+}
+
+/** What an item collection offers. Hidden items never appear, and identity travels as `item_id` — the page sends back an id, never a name or a price. */
+export async function getPublicCollectionItems(collectionId: string): Promise<PublicCollectionItem[]> {
+  const rows = await withCallerContext(ANONYMOUS, (tx) =>
+    tx<PublicCollectionItem[]>`select * from app.get_public_collection_items(${collectionId})`,
   );
   return [...rows];
 }

@@ -122,6 +122,71 @@ describe("open-amount collections", () => {
   });
 });
 
+describe("item collections", () => {
+  const ITEM_BLUE = "01930000-0000-7000-8000-000000000011";
+  const ITEM_GOLD = "01930000-0000-7000-8000-000000000012";
+
+  const ordering = config({
+    amountModel: "items",
+    items: [
+      // Both called "Aso-ebi" on purpose, for the reason the tier tests give.
+      { id: ITEM_BLUE, name: "Aso-ebi", priceKobo: kobo(3_500_000), quantityAvailable: 4, maxPerOrder: 2 },
+      { id: ITEM_GOLD, name: "Aso-ebi", priceKobo: kobo(5_000_000), quantityAvailable: null, maxPerOrder: null },
+    ],
+  });
+
+  it("resolves by ID, not by name, and multiplies by the quantity", () => {
+    const resolved = resolveContributionAmount(ordering, { itemId: ITEM_GOLD, quantity: 3 });
+
+    assert.equal(resolved.amountKobo, 15_000_000n);
+    assert.equal(resolved.itemId, ITEM_GOLD);
+    assert.equal(resolved.quantity, 3);
+  });
+
+  it("treats a missing quantity as one rather than as none", () => {
+    assert.equal(resolveContributionAmount(ordering, { itemId: ITEM_BLUE }).amountKobo, 3_500_000n);
+  });
+
+  it("refuses an item that is not this collection's", () => {
+    assert.throws(
+      () => resolveContributionAmount(ordering, { itemId: TIER_VIP }),
+      (error: unknown) => error instanceof ContributionError && error.code === "UNKNOWN_ITEM",
+    );
+  });
+
+  it("refuses an order with no item chosen", () => {
+    assert.throws(
+      () => resolveContributionAmount(ordering, {}),
+      (error: unknown) => error instanceof ContributionError && error.code === "ITEM_REQUIRED",
+    );
+  });
+
+  it("refuses a quantity that is not a whole number above zero", () => {
+    for (const quantity of [0, -1, 1.5, Number.NaN]) {
+      assert.throws(
+        () => resolveContributionAmount(ordering, { itemId: ITEM_BLUE, quantity }),
+        (error: unknown) => error instanceof ContributionError && error.code === "INVALID_QUANTITY",
+      );
+    }
+  });
+
+  it("refuses more than one person may take, and more than exist", () => {
+    assert.throws(
+      () => resolveContributionAmount(ordering, { itemId: ITEM_BLUE, quantity: 3 }),
+      (error: unknown) => error instanceof ContributionError && error.code === "QUANTITY_ABOVE_LIMIT",
+    );
+
+    const scarce = config({
+      amountModel: "items",
+      items: [{ id: ITEM_BLUE, name: "Aso-ebi", priceKobo: kobo(100), quantityAvailable: 1, maxPerOrder: null }],
+    });
+    assert.throws(
+      () => resolveContributionAmount(scarce, { itemId: ITEM_BLUE, quantity: 2 }),
+      (error: unknown) => error instanceof ContributionError && error.code === "QUANTITY_ABOVE_LIMIT",
+    );
+  });
+});
+
 describe("per-member collections", () => {
   it("cannot be paid from the public page — each member's amount is on their obligation", () => {
     assert.throws(

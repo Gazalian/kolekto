@@ -1,4 +1,15 @@
-import type { AuditLog, Collection, CollectionField, CollectionTier, Community, Member, Obligation } from "@kolekto/db";
+import type {
+  AuditLog,
+  Collection,
+  CollectionCycleRow,
+  CollectionField,
+  CollectionItem,
+  CollectionRecurrence,
+  CollectionTier,
+  Community,
+  Member,
+  Obligation,
+} from "@kolekto/db";
 import { notFound } from "next/navigation";
 import { countCollectionAudience } from "@kolekto/db";
 import { requireCallerContext } from "../../../../../lib/caller.ts";
@@ -44,6 +55,9 @@ export default async function CollectionDetailPage({
     { data: members },
     { data: activity },
     { data: audienceGroups },
+    { data: items },
+    { data: recurrence },
+    { data: cycles },
   ] = await Promise.all([
       supabase.from("collection_tiers").select("*").eq("collection_id", collection.id).order("sort_order"),
       supabase.from("collection_fields").select("*").eq("collection_id", collection.id).order("sort_order"),
@@ -62,6 +76,16 @@ export default async function CollectionDetailPage({
         .from("collection_audience_groups")
         .select("group_id, member_groups(name)")
         .eq("collection_id", collection.id),
+      // The type-specific configuration. Each is empty for the types that do
+      // not have it, which is what makes them separate tables rather than
+      // columns nobody can constrain.
+      supabase.from("collection_items").select("*").eq("collection_id", collection.id).order("sort_order"),
+      supabase.from("collection_recurrences").select("*").eq("collection_id", collection.id).maybeSingle(),
+      supabase
+        .from("collection_cycles")
+        .select("*")
+        .eq("collection_id", collection.id)
+        .order("period_start", { ascending: false }),
     ]);
 
   const membersById = new Map((members ?? []).map((member) => [member.id as string, member as Member]));
@@ -75,7 +99,20 @@ export default async function CollectionDetailPage({
     };
   });
 
-  const assignedMemberIds = new Set(obligationRows.map((row) => row.obligation.member_id));
+  // Who is already expected to pay, and therefore not offered again.
+  //
+  // On a recurring collection that question is about the open period, not about
+  // the collection: somebody who paid October is exactly who November is for.
+  // Scoping this to the whole collection would leave November's assign list
+  // permanently empty.
+  const openCycleKey = ((cycles ?? []) as CollectionCycleRow[]).find((cycle) => cycle.closed_at === null)?.cycle_key ?? null;
+  const isRecurring = collection.schedule === "recurring";
+
+  const assignedMemberIds = new Set(
+    obligationRows
+      .filter((row) => !isRecurring || row.obligation.cycle_key === openCycleKey)
+      .map((row) => row.obligation.member_id),
+  );
 
   // How many members the audience covers and how many of them have no
   // obligation yet — the number behind the "newly eligible" prompt. Counted by
@@ -92,6 +129,9 @@ export default async function CollectionDetailPage({
       collection={collection}
       tiers={(tiers ?? []) as CollectionTier[]}
       fields={(fields ?? []) as CollectionField[]}
+      items={(items ?? []) as CollectionItem[]}
+      recurrence={(recurrence as CollectionRecurrence | null) ?? null}
+      cycles={(cycles ?? []) as CollectionCycleRow[]}
       obligations={obligationRows}
       assignableMembers={((members ?? []) as Member[])
         .filter((member) => !assignedMemberIds.has(member.id) && member.status !== "archived" && member.status !== "merged")

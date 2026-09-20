@@ -1,12 +1,18 @@
 "use server";
 
-import { getPublicCollection, getPublicCollectionFields, getPublicCollectionTiers } from "@kolekto/db";
+import {
+  getPublicCollection,
+  getPublicCollectionFields,
+  getPublicCollectionItems,
+  getPublicCollectionTiers,
+} from "@kolekto/db";
 import {
   ContributionError,
   formatNaira,
   fromNaira,
   kobo,
   resolveContributionAmount,
+  type ContributionItem,
   type ContributionTier,
 } from "@kolekto/domain";
 import { buildContributorAnswersSchema, contributorContactSchema } from "@kolekto/validation";
@@ -35,6 +41,9 @@ export interface ContributionResult {
   summary?: {
     amount: string;
     tierName: string | null;
+    /** What was ordered, and how many, when the collection sells items. */
+    itemName: string | null;
+    quantity: number | null;
     contributorName: string;
   };
 }
@@ -48,6 +57,8 @@ export async function submitContributionAction(
     phone: string;
     tierId: string;
     amount: string;
+    itemId?: string;
+    quantity?: string;
     answers: Record<string, string>;
   },
 ): Promise<ContributionResult> {
@@ -90,6 +101,19 @@ export async function submitContributionAction(
         }))
       : [];
 
+  // Same treatment as tiers: the price, the stock and the per-order limit are
+  // the database's, not the browser's. The page sends an id and a count.
+  const items: ContributionItem[] =
+    collection.amount_model === "items"
+      ? (await getPublicCollectionItems(collection.collection_id)).map((item) => ({
+          id: item.item_id,
+          name: item.name,
+          priceKobo: kobo(item.price_kobo),
+          quantityAvailable: item.quantity_available,
+          maxPerOrder: item.max_per_order,
+        }))
+      : [];
+
   let resolved;
   try {
     resolved = resolveContributionAmount(
@@ -99,10 +123,15 @@ export async function submitContributionAction(
         minAmountKobo: collection.min_amount_kobo === null ? null : kobo(collection.min_amount_kobo),
         maxAmountKobo: collection.max_amount_kobo === null ? null : kobo(collection.max_amount_kobo),
         tiers,
+        items,
       },
       {
         ...(input.tierId ? { tierId: input.tierId } : {}),
         ...(input.amount ? { amountKobo: fromNaira(input.amount) } : {}),
+        ...(input.itemId ? { itemId: input.itemId } : {}),
+        // Parsed rather than trusted: "3.5" and "abc" both have to reach the
+        // resolver as something it will refuse, not as a silent 1.
+        ...(input.quantity ? { quantity: Number(input.quantity) } : {}),
       },
     );
   } catch (error) {
@@ -115,6 +144,8 @@ export async function submitContributionAction(
     summary: {
       amount: formatNaira(resolved.amountKobo, { decimals: false }),
       tierName: tiers.find((tier) => tier.id === resolved.tierId)?.name ?? null,
+      itemName: items.find((item) => item.id === resolved.itemId)?.name ?? null,
+      quantity: resolved.quantity ?? null,
       contributorName: contact.data.fullName,
     },
   };

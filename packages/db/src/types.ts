@@ -197,7 +197,7 @@ export interface OfficerInvitation {
 
 export type CollectionCategory = "dues" | "contribution" | "event" | "fundraiser" | "items" | "other";
 export type ParticipationMode = "open" | "managed";
-export type AmountModel = "fixed" | "open_amount" | "tiers" | "per_member";
+export type AmountModel = "fixed" | "open_amount" | "tiers" | "per_member" | "items";
 export type PaymentPlan = "full_only" | "installments_allowed";
 export type CollectionSchedule = "one_time" | "recurring";
 export type CollectionStatus = "draft" | "scheduled" | "active" | "paused" | "closed" | "suspended" | "archived";
@@ -233,6 +233,12 @@ export interface Collection {
   min_amount_kobo: number | null;
   max_amount_kobo: number | null;
   target_amount_kobo: number | null;
+  /** One-tap choices on an open collection. Suggestions only — the server still resolves the figure charged. */
+  suggested_amounts_kobo: number[];
+  /** When the event happens, as distinct from when the collection sells tickets for it. */
+  event_starts_at: string | null;
+  event_ends_at: string | null;
+  venue: string | null;
   starts_at: string | null;
   deadline_at: string | null;
   status: CollectionStatus;
@@ -266,6 +272,50 @@ export interface CollectionTier {
   sort_order: number;
   created_at: string;
   updated_at: string;
+}
+
+export interface CollectionItem {
+  id: string;
+  collection_id: string;
+  community_id: string;
+  name: string;
+  description: string | null;
+  price_kobo: number;
+  /** Absent means unlimited, which is not the same as zero left. */
+  quantity_available: number | null;
+  max_per_order: number | null;
+  image_url: string | null;
+  hidden: boolean;
+  sort_order: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CollectionRecurrence {
+  collection_id: string;
+  community_id: string;
+  frequency: RecurrenceFrequencyValue;
+  interval_count: number;
+  starts_on: string;
+  due_after_days: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export type RecurrenceFrequencyValue = "weekly" | "monthly" | "quarterly" | "yearly";
+
+/** One period of a recurring collection. `cycle_key` is the label obligations are filed under. */
+export interface CollectionCycleRow {
+  id: string;
+  collection_id: string;
+  community_id: string;
+  cycle_key: string;
+  period_start: string;
+  period_end: string;
+  due_at: string | null;
+  opened_by: string | null;
+  opened_at: string;
+  closed_at: string | null;
 }
 
 export interface CollectionField {

@@ -23,6 +23,16 @@ interface PublicTier {
   price: string;
 }
 
+interface PublicItem {
+  id: string;
+  name: string;
+  description: string | null;
+  price: string;
+  /** Shown so a contributor knows what is left before choosing. The server decides what is actually allowed. */
+  quantityAvailable: number | null;
+  maxPerOrder: number | null;
+}
+
 interface PublicField {
   key: string;
   label: string;
@@ -38,18 +48,22 @@ export function ContributeForm({
   fixedAmount,
   minAmount,
   maxAmount,
+  suggestedAmounts,
   tiers,
+  items,
   fields,
   thankYouMessage,
   organiser,
 }: {
   communitySlug: string;
   collectionSlug: string;
-  amountModel: "fixed" | "open_amount" | "tiers" | "per_member";
+  amountModel: "fixed" | "open_amount" | "tiers" | "per_member" | "items";
   fixedAmount: string | null;
   minAmount: string | null;
   maxAmount: string | null;
+  suggestedAmounts: string[];
   tiers: PublicTier[];
+  items: PublicItem[];
   fields: PublicField[];
   thankYouMessage: string | null;
   organiser: string;
@@ -58,6 +72,8 @@ export function ContributeForm({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [tierId, setTierId] = useState("");
+  const [itemId, setItemId] = useState("");
+  const [quantity, setQuantity] = useState("1");
   const [amount, setAmount] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -83,6 +99,14 @@ export function ContributeForm({
             <div className="flex justify-between gap-3 py-2 text-sm">
               <dt className="text-[var(--color-text-muted)]">You chose</dt>
               <dd className="font-medium text-[var(--color-text)]">{done.tierName}</dd>
+            </div>
+          )}
+          {done.itemName && (
+            <div className="flex justify-between gap-3 py-2 text-sm">
+              <dt className="text-[var(--color-text-muted)]">You ordered</dt>
+              <dd className="font-medium text-[var(--color-text)]">
+                {done.quantity && done.quantity > 1 ? `${done.quantity} × ${done.itemName}` : done.itemName}
+              </dd>
             </div>
           )}
           <div className="flex justify-between gap-3 py-2 text-sm">
@@ -117,6 +141,8 @@ export function ContributeForm({
         phone,
         tierId,
         amount,
+        itemId,
+        quantity,
         answers,
       });
       if (result.error) setError(result.error);
@@ -163,6 +189,85 @@ export function ContributeForm({
               </span>
             </label>
           ))}
+        </fieldset>
+      )}
+
+      {amountModel === "items" && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-2 text-sm font-semibold text-[var(--color-text)]">What are you ordering?</legend>
+          {items.map((item) => {
+            const soldOut = item.quantityAvailable === 0;
+            return (
+              <label
+                key={item.id}
+                className={
+                  itemId === item.id
+                    ? "flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border-2 border-[var(--color-primary)] p-3"
+                    : soldOut
+                      ? "flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 opacity-60"
+                      : "flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
+                }
+              >
+                <input
+                  type="radio"
+                  name="item"
+                  value={item.id}
+                  checked={itemId === item.id}
+                  disabled={soldOut}
+                  onChange={() => setItemId(item.id)}
+                  className="mt-1 h-4 w-4"
+                />
+                <span className="flex flex-1 flex-col">
+                  <span className="flex items-center justify-between gap-3">
+                    <span className="font-medium text-[var(--color-text)]">{item.name}</span>
+                    <span className="text-sm font-medium text-[var(--color-text)]">{item.price}</span>
+                  </span>
+                  {item.description && (
+                    <span className="text-sm text-[var(--color-text-muted)]">{item.description}</span>
+                  )}
+                  {item.quantityAvailable !== null && (
+                    <span className="text-xs text-[var(--color-text-muted)]">
+                      {soldOut ? "Sold out" : `${item.quantityAvailable} left`}
+                    </span>
+                  )}
+                </span>
+              </label>
+            );
+          })}
+
+          {itemId && (
+            <TextField
+              label="How many?"
+              inputMode="numeric"
+              value={quantity}
+              required
+              hint={(() => {
+                const chosen = items.find((item) => item.id === itemId);
+                if (chosen?.maxPerOrder) return `Up to ${chosen.maxPerOrder} per person.`;
+                return "A whole number.";
+              })()}
+              onChange={(event) => setQuantity(event.target.value)}
+            />
+          )}
+        </fieldset>
+      )}
+
+      {amountModel === "open_amount" && suggestedAmounts.length > 0 && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-1 text-sm font-semibold text-[var(--color-text)]">Common amounts</legend>
+          <div className="flex flex-wrap gap-2">
+            {suggestedAmounts.map((suggestion) => (
+              <button
+                key={suggestion}
+                type="button"
+                onClick={() => setAmount(suggestion.replace(/[₦,]/g, ""))}
+                className="rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-3 py-1.5 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)]"
+              >
+                {suggestion}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)]">Or enter any other amount below.</p>
         </fieldset>
       )}
 

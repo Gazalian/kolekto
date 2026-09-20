@@ -18,3 +18,4 @@ so the reasoning survives.
 | [0010](0010-tiers-are-rows.md) | Tiers are rows with identity; an amount is never an identifier | Accepted |
 | [0011](0011-application-writes-via-direct-connection.md) | Application writes call `app` schema functions over a direct Postgres connection, never PostgREST RPC | Accepted |
 | [0012](0012-collections-stop-at-the-money-boundary.md) | Collections stop at the money boundary, and say so | Accepted |
+| [0013](0013-collection-types-are-configuration-not-a-type-column.md) | A collection's type is its configuration, not a label on it | Accepted |

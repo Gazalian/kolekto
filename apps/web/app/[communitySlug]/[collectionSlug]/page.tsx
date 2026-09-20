@@ -1,4 +1,9 @@
-import { getPublicCollection, getPublicCollectionFields, getPublicCollectionTiers } from "@kolekto/db";
+import {
+  getPublicCollection,
+  getPublicCollectionFields,
+  getPublicCollectionItems,
+  getPublicCollectionTiers,
+} from "@kolekto/db";
 import { notFound } from "next/navigation";
 import { ContributeForm } from "./ContributeForm.tsx";
 import { naira } from "../../../lib/collection-display.ts";
@@ -43,15 +48,29 @@ export default async function PublicCollectionPage({
   const collection = await getPublicCollection(communitySlug, collectionSlug);
   if (!collection) notFound();
 
-  const [tiers, fields] = await Promise.all([
+  const [tiers, items, fields] = await Promise.all([
     collection.amount_model === "tiers" ? getPublicCollectionTiers(collection.collection_id) : Promise.resolve([]),
+    collection.amount_model === "items" ? getPublicCollectionItems(collection.collection_id) : Promise.resolve([]),
     getPublicCollectionFields(collection.collection_id),
   ]);
 
   const deadline = collection.deadline_at ? new Date(collection.deadline_at) : null;
+  // When the event is, which is a different date from when the collection stops
+  // selling tickets for it.
+  const eventStart = collection.event_starts_at ? new Date(collection.event_starts_at) : null;
 
   return (
     <main className="mx-auto flex w-full max-w-xl flex-col gap-6 px-4 py-8 sm:px-6 sm:py-12">
+      {collection.cover_image_url && (
+        // An uploaded image on the storage host, not a bundled asset.
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={collection.cover_image_url}
+          alt=""
+          className="max-h-80 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] object-cover"
+        />
+      )}
+
       <header className="flex flex-col gap-3">
         <div className="flex items-center gap-2 text-sm text-[var(--color-text-muted)]">
           {/* Who is asking. A contributor's first question, so it is the first
@@ -74,6 +93,24 @@ export default async function PublicCollectionPage({
           {collection.target_amount_kobo && <span>Target: {naira(collection.target_amount_kobo)}</span>}
         </div>
       </header>
+
+      {(eventStart || collection.venue) && (
+        <div className="flex flex-col gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm">
+          {eventStart && (
+            <p className="font-medium text-[var(--color-text)]">
+              {eventStart.toLocaleString(undefined, {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+                year: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              })}
+            </p>
+          )}
+          {collection.venue && <p className="text-[var(--color-text-muted)]">{collection.venue}</p>}
+        </div>
+      )}
 
       {collection.description && (
         <p className="whitespace-pre-line text-sm leading-relaxed text-[var(--color-text-muted)]">
@@ -101,11 +138,20 @@ export default async function PublicCollectionPage({
           fixedAmount={collection.fixed_amount_kobo ? naira(collection.fixed_amount_kobo) : null}
           minAmount={collection.min_amount_kobo ? naira(collection.min_amount_kobo) : null}
           maxAmount={collection.max_amount_kobo ? naira(collection.max_amount_kobo) : null}
+          suggestedAmounts={collection.suggested_amounts_kobo.map((amount) => naira(amount))}
           tiers={tiers.map((tier) => ({
             id: tier.tier_id,
             name: tier.name,
             description: tier.description,
             price: naira(tier.price_kobo),
+          }))}
+          items={items.map((item) => ({
+            id: item.item_id,
+            name: item.name,
+            description: item.description,
+            price: naira(item.price_kobo),
+            quantityAvailable: item.quantity_available,
+            maxPerOrder: item.max_per_order,
           }))}
           fields={fields.map((field) => ({
             key: field.key,

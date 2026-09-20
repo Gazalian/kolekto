@@ -8,10 +8,17 @@ import {
   DatabaseError,
   deleteDraftCollection,
   exemptObligation,
+  openCollectionCycle,
   setCollectionAudience,
+  setCollectionCover,
+  setCollectionEvent,
   setCollectionFields,
+  setCollectionItems,
+  setCollectionRecurrence,
+  setCollectionSuggestedAmounts,
   setCollectionTiers,
   syncCollectionObligations,
+  setItemHidden,
   setTierHidden,
   transitionCollectionStatus,
   updateCollection,
@@ -24,7 +31,11 @@ import {
   createCollectionSchema,
   exemptObligationSchema,
   setCollectionAudienceSchema,
+  setCollectionEventSchema,
   setCollectionFieldsSchema,
+  setCollectionItemsSchema,
+  setCollectionRecurrenceSchema,
+  setCollectionSuggestedAmountsSchema,
   setCollectionTiersSchema,
   syncObligationsSchema,
   transitionCollectionStatusSchema,
@@ -34,6 +45,8 @@ import {
 } from "@kolekto/validation";
 import { revalidatePath } from "next/cache";
 import { requireCallerContext } from "../../../../lib/caller.ts";
+import { removeCollectionCover, uploadCollectionCover } from "../../../../lib/collection-cover.ts";
+import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
 
 export interface ActionResult {
@@ -188,6 +201,146 @@ export async function setTierHiddenAction(
   return { ok: true };
 }
 
+// ── Type-specific configuration (§26–§32) ───────────────────────────────────
+//
+// One action per collection type rather than one that takes a blob. Each maps
+// to the write function that knows that type's rules, so an item collection
+// cannot be given a recurrence and a fixed collection cannot be given items.
+
+export async function setCollectionItemsAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult> {
+  const parsed = setCollectionItemsSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the items and try again" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionItems(caller, {
+      collectionId: parsed.data.collectionId,
+      items: parsed.data.items.map((item, index) => ({
+        id: item.id,
+        name: item.name,
+        description: item.description,
+        priceKobo: fromNaira(item.price),
+        quantityAvailable: item.quantityAvailable,
+        maxPerOrder: item.maxPerOrder,
+        sortOrder: item.sortOrder ?? index,
+      })),
+    });
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save the items") };
+  }
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
+export async function setItemHiddenAction(
+  slug: string,
+  collectionSlug: string,
+  itemId: string,
+  hidden: boolean,
+): Promise<ActionResult> {
+  const caller = await requireCallerContext();
+  try {
+    await setItemHidden(caller, itemId, hidden);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not change the item") };
+  }
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
+export async function setCollectionEventAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult> {
+  const parsed = setCollectionEventSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the event details and try again" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionEvent(caller, {
+      collectionId: parsed.data.collectionId,
+      eventStartsAt: parsed.data.eventStartsAt,
+      eventEndsAt: parsed.data.eventEndsAt,
+      venue: parsed.data.venue,
+    });
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save the event details") };
+  }
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
+export async function setCollectionSuggestedAmountsAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult> {
+  const parsed = setCollectionSuggestedAmountsSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the suggested amounts" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionSuggestedAmounts(caller, {
+      collectionId: parsed.data.collectionId,
+      amountsKobo: parsed.data.amounts.map((amount) => fromNaira(amount)),
+    });
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save the suggested amounts") };
+  }
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
+export async function setCollectionRecurrenceAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult> {
+  const parsed = setCollectionRecurrenceSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the schedule and try again" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionRecurrence(caller, {
+      collectionId: parsed.data.collectionId,
+      frequency: parsed.data.frequency,
+      intervalCount: parsed.data.intervalCount,
+      startsOn: parsed.data.startsOn,
+      dueAfterDays: parsed.data.dueAfterDays,
+    });
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save the schedule") };
+  }
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
+/**
+ * Opens the next period of a recurring collection.
+ *
+ * Opening a period creates nothing on its own — obligations still come from a
+ * separate, deliberate sync (§38). This only says the period exists.
+ */
+export async function openCollectionCycleAction(
+  slug: string,
+  collectionSlug: string,
+  collectionId: string,
+): Promise<ActionResult & { cycleKey?: string }> {
+  const caller = await requireCallerContext();
+  try {
+    const cycle = await openCollectionCycle(caller, collectionId);
+    revalidateCollection(slug, collectionSlug);
+    return { ok: true, cycleKey: cycle.cycle_key };
+  } catch (error) {
+    return { error: messageFrom(error, "Could not open the next period") };
+  }
+}
+
 export async function setCollectionFieldsAction(
   slug: string,
   collectionSlug: string,
@@ -246,6 +399,91 @@ export async function deleteDraftCollectionAction(slug: string, collectionId: st
   return { ok: true };
 }
 
+// ── Flyer (§33) ─────────────────────────────────────────────────────────────
+//
+// The bucket grants no client role any write, so these two actions are the only
+// way an image gets in or out. Authorisation happens here, against the same
+// permission every other collection edit checks — the storage layer deliberately
+// knows nothing about who may touch which collection.
+
+async function assertMayEditCollection(collectionId: string): Promise<{ communityId: string } | { error: string }> {
+  const supabase = await createClient();
+
+  // RLS already limits this read to collections in communities the caller holds
+  // a role in, so a collection id from elsewhere resolves to nothing.
+  const { data } = await supabase
+    .from("collections")
+    .select("community_id, status")
+    .eq("id", collectionId)
+    .maybeSingle();
+
+  if (!data) return { error: "That collection could not be found" };
+
+  const access = await getCommunityAccess(data.community_id as string);
+  if (!hasPermission(access, "collection.draft")) {
+    return { error: "You do not have permission to change this collection" };
+  }
+  if (["closed", "archived", "suspended"].includes(data.status as string)) {
+    return { error: `A ${data.status} collection cannot be edited` };
+  }
+
+  return { communityId: data.community_id as string };
+}
+
+export async function uploadCoverAction(
+  slug: string,
+  collectionSlug: string,
+  collectionId: string,
+  formData: FormData,
+): Promise<ActionResult & { url?: string }> {
+  const permitted = await assertMayEditCollection(collectionId);
+  if ("error" in permitted) return { error: permitted.error };
+
+  const file = formData.get("cover");
+  if (!(file instanceof File)) return { error: "Choose an image to upload" };
+
+  const uploaded = await uploadCollectionCover(permitted.communityId, collectionId, file);
+  if (uploaded.error || !uploaded.url) return { error: uploaded.error ?? "The image could not be uploaded" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionCover(caller, { collectionId, coverImageUrl: uploaded.url });
+  } catch (error) {
+    // The object is already in the bucket and now belongs to nothing, so it is
+    // taken back out. Leaving it would be storage nobody can see or delete.
+    await removeCollectionCover(permitted.communityId, collectionId, uploaded.url);
+    return { error: messageFrom(error, "The image was uploaded but could not be attached") };
+  }
+
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true, url: uploaded.url };
+}
+
+export async function removeCoverAction(
+  slug: string,
+  collectionSlug: string,
+  collectionId: string,
+  url: string,
+): Promise<ActionResult> {
+  const permitted = await assertMayEditCollection(collectionId);
+  if ("error" in permitted) return { error: permitted.error };
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionCover(caller, { collectionId, coverImageUrl: undefined });
+  } catch (error) {
+    return { error: messageFrom(error, "Could not remove the image") };
+  }
+
+  // The row is cleared first: an object left in the bucket is wasted storage,
+  // while a row pointing at a deleted object is a broken page.
+  const removed = await removeCollectionCover(permitted.communityId, collectionId, url);
+  if (removed.error) return { error: removed.error };
+
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
 // ── Audience ────────────────────────────────────────────────────────────────
 
 export async function setCollectionAudienceAction(
@@ -287,6 +525,7 @@ export async function syncObligationsAction(
       collectionId: parsed.data.collectionId,
       expectedAmountKobo: toKobo(parsed.data.expectedAmount),
       dueAt: parsed.data.dueAt,
+      cycleKey: parsed.data.cycleKey,
     });
     revalidateCollection(slug, collectionSlug);
     return { ok: true, created };
@@ -312,6 +551,7 @@ export async function assignObligationsAction(
       memberIds: parsed.data.memberIds,
       expectedAmountKobo: toKobo(parsed.data.expectedAmount),
       dueAt: parsed.data.dueAt,
+      cycleKey: parsed.data.cycleKey,
     });
     revalidateCollection(slug, collectionSlug);
     return { ok: true, created };

@@ -1,0 +1,24 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 20260920160000 — amount_model gains 'items'
+--
+-- Alone in its own migration for a mechanical reason: Postgres allows
+-- ALTER TYPE ... ADD VALUE inside a transaction, but the new label cannot be
+-- USED until that transaction commits. The constraints, functions and backfills
+-- that reference 'items' therefore live in the next file, which runs in a later
+-- transaction.
+--
+-- WHY A NEW VALUE RATHER THAN REUSING 'tiers'. They look alike on screen and are
+-- different in the model:
+--
+--   a tier  is a price band. A contributor picks exactly one, and the quantity
+--           is always one. "Regular, VIP, Premium."
+--   an item is a thing with stock. A contributor picks one or more, each with a
+--           quantity, and an order can hold several lines. "2 yards of the blue
+--           aso-ebi, 4 yards of the gold."
+--
+-- Running items through collection_tiers would put a quantity column on every
+-- tiered collection where it means nothing, and make per_order_limit carry two
+-- unrelated jobs. The separate shape is the honest one.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+alter type public.amount_model add value if not exists 'items';

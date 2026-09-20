@@ -55,10 +55,18 @@ select is_empty(
       and a.attnum > 0
       and not a.attisdropped
       and a.attname like '%\_kobo'
-      and coalesce(nullif(t.typbasetype, 0), t.oid) <> 'pg_catalog.int8'::regtype
+      -- An array of money is still money: suggested_amounts_kobo holds several
+      -- amounts and each one is a bigint. Resolve through the element type so
+      -- bigint[] passes and numeric[] would not — the rule is that a monetary
+      -- value is an integer, not that it must be scalar.
+      and coalesce(
+            nullif(t.typbasetype, 0),
+            nullif(t.typelem, 0),
+            t.oid
+          ) <> 'pg_catalog.int8'::regtype
     order by 1
   $$,
-  'every *_kobo column resolves to bigint, whether declared bigint or app.kobo (ADR 0003)'
+  'every *_kobo column resolves to bigint — declared bigint, app.kobo, or an array of them (ADR 0003)'
 );
 
 -- The inverse: a column that holds money must say so. Catches

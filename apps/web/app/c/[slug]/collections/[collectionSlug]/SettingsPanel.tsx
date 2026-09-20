@@ -1,16 +1,34 @@
 "use client";
 
-import type { Collection, CollectionField, CollectionTier } from "@kolekto/db";
+import type {
+  Collection,
+  CollectionCycleRow,
+  CollectionField,
+  CollectionItem,
+  CollectionRecurrence,
+  CollectionTier,
+} from "@kolekto/db";
 import { Banner, Button, Card, CardBody, Dialog, SelectField, TextAreaField, TextField } from "@kolekto/ui";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import {
   deleteDraftCollectionAction,
+  openCollectionCycleAction,
+  setCollectionEventAction,
   setCollectionFieldsAction,
+  setCollectionItemsAction,
+  setCollectionRecurrenceAction,
+  setCollectionSuggestedAmountsAction,
   setCollectionTiersAction,
+  setItemHiddenAction,
   setTierHiddenAction,
   updateCollectionAction,
 } from "../actions.ts";
+import { CoverUploader } from "../CoverUploader.tsx";
+import { EventEditor, type EventDraft } from "../EventEditor.tsx";
+import { ItemsEditor, itemsToPayload, type ItemDraft } from "../ItemsEditor.tsx";
+import { RecurrenceEditor, type RecurrenceDraft } from "../RecurrenceEditor.tsx";
+import { SuggestedAmountsEditor } from "../SuggestedAmountsEditor.tsx";
 import { QuestionsEditor, questionsToFields, type QuestionDraft } from "../QuestionsEditor.tsx";
 import { TiersEditor, type TierDraft } from "../TiersEditor.tsx";
 
@@ -40,12 +58,18 @@ export function SettingsPanel({
   collection,
   tiers,
   fields,
+  items,
+  recurrence,
+  cycles,
   canEdit,
 }: {
   slug: string;
   collection: Collection;
   tiers: CollectionTier[];
   fields: CollectionField[];
+  items: CollectionItem[];
+  recurrence: CollectionRecurrence | null;
+  cycles: CollectionCycleRow[];
   canEdit: boolean;
 }) {
   const router = useRouter();
@@ -82,6 +106,31 @@ export function SettingsPanel({
     })),
   );
 
+  const [itemDrafts, setItemDrafts] = useState<ItemDraft[]>(
+    items.map((item) => ({
+      id: item.id,
+      name: item.name,
+      description: item.description ?? "",
+      price: nairaFromKobo(item.price_kobo),
+      quantityAvailable: item.quantity_available === null ? "" : String(item.quantity_available),
+      maxPerOrder: item.max_per_order === null ? "" : String(item.max_per_order),
+    })),
+  );
+  const [eventDraft, setEventDraft] = useState<EventDraft>({
+    startsAt: toLocalInput(collection.event_starts_at),
+    endsAt: toLocalInput(collection.event_ends_at),
+    venue: collection.venue ?? "",
+  });
+  const [suggestedAmounts, setSuggestedAmounts] = useState<string[]>(
+    collection.suggested_amounts_kobo.map((amount) => nairaFromKobo(amount)),
+  );
+  const [recurrenceDraft, setRecurrenceDraft] = useState<RecurrenceDraft>({
+    frequency: recurrence?.frequency ?? "monthly",
+    intervalCount: String(recurrence?.interval_count ?? 1),
+    startsOn: recurrence?.starts_on ?? "",
+    dueAfterDays: String(recurrence?.due_after_days ?? 0),
+  });
+
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -96,6 +145,16 @@ export function SettingsPanel({
         </CardBody>
       </Card>
     );
+  }
+
+  /** Every panel below saves the same way: run the action, say what happened, and re-read the row rather than trusting the form. */
+  function save(successText: string, run: () => Promise<{ error?: string }>): void {
+    setMessage(null);
+    startTransition(async () => {
+      const result = await run();
+      setMessage(result.error ? { tone: "danger", text: result.error } : { tone: "success", text: successText });
+      if (!result.error) router.refresh();
+    });
   }
 
   function saveDetails(): void {
@@ -283,6 +342,233 @@ export function SettingsPanel({
           </CardBody>
         </Card>
       )}
+
+      {collection.amount_model === "items" && (
+        <Card>
+          <CardBody className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">Items</h2>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                {isDraft
+                  ? "Each item keeps its identity when you rename it, so an order already placed still refers to the same thing."
+                  : "A published item's price cannot change. Hide one to take it off sale — it is never deleted."}
+              </p>
+            </div>
+
+            {isDraft ? (
+              <>
+                <ItemsEditor items={itemDrafts} onChange={setItemDrafts} />
+                <Button
+                  variant="secondary"
+                  loading={isPending}
+                  onClick={() =>
+                    save("Items saved.", () =>
+                      setCollectionItemsAction(slug, collection.slug, {
+                        collectionId: collection.id,
+                        items: itemsToPayload(itemDrafts),
+                      }),
+                    )
+                  }
+                >
+                  Save items
+                </Button>
+              </>
+            ) : items.length === 0 ? (
+              <p className="text-sm text-[var(--color-text-muted)]">This collection has no items.</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {items.map((item) => (
+                  <li key={item.id} className="flex items-center justify-between gap-3 text-sm">
+                    <span className={item.hidden ? "text-[var(--color-text-faint)] line-through" : ""}>{item.name}</span>
+                    <button
+                      type="button"
+                      className="text-xs font-medium text-[var(--color-primary)] hover:underline"
+                      disabled={isPending || isFinished}
+                      onClick={() =>
+                        startTransition(async () => {
+                          const result = await setItemHiddenAction(slug, collection.slug, item.id, !item.hidden);
+                          if (result.error) setMessage({ tone: "danger", text: result.error });
+                          else router.refresh();
+                        })
+                      }
+                    >
+                      {item.hidden ? "Show" : "Hide"}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      {collection.category === "event" && (
+        <Card>
+          <CardBody className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">The event</h2>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                When and where it happens. Separate from the dates above, which are when this collection sells tickets.
+              </p>
+            </div>
+            <EventEditor event={eventDraft} onChange={setEventDraft} disabled={isFinished} />
+            {!isFinished && (
+              <Button
+                variant="secondary"
+                loading={isPending}
+                onClick={() =>
+                  save("Event details saved.", () =>
+                    setCollectionEventAction(slug, collection.slug, {
+                      collectionId: collection.id,
+                      eventStartsAt: eventDraft.startsAt,
+                      eventEndsAt: eventDraft.endsAt,
+                      venue: eventDraft.venue,
+                    }),
+                  )
+                }
+              >
+                Save event details
+              </Button>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      {collection.amount_model === "open_amount" && (
+        <Card>
+          <CardBody className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">Suggested amounts</h2>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Shown as one-tap choices. A suggestion is not a price — contributors can still enter any amount you
+                allow, which is why these can change after publication.
+              </p>
+            </div>
+            <SuggestedAmountsEditor amounts={suggestedAmounts} onChange={setSuggestedAmounts} disabled={isFinished} />
+            {!isFinished && (
+              <Button
+                variant="secondary"
+                loading={isPending}
+                onClick={() =>
+                  save("Suggested amounts saved.", () =>
+                    setCollectionSuggestedAmountsAction(slug, collection.slug, {
+                      collectionId: collection.id,
+                      amounts: suggestedAmounts.map((amount) => amount.trim()).filter((amount) => amount !== ""),
+                    }),
+                  )
+                }
+              >
+                Save suggested amounts
+              </Button>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      {collection.schedule === "recurring" && (
+        <Card>
+          <CardBody className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">How this repeats</h2>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                {isDraft
+                  ? "Set before you publish. Members agree to a schedule, so it cannot change afterwards."
+                  : "Fixed, because members agreed to it. Close this collection and start another if it has to change."}
+              </p>
+            </div>
+
+            {isDraft ? (
+              <>
+                <RecurrenceEditor recurrence={recurrenceDraft} onChange={setRecurrenceDraft} />
+                <Button
+                  variant="secondary"
+                  loading={isPending}
+                  onClick={() =>
+                    save("Schedule saved.", () =>
+                      setCollectionRecurrenceAction(slug, collection.slug, {
+                        collectionId: collection.id,
+                        frequency: recurrenceDraft.frequency,
+                        intervalCount: Number(recurrenceDraft.intervalCount) || 1,
+                        ...(recurrenceDraft.startsOn ? { startsOn: recurrenceDraft.startsOn } : {}),
+                        dueAfterDays: Number(recurrenceDraft.dueAfterDays) || 0,
+                      }),
+                    )
+                  }
+                >
+                  Save schedule
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-sm text-[var(--color-text)]">
+                  {recurrence
+                    ? `${recurrence.frequency}, every ${recurrence.interval_count}, from ${recurrence.starts_on}`
+                    : "No schedule was set before this collection was published."}
+                </p>
+
+                <div className="flex flex-col gap-2">
+                  <p className="text-sm font-medium text-[var(--color-text)]">Periods</p>
+                  {cycles.length === 0 ? (
+                    <p className="text-sm text-[var(--color-text-muted)]">No period has been opened yet.</p>
+                  ) : (
+                    <ul className="flex flex-col gap-1 text-sm text-[var(--color-text-muted)]">
+                      {cycles.map((cycle) => (
+                        <li key={cycle.id}>
+                          {cycle.cycle_key} — {cycle.period_start} to {cycle.period_end}
+                          {cycle.closed_at && " (closed)"}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <p className="text-xs text-[var(--color-text-muted)]">
+                    Opening a period does not ask anyone for money. You add that period&apos;s obligations from the
+                    Members tab, as a separate step.
+                  </p>
+                </div>
+
+                {!isFinished && recurrence && (
+                  <Button
+                    variant="secondary"
+                    loading={isPending}
+                    onClick={() => {
+                      setMessage(null);
+                      startTransition(async () => {
+                        const result = await openCollectionCycleAction(slug, collection.slug, collection.id);
+                        setMessage(
+                          result.error
+                            ? { tone: "danger", text: result.error }
+                            : { tone: "success", text: `Opened ${result.cycleKey}.` },
+                        );
+                        if (!result.error) router.refresh();
+                      });
+                    }}
+                  >
+                    Open the next period
+                  </Button>
+                )}
+              </>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      <Card>
+        <CardBody className="flex flex-col gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">Flyer</h2>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              An optional image at the top of the public page.
+            </p>
+          </div>
+          <CoverUploader
+            slug={slug}
+            collectionSlug={collection.slug}
+            collectionId={collection.id}
+            coverImageUrl={collection.cover_image_url}
+            disabled={isFinished}
+          />
+        </CardBody>
+      </Card>
 
       <Card>
         <CardBody className="flex flex-col gap-4">

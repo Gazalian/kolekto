@@ -552,14 +552,27 @@ export async function countCollectionAudience(
   return row ?? { eligible: 0, with_obligation: 0, awaiting: 0 };
 }
 
-/** Returns how many obligations were created. Idempotent, and it never deletes one. */
+/**
+ * Returns how many obligations were created. Idempotent, and it never deletes one.
+ *
+ * `cycleKey` names the period the obligations belong to, and a recurring
+ * collection refuses the call without one: October's charge and November's are
+ * two separate debts, and an obligation belonging to no particular month could
+ * not be told apart from either.
+ */
 export async function syncCollectionObligations(
   caller: CallerContext,
-  input: { collectionId: string; expectedAmountKobo?: bigint | undefined; dueAt?: string | undefined },
+  input: {
+    collectionId: string;
+    expectedAmountKobo?: bigint | undefined;
+    dueAt?: string | undefined;
+    cycleKey?: string | undefined;
+  },
 ): Promise<number> {
   const [row] = await call(caller, (tx) =>
     tx<{ count: number }[]>`select app.sync_collection_obligations(
-      ${input.collectionId}, ${input.expectedAmountKobo?.toString() ?? null}, ${input.dueAt ?? null}
+      ${input.collectionId}, ${input.expectedAmountKobo?.toString() ?? null}, ${input.dueAt ?? null},
+      ${input.cycleKey ?? null}
     ) as count`,
   );
   return row!.count;
@@ -607,6 +620,139 @@ export async function setTierHidden(caller: CallerContext, tierId: string, hidde
   await call(caller, (tx) => tx`select app.set_tier_hidden(${tierId}, ${hidden})`);
 }
 
+// ── Type-specific configuration (20260920160100–160200) ────────────────────
+//
+// One collection type per function rather than one generic "settings" blob.
+// Each of these writes named columns or rows the database can check, so an
+// item's price is a bigint the money invariant sees and a recurrence is a
+// schedule Postgres can step forward — not JSON nobody can constrain.
+
+export interface CollectionItemPayload {
+  /** Present for an existing item. ADR 0010 applied to items: identity is the id, never the name. */
+  id?: string | undefined;
+  name: string;
+  description?: string | undefined;
+  priceKobo: bigint;
+  quantityAvailable?: number | undefined;
+  maxPerOrder?: number | undefined;
+  imageUrl?: string | undefined;
+  hidden?: boolean | undefined;
+  sortOrder?: number | undefined;
+}
+
+/** Full replace, matched by id. Draft only — a published item's price is part of the offer. */
+export async function setCollectionItems(
+  caller: CallerContext,
+  input: { collectionId: string; items: readonly CollectionItemPayload[] },
+): Promise<number> {
+  const payload = input.items.map((item, index) => ({
+    id: item.id ?? null,
+    name: item.name,
+    description: item.description ?? null,
+    // As in setCollectionTiers: kobo crosses as a string, because JSON has no
+    // bigint and a number here would be a silent precision decision (ADR 0003).
+    price_kobo: item.priceKobo.toString(),
+    quantity_available: item.quantityAvailable ?? null,
+    max_per_order: item.maxPerOrder ?? null,
+    image_url: item.imageUrl ?? null,
+    hidden: item.hidden ?? false,
+    sort_order: item.sortOrder ?? index,
+  }));
+
+  const [row] = await call(caller, (tx) =>
+    tx<{ count: number }[]>`select app.set_collection_items(${input.collectionId}, ${tx.json(payload)}) as count`,
+  );
+  return row!.count;
+}
+
+export async function setItemHidden(caller: CallerContext, itemId: string, hidden: boolean): Promise<void> {
+  await call(caller, (tx) => tx`select app.set_item_hidden(${itemId}, ${hidden})`);
+}
+
+/** The date and place a ticketed collection is for. Editable after publication: a venue moves, a price does not. */
+export async function setCollectionEvent(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    eventStartsAt?: string | undefined;
+    eventEndsAt?: string | undefined;
+    venue?: string | undefined;
+  },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.set_collection_event(
+      ${input.collectionId}, ${input.eventStartsAt ?? null}, ${input.eventEndsAt ?? null}, ${input.venue ?? null}
+    )`,
+  );
+}
+
+/** Prompts on a fundraiser's page. They are suggestions only — the contributor's amount is still their own. */
+export async function setCollectionSuggestedAmounts(
+  caller: CallerContext,
+  input: { collectionId: string; amountsKobo: readonly bigint[] },
+): Promise<void> {
+  const amounts = input.amountsKobo.map((amount) => amount.toString());
+  await call(caller, (tx) => tx`select app.set_collection_suggested_amounts(${input.collectionId}, ${amounts})`);
+}
+
+export type RecurrenceFrequency = "weekly" | "monthly" | "quarterly" | "yearly";
+
+/** Draft only: members agreed to a monthly charge, and one that quietly became weekly would be charging them something else. */
+export async function setCollectionRecurrence(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    frequency: RecurrenceFrequency;
+    intervalCount?: number | undefined;
+    startsOn?: string | undefined;
+    dueAfterDays?: number | undefined;
+  },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.set_collection_recurrence(
+      ${input.collectionId}, ${input.frequency}, ${input.intervalCount ?? 1},
+      ${input.startsOn ?? null}, ${input.dueAfterDays ?? 0}
+    )`,
+  );
+}
+
+export interface CollectionCycle {
+  cycle_id: string;
+  cycle_key: string;
+  period_start: string;
+  period_end: string;
+}
+
+/**
+ * Opens the next period of a recurring collection.
+ *
+ * Manual on purpose (§38): the obligations a new month brings are money people
+ * owe, and nothing in this phase creates that while no one is looking.
+ */
+export async function openCollectionCycle(caller: CallerContext, collectionId: string): Promise<CollectionCycle> {
+  const [row] = await call(caller, (tx) =>
+    tx<CollectionCycle[]>`select * from app.open_collection_cycle(${collectionId})`,
+  );
+  return row!;
+}
+
+/**
+ * Points a collection at a flyer already uploaded to this deployment's own
+ * bucket, or clears it with `undefined`.
+ *
+ * The bytes never come through here — the upload is a storage call in the web
+ * app, made with the service role on the server. This records the result, and
+ * the database re-checks that the URL is one of ours before storing it.
+ */
+export async function setCollectionCover(
+  caller: CallerContext,
+  input: { collectionId: string; coverImageUrl?: string | undefined },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.set_collection_cover(${input.collectionId}, ${input.coverImageUrl ?? null})`,
+  );
+}
+
 export interface CollectionFieldPayload {
   key: string;
   label: string;
@@ -650,6 +796,8 @@ export async function assignObligations(
   caller: CallerContext,
   input: {
     collectionId: string;
+    /** Required on a recurring collection: an obligation belongs to a period. */
+    cycleKey?: string | undefined;
     memberIds: readonly string[];
     expectedAmountKobo?: bigint | undefined;
     dueAt?: string | undefined;
@@ -657,7 +805,8 @@ export async function assignObligations(
 ): Promise<number> {
   const [row] = await call(caller, (tx) =>
     tx<{ count: number }[]>`select app.assign_obligations(
-      ${input.collectionId}, ${[...input.memberIds]}, ${input.expectedAmountKobo?.toString() ?? null}, ${input.dueAt ?? null}
+      ${input.collectionId}, ${[...input.memberIds]}, ${input.expectedAmountKobo?.toString() ?? null},
+      ${input.dueAt ?? null}, ${input.cycleKey ?? null}
     ) as count`,
   );
   return row!.count;

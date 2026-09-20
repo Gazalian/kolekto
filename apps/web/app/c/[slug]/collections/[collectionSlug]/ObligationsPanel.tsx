@@ -46,6 +46,7 @@ export function ObligationsPanel({
   assignableMembers,
   audienceGroups,
   audienceCounts,
+  openCycleKey,
   canAssign,
   canExempt,
 }: {
@@ -55,6 +56,8 @@ export function ObligationsPanel({
   assignableMembers: AssignableMember[];
   audienceGroups: string[];
   audienceCounts: { eligible: number; with_obligation: number; awaiting: number };
+  /** The period being charged for, on a recurring collection. Null when none is open. */
+  openCycleKey: string | null;
   canAssign: boolean;
   canExempt: boolean;
 }) {
@@ -81,12 +84,32 @@ export function ObligationsPanel({
     return byStatus;
   }, [obligations]);
 
+  // A recurring collection charges per period, so there has to be one open
+  // before anybody can be expected to pay. Saying so is better than letting the
+  // database refuse the click with CYCLE_REQUIRED.
+  const isRecurring = collection.schedule === "recurring";
+  const needsCycle = isRecurring && openCycleKey === null;
+
   return (
     <div className="flex flex-col gap-4">
       <Banner tone="info">
         These are the members expected to contribute and what each one is asked for. Nothing here can be marked paid:
         an obligation is only settled by a verified payment, and payments are not switched on yet.
       </Banner>
+
+      {needsCycle && (
+        <Banner tone="info">
+          This collection charges per period, and no period is open. Open one under Settings, then come back to say who
+          is expected to pay for it.
+        </Banner>
+      )}
+
+      {isRecurring && openCycleKey && (
+        <Banner tone="info">
+          You are working on <strong>{openCycleKey}</strong>. Members are expected to pay once per period, so adding
+          someone here charges them for {openCycleKey} only.
+        </Banner>
+      )}
 
       <Card>
         <CardBody className="flex flex-col gap-2">
@@ -104,11 +127,12 @@ export function ObligationsPanel({
           {/* §38: eligibility is resolved live, but becoming eligible never
               creates a debt on its own. This is the prompt that asks a person
               to decide, and the only thing that materialises obligations. */}
-          {canAssign && audienceCounts.awaiting > 0 && collection.audience_mode !== "selected_members" && (
+          {canAssign && audienceCounts.awaiting > 0 && collection.audience_mode !== "selected_members" && !needsCycle && (
             <SyncPrompt
               slug={slug}
               collection={collection}
               awaiting={audienceCounts.awaiting}
+              cycleKey={openCycleKey}
               onError={setError}
             />
           )}
@@ -122,7 +146,7 @@ export function ObligationsPanel({
           {counts.get("cancelled") ? ` · ${counts.get("cancelled")} cancelled` : ""}
         </p>
         {canAssign && (
-          <Button onClick={() => setAssigning(true)} disabled={assignableMembers.length === 0}>
+          <Button onClick={() => setAssigning(true)} disabled={assignableMembers.length === 0 || needsCycle}>
             <UserPlus className="h-4 w-4" aria-hidden="true" /> Add members
           </Button>
         )}
@@ -151,6 +175,9 @@ export function ObligationsPanel({
             <Thead>
               <Tr>
                 <Th>Member</Th>
+                {/* Which month this row is: the same member appears once per
+                    period, and the rows are only distinguishable by it. */}
+                {isRecurring && <Th>Period</Th>}
                 <Th>Expected</Th>
                 <Th>Waived</Th>
                 <Th>Status</Th>
@@ -166,6 +193,7 @@ export function ObligationsPanel({
                       <span className="block text-xs text-[var(--color-text-muted)]">{row.memberIdentifier}</span>
                     )}
                   </Td>
+                  {isRecurring && <Td data-label="Period">{row.obligation.cycle_key ?? "—"}</Td>}
                   <Td data-label="Expected">{naira(row.obligation.expected_amount_kobo)}</Td>
                   <Td data-label="Waived">
                     {row.obligation.waived_amount_kobo > 0 ? naira(row.obligation.waived_amount_kobo) : "—"}
@@ -226,6 +254,7 @@ export function ObligationsPanel({
           slug={slug}
           collection={collection}
           members={assignableMembers}
+          cycleKey={openCycleKey}
           onClose={() => setAssigning(false)}
           onError={setError}
         />
@@ -276,11 +305,13 @@ function SyncPrompt({
   slug,
   collection,
   awaiting,
+  cycleKey,
   onError,
 }: {
   slug: string;
   collection: Collection;
   awaiting: number;
+  cycleKey: string | null;
   onError: (message: string) => void;
 }) {
   const [isPending, startTransition] = useTransition();
@@ -311,12 +342,14 @@ function SyncPrompt({
             const result = await syncObligationsAction(slug, collection.slug, {
               collectionId: collection.id,
               expectedAmount: needsAmount ? amount : "",
+              ...(cycleKey ? { cycleKey } : {}),
             });
             if (result.error) onError(result.error);
           })
         }
       >
         Add {awaiting} obligation{awaiting === 1 ? "" : "s"}
+        {cycleKey ? ` for ${cycleKey}` : ""}
       </Button>
     </div>
   );
@@ -326,12 +359,14 @@ function AssignDialog({
   slug,
   collection,
   members,
+  cycleKey,
   onClose,
   onError,
 }: {
   slug: string;
   collection: Collection;
   members: AssignableMember[];
+  cycleKey: string | null;
   onClose: () => void;
   onError: (message: string) => void;
 }) {
@@ -350,7 +385,12 @@ function AssignDialog({
   });
 
   return (
-    <Dialog open onClose={onClose} title="Who is expected to contribute?">
+    <Dialog
+      open
+      onClose={onClose}
+      title="Who is expected to contribute?"
+      {...(cycleKey ? { description: `They will be expected to pay for ${cycleKey}.` } : {})}
+    >
       <div className="flex flex-col gap-4">
         {needsAmount && (
           <TextField
@@ -421,6 +461,7 @@ function AssignDialog({
                 collectionId: collection.id,
                 memberIds: [...selected],
                 expectedAmount: needsAmount ? amount : "",
+                ...(cycleKey ? { cycleKey } : {}),
               });
               if (result.error) onError(result.error);
               else onClose();

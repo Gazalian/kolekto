@@ -19,7 +19,8 @@ import { z } from "zod";
 
 export const COLLECTION_CATEGORIES = ["dues", "contribution", "event", "fundraiser", "items", "other"] as const;
 export const PARTICIPATION_MODES = ["open", "managed"] as const;
-export const AMOUNT_MODELS = ["fixed", "open_amount", "tiers", "per_member"] as const;
+export const AMOUNT_MODELS = ["fixed", "open_amount", "tiers", "per_member", "items"] as const;
+export const RECURRENCE_FREQUENCIES = ["weekly", "monthly", "quarterly", "yearly"] as const;
 export const PAYMENT_PLANS = ["full_only", "installments_allowed"] as const;
 export const COLLECTION_SCHEDULES = ["one_time", "recurring"] as const;
 export const COLLECTION_VISIBILITIES = ["public", "unlisted", "members_only"] as const;
@@ -44,6 +45,7 @@ export type CollectionVisibility = (typeof COLLECTION_VISIBILITIES)[number];
 export type CollectionStatus = (typeof COLLECTION_STATUSES)[number];
 export type CollectionFieldType = (typeof COLLECTION_FIELD_TYPES)[number];
 export type CollectionAudienceMode = (typeof COLLECTION_AUDIENCE_MODES)[number];
+export type RecurrenceFrequency = (typeof RECURRENCE_FREQUENCIES)[number];
 
 /**
  * The shapes `fromNaira` accepts, minus the negatives it would also parse: an
@@ -279,6 +281,12 @@ export const assignObligationsSchema = z.object({
   /** Read only for a per-member collection; everywhere else the collection decides. */
   expectedAmount: optionalNairaAmountSchema,
   dueAt: optionalDateTimeSchema,
+  /** Which period these obligations are for. Required on a recurring collection, refused on any other. */
+  cycleKey: z
+    .string()
+    .trim()
+    .regex(/^[0-9A-Za-z-]{4,20}$/)
+    .optional(),
 });
 
 export type AssignObligationsInput = z.infer<typeof assignObligationsSchema>;
@@ -338,4 +346,98 @@ export const syncObligationsSchema = z.object({
   collectionId: z.string().uuid(),
   expectedAmount: optionalNairaAmountSchema,
   dueAt: optionalDateTimeSchema,
+  /** Which period these obligations belong to. Required for a recurring collection, refused for any other. */
+  cycleKey: z
+    .string()
+    .trim()
+    .regex(/^[0-9A-Za-z-]{4,20}$/)
+    .optional(),
 });
+
+// ── Items (§31) ─────────────────────────────────────────────────────────────
+
+export const collectionItemSchema = z.object({
+  /** Present when editing an existing item. Its identity, not its name. */
+  id: z.string().uuid().optional(),
+  name: z.string().trim().min(1, "Every item needs a name").max(80, "Item names are at most 80 characters"),
+  description: z.string().trim().max(500).optional(),
+  price: nairaAmountSchema,
+  /** How many exist to sell. Absent means unlimited, which is not the same as zero. */
+  quantityAvailable: z.number().int().min(0).max(1_000_000).optional(),
+  maxPerOrder: z.number().int().positive().max(1000).optional(),
+  sortOrder: z.number().int().min(0).max(1000).optional(),
+});
+
+export type CollectionItemInput = z.infer<typeof collectionItemSchema>;
+
+export const setCollectionItemsSchema = z.object({
+  collectionId: z.string().uuid(),
+  items: z
+    .array(collectionItemSchema)
+    .min(1, "An item collection needs at least one item")
+    .max(50, "A collection can offer at most 50 items")
+    // The same rule as tiers, for the same reason: two items with one name
+    // cannot be told apart on an order or a receipt.
+    .refine(
+      (items) => new Set(items.map((item) => item.name.trim().toLowerCase())).size === items.length,
+      "Two items share the same name — give each one a distinct name",
+    ),
+});
+
+export type SetCollectionItemsInput = z.infer<typeof setCollectionItemsSchema>;
+
+// ── The event a ticketed collection is for (§30) ────────────────────────────
+
+/**
+ * Distinct from the collection's own dates on purpose: `startsAt`/`deadlineAt`
+ * say when tickets are on sale, and these say when the dinner is.
+ */
+export const setCollectionEventSchema = z
+  .object({
+    collectionId: z.string().uuid(),
+    eventStartsAt: optionalDateTimeSchema,
+    eventEndsAt: optionalDateTimeSchema,
+    venue: z.string().trim().max(200, "A venue is at most 200 characters").optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.eventEndsAt && !value.eventStartsAt) {
+      ctx.addIssue({ code: "custom", path: ["eventStartsAt"], message: "Set when the event starts" });
+    }
+    if (
+      value.eventStartsAt &&
+      value.eventEndsAt &&
+      Date.parse(value.eventEndsAt) < Date.parse(value.eventStartsAt)
+    ) {
+      ctx.addIssue({ code: "custom", path: ["eventEndsAt"], message: "The event cannot end before it starts" });
+    }
+  });
+
+export type SetCollectionEventInput = z.infer<typeof setCollectionEventSchema>;
+
+// ── Suggested amounts (§26, §29) ────────────────────────────────────────────
+
+export const setCollectionSuggestedAmountsSchema = z.object({
+  collectionId: z.string().uuid(),
+  /** Text, like every other amount here — `fromNaira` is the only converter (ADR 0003). */
+  amounts: z.array(nairaAmountSchema).max(6, "Offer at most 6 suggested amounts"),
+});
+
+export type SetCollectionSuggestedAmountsInput = z.infer<typeof setCollectionSuggestedAmountsSchema>;
+
+// ── Recurrence (§32) ────────────────────────────────────────────────────────
+
+export const setCollectionRecurrenceSchema = z.object({
+  collectionId: z.string().uuid(),
+  frequency: z.enum(RECURRENCE_FREQUENCIES),
+  /** Every 1 month, every 2 months. Separate from frequency so "quarterly" means one thing everywhere. */
+  intervalCount: z.number().int().min(1).max(12).default(1),
+  startsOn: z
+    .string()
+    .trim()
+    .regex(/^\d{4}-\d{2}-\d{2}$/, "Enter a date like 2026-10-01")
+    .optional(),
+  /** How long after a period opens its obligations are due. */
+  dueAfterDays: z.number().int().min(0).max(180).default(0),
+});
+
+export type SetCollectionRecurrenceInput = z.infer<typeof setCollectionRecurrenceSchema>;

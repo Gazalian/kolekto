@@ -1,6 +1,15 @@
 "use client";
 
-import type { AuditLog, Collection, CollectionField, CollectionTier, Obligation } from "@kolekto/db";
+import type {
+  AuditLog,
+  Collection,
+  CollectionCycleRow,
+  CollectionField,
+  CollectionItem,
+  CollectionRecurrence,
+  CollectionTier,
+  Obligation,
+} from "@kolekto/db";
 import { Badge, Banner, Button, Card, CardBody, Dialog } from "@kolekto/ui";
 import { Copy, ExternalLink, Share2 } from "lucide-react";
 import Link from "next/link";
@@ -94,6 +103,9 @@ export function CollectionDetailClient({
   collection,
   tiers,
   fields,
+  items,
+  recurrence,
+  cycles,
   obligations,
   assignableMembers,
   audienceGroups,
@@ -106,6 +118,9 @@ export function CollectionDetailClient({
   collection: Collection;
   tiers: CollectionTier[];
   fields: CollectionField[];
+  items: CollectionItem[];
+  recurrence: CollectionRecurrence | null;
+  cycles: CollectionCycleRow[];
   obligations: ObligationRow[];
   assignableMembers: AssignableMember[];
   audienceGroups: string[];
@@ -224,19 +239,80 @@ export function CollectionDetailClient({
             </Card>
           )}
 
+          {collection.cover_image_url && (
+            // An uploaded flyer on the storage host, not a bundled asset.
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={collection.cover_image_url}
+              alt=""
+              className="max-h-64 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] object-cover"
+            />
+          )}
+
           <Card>
             <CardBody>
               <dl className="divide-y divide-[var(--color-border)]">
                 <Row label="Contribution" value={describeAmount(collection)} />
                 <Row label="Who can pay" value={PARTICIPATION_LABEL[collection.participation_mode] ?? ""} />
                 <Row label="Target" value={collection.target_amount_kobo ? naira(collection.target_amount_kobo) : "None"} />
+                {/* The event is a separate fact from the collection's own dates:
+                    tickets sell for weeks, the dinner is one evening. */}
+                {collection.event_starts_at && (
+                  <Row label="Event" value={formatDate(collection.event_starts_at)} />
+                )}
+                {collection.venue && <Row label="Venue" value={collection.venue} />}
                 <Row label="Opens" value={collection.starts_at ? formatDate(collection.starts_at) : "Immediately"} />
                 <Row label="Deadline" value={collection.deadline_at ? formatDate(collection.deadline_at) : "None"} />
+                {recurrence && (
+                  <Row
+                    label="Repeats"
+                    value={`${recurrence.frequency}${recurrence.interval_count > 1 ? ` (every ${recurrence.interval_count})` : ""}`}
+                  />
+                )}
+                {recurrence && (
+                  <Row
+                    label="Periods opened"
+                    value={cycles.length === 0 ? "None yet" : cycles.map((cycle) => cycle.cycle_key).join(", ")}
+                  />
+                )}
                 <Row label="Visibility" value={collection.visibility === "public" ? "Listed publicly" : "Link only"} />
                 {isManaged && <Row label="Members expected" value={String(obligations.length)} />}
               </dl>
             </CardBody>
           </Card>
+
+          {collection.suggested_amounts_kobo.length > 0 && (
+            <Card>
+              <CardBody className="flex flex-col gap-2">
+                <p className="text-sm font-medium text-[var(--color-text)]">Suggested amounts</p>
+                <p className="text-sm text-[var(--color-text-muted)]">
+                  {collection.suggested_amounts_kobo.map((amount) => naira(amount)).join(" · ")}
+                </p>
+              </CardBody>
+            </Card>
+          )}
+
+          {items.length > 0 && (
+            <Card>
+              <CardBody className="flex flex-col gap-2">
+                <p className="text-sm font-medium text-[var(--color-text)]">Items</p>
+                <ul className="flex flex-col gap-1">
+                  {items.map((item) => (
+                    <li key={item.id} className="flex justify-between gap-3 text-sm">
+                      <span className={item.hidden ? "text-[var(--color-text-faint)] line-through" : "text-[var(--color-text)]"}>
+                        {item.name}
+                        {item.hidden && " (hidden)"}
+                        {item.quantity_available !== null && (
+                          <span className="text-[var(--color-text-muted)]"> · {item.quantity_available} available</span>
+                        )}
+                      </span>
+                      <span className="text-[var(--color-text-muted)]">{naira(item.price_kobo)}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardBody>
+            </Card>
+          )}
 
           {collection.description && (
             <Card>
@@ -292,6 +368,9 @@ export function CollectionDetailClient({
           assignableMembers={assignableMembers}
           audienceGroups={audienceGroups}
           audienceCounts={audienceCounts}
+          // The period being charged for: the most recent one still open. The
+          // rows arrive newest first, so the first unclosed one is that period.
+          openCycleKey={cycles.find((cycle) => cycle.closed_at === null)?.cycle_key ?? null}
           canAssign={permissions.canAssign}
           canExempt={permissions.canExempt}
         />
@@ -327,6 +406,9 @@ export function CollectionDetailClient({
           collection={collection}
           tiers={tiers}
           fields={fields}
+          items={items}
+          recurrence={recurrence}
+          cycles={cycles}
           canEdit={permissions.canEdit}
         />
       )}

@@ -23,13 +23,29 @@
 
 import { type Kobo, ZERO } from "./money.ts";
 
-export type AmountModel = "fixed" | "open_amount" | "tiers" | "per_member";
+export type AmountModel = "fixed" | "open_amount" | "tiers" | "per_member" | "items";
 
 /** A tier as the public page sees it. `id` is the identity; `name` is a label (ADR 0010). */
 export interface ContributionTier {
   readonly id: string;
   readonly name: string;
   readonly priceKobo: Kobo;
+}
+
+/**
+ * An item as the public page sees it.
+ *
+ * Same identity rule as a tier, and one thing a tier does not have: a quantity.
+ * An order is a price multiplied by a count, which makes the count part of the
+ * money path — it is bounded here rather than trusted.
+ */
+export interface ContributionItem {
+  readonly id: string;
+  readonly name: string;
+  readonly priceKobo: Kobo;
+  /** How many remain. `null` is unlimited, which is not the same as none. */
+  readonly quantityAvailable: number | null;
+  readonly maxPerOrder: number | null;
 }
 
 /** The authoritative configuration, loaded from the database by the server. */
@@ -39,18 +55,24 @@ export interface ContributionConfig {
   readonly minAmountKobo: Kobo | null;
   readonly maxAmountKobo: Kobo | null;
   readonly tiers: readonly ContributionTier[];
+  readonly items?: readonly ContributionItem[] | undefined;
 }
 
-/** What the contributor's browser sent. Both fields are untrusted. */
+/** What the contributor's browser sent. Every field is untrusted. */
 export interface ContributionSelection {
   readonly tierId?: string | undefined;
   readonly amountKobo?: Kobo | undefined;
+  readonly itemId?: string | undefined;
+  readonly quantity?: number | undefined;
 }
 
 export interface ResolvedContribution {
   readonly amountKobo: Kobo;
   /** The tier this contribution is for, resolved by ID. Null when the collection has no tiers. */
   readonly tierId: string | null;
+  /** The item this order is for, resolved by ID, and how many of it. Null on every other kind of collection. */
+  readonly itemId?: string | null;
+  readonly quantity?: number | null;
 }
 
 export type ContributionErrorCode =
@@ -59,6 +81,10 @@ export type ContributionErrorCode =
   | "AMOUNT_REQUIRED"
   | "AMOUNT_BELOW_MINIMUM"
   | "AMOUNT_ABOVE_MAXIMUM"
+  | "ITEM_REQUIRED"
+  | "UNKNOWN_ITEM"
+  | "INVALID_QUANTITY"
+  | "QUANTITY_ABOVE_LIMIT"
   | "NOT_OPEN_TO_CONTRIBUTORS"
   | "MISCONFIGURED";
 
@@ -114,6 +140,50 @@ export function resolveContributionAmount(
         throw new ContributionError("AMOUNT_ABOVE_MAXIMUM", "That is above the largest contribution this collection accepts.");
       }
       return { amountKobo: amount, tierId: null };
+    }
+
+    case "items": {
+      if (!selection.itemId) {
+        throw new ContributionError("ITEM_REQUIRED", "Choose what you are paying for before continuing.");
+      }
+      // By ID, for the reason in this file's header: two items called "Blue"
+      // must not be able to collapse onto whichever one comes first.
+      const item = (config.items ?? []).find((candidate) => candidate.id === selection.itemId);
+      if (!item) {
+        throw new ContributionError("UNKNOWN_ITEM", "That item is no longer available. Choose another.");
+      }
+      if (item.priceKobo <= ZERO) {
+        throw new ContributionError("MISCONFIGURED", "That item has no price set.");
+      }
+
+      // A quantity multiplies a price, so it is part of the money path and is
+      // bounded here rather than taken as sent. Fractions and zero are refused
+      // outright; the browser's copy of the limits decides nothing.
+      const quantity = selection.quantity ?? 1;
+      if (!Number.isSafeInteger(quantity) || quantity < 1) {
+        throw new ContributionError("INVALID_QUANTITY", "Enter how many you want, as a whole number.");
+      }
+      if (item.maxPerOrder !== null && quantity > item.maxPerOrder) {
+        throw new ContributionError(
+          "QUANTITY_ABOVE_LIMIT",
+          `You can take at most ${item.maxPerOrder} of that in one order.`,
+        );
+      }
+      if (item.quantityAvailable !== null && quantity > item.quantityAvailable) {
+        throw new ContributionError(
+          "QUANTITY_ABOVE_LIMIT",
+          item.quantityAvailable === 0
+            ? "That item is sold out."
+            : `Only ${item.quantityAvailable} of that are left.`,
+        );
+      }
+
+      return {
+        amountKobo: (item.priceKobo * BigInt(quantity)) as Kobo,
+        tierId: null,
+        itemId: item.id,
+        quantity,
+      };
     }
 
     case "per_member": {
