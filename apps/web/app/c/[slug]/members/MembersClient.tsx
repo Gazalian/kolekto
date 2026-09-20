@@ -23,7 +23,7 @@ import {
   Thead,
   Tr,
 } from "@kolekto/ui";
-import { Plus, Settings2, UserPlus } from "lucide-react";
+import { Plus, Settings2, UserPlus, Users } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import {
   approveMemberAction,
@@ -34,9 +34,11 @@ import {
   rejectMemberAction,
   restoreMemberAction,
   revokeInviteLinkAction,
+  setMemberGroupsAction,
   updateMemberAction,
 } from "./actions.ts";
 import { MemberProfileConfig } from "./MemberProfileConfig.tsx";
+import { GroupsManager, type GroupRow } from "./GroupsManager.tsx";
 
 export interface MemberRow {
   member: Member;
@@ -60,6 +62,7 @@ export function MembersClient({
   rows,
   definitions,
   groups,
+  groupRows,
   codeSettings,
   inviteLinks,
   canCreate,
@@ -74,6 +77,7 @@ export function MembersClient({
   rows: MemberRow[];
   definitions: MemberAttributeDefinition[];
   groups: MemberGroup[];
+  groupRows: GroupRow[];
   codeSettings: CommunityMemberCodeSettings | null;
   inviteLinks: InviteLink[];
   canCreate: boolean;
@@ -88,6 +92,7 @@ export function MembersClient({
   const [showArchived, setShowArchived] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const [editing, setEditing] = useState<MemberRow | null>(null);
   const [archiving, setArchiving] = useState<MemberRow | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
@@ -130,6 +135,11 @@ export function MembersClient({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-[var(--color-text)]">Members</h1>
         <div className="flex flex-wrap gap-2">
+          {canConfigure && (
+            <Button variant="secondary" onClick={() => setGroupsOpen(true)}>
+              <Users className="h-4 w-4" aria-hidden="true" /> Groups
+            </Button>
+          )}
           {canConfigure && (
             <Button variant="secondary" onClick={() => setConfigOpen(true)}>
               <Settings2 className="h-4 w-4" aria-hidden="true" /> Member profile
@@ -290,6 +300,20 @@ export function MembersClient({
         <CreateInviteLinkDialog slug={slug} communityId={communityId} onClose={() => setInviteOpen(false)} />
       )}
 
+      {canConfigure && groupsOpen && (
+        <GroupsManager
+          slug={slug}
+          communityId={communityId}
+          groups={groupRows}
+          members={rows.map((row) => ({
+            id: row.member.id,
+            fullName: row.member.full_name,
+            memberCode: row.member.member_code,
+          }))}
+          onClose={() => setGroupsOpen(false)}
+        />
+      )}
+
       {canConfigure && configOpen && (
         <MemberProfileConfig
           slug={slug}
@@ -369,7 +393,17 @@ function MemberDialog({
       if (existing) {
         formData.set("memberId", existing.member.id);
         const result = await updateMemberAction(slug, fieldKeys, formData);
-        if (result.error) setError(result.error);
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
+
+        // Groups are a separate write because they are a separate permission:
+        // member.edit changes who someone is, group.manage changes where they
+        // belong. An officer may hold one and not the other.
+        const groupIds = formData.getAll("groupIds").filter((value): value is string => typeof value === "string");
+        const grouped = await setMemberGroupsAction(slug, { memberId: existing.member.id, groupIds });
+        if (grouped.error) setError(grouped.error);
         else onClose();
         return;
       }
@@ -498,7 +532,7 @@ function MemberDialog({
           ),
         )}
 
-        {!existing && groups.length > 0 && (
+        {groups.length > 0 && (
           <fieldset className="flex flex-col gap-2">
             <legend className="text-sm font-medium text-[var(--color-text)]">Groups</legend>
             {groups.map((group) => (
@@ -507,6 +541,7 @@ function MemberDialog({
                   type="checkbox"
                   name="groupIds"
                   value={group.id}
+                  defaultChecked={existing?.groupIds.includes(group.id) ?? false}
                   className="h-4 w-4 rounded border-[var(--color-border-strong)]"
                 />
                 {group.name}

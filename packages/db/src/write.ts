@@ -203,6 +203,92 @@ export async function deleteMemberAttributeDefinition(caller: CallerContext, def
   await call(caller, (tx) => tx`select app.delete_member_attribute_definition(${definitionId})`);
 }
 
+// ── Member groups (20260920130000) ─────────────────────────────────────────
+//
+// Groups are how a collection later says who it is for, so they are not merely
+// labels: archiving keeps a group and its memberships, and deleting is possible
+// only while nobody has ever been in it.
+
+export async function createMemberGroup(
+  caller: CallerContext,
+  input: {
+    communityId: string;
+    name: string;
+    description?: string | undefined;
+    pickableAtJoin?: boolean | undefined;
+    sortOrder?: number | undefined;
+  },
+): Promise<string> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ id: string }[]>`select app.create_member_group(
+      ${input.communityId}, ${input.name}, ${input.description ?? null},
+      ${input.pickableAtJoin ?? false}, ${input.sortOrder ?? 0}
+    ) as id`,
+  );
+  return row!.id;
+}
+
+export async function updateMemberGroup(
+  caller: CallerContext,
+  input: {
+    groupId: string;
+    name: string;
+    description?: string | undefined;
+    pickableAtJoin?: boolean | undefined;
+    sortOrder?: number | undefined;
+  },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.update_member_group(
+      ${input.groupId}, ${input.name}, ${input.description ?? null},
+      ${input.pickableAtJoin ?? false}, ${input.sortOrder ?? 0}
+    )`,
+  );
+}
+
+export async function setMemberGroupArchived(
+  caller: CallerContext,
+  input: { groupId: string; archived: boolean; reason?: string | undefined },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.set_member_group_archived(${input.groupId}, ${input.archived}, ${input.reason ?? null})`,
+  );
+}
+
+/** Only a group nobody has ever been in. Anything else is archived, because who was in a group is how a past audience is read. */
+export async function deleteMemberGroup(caller: CallerContext, groupId: string): Promise<void> {
+  await call(caller, (tx) => tx`select app.delete_member_group(${groupId})`);
+}
+
+/** Returns how many memberships were created; members already in the group, and ids from another community, add nothing. */
+export async function addMembersToGroup(
+  caller: CallerContext,
+  input: { groupId: string; memberIds: readonly string[] },
+): Promise<number> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ count: number }[]>`select app.add_members_to_group(${input.groupId}, ${[...input.memberIds]}) as count`,
+  );
+  return row!.count;
+}
+
+export async function removeMemberFromGroup(
+  caller: CallerContext,
+  input: { groupId: string; memberId: string },
+): Promise<void> {
+  await call(caller, (tx) => tx`select app.remove_member_from_group(${input.groupId}, ${input.memberId})`);
+}
+
+/** Full replace of one member's groups. Archived groups they already belong to are left alone — the form does not offer them, so their absence is not an instruction. */
+export async function setMemberGroups(
+  caller: CallerContext,
+  input: { memberId: string; groupIds: readonly string[] },
+): Promise<number> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ count: number }[]>`select app.set_member_groups(${input.memberId}, ${[...input.groupIds]}) as count`,
+  );
+  return row!.count;
+}
+
 // ── Member invite links (MEM-05) ──────────────────────────────────────────
 
 export async function createInviteLink(

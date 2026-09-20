@@ -1,28 +1,41 @@
 "use server";
 
 import {
+  addMembersToGroup,
   approvePendingMember,
   archiveMember,
   createInviteLink,
   createMember,
+  createMemberGroup,
   DatabaseError,
   deleteMemberAttributeDefinition,
+  deleteMemberGroup,
   findMemberDuplicates,
   type MemberDuplicate,
   rejectPendingMember,
+  removeMemberFromGroup,
   restoreMember,
   revokeInviteLink,
+  setMemberGroupArchived,
+  setMemberGroups,
   updateMember,
+  updateMemberGroup,
   updateMemberCodeSettings,
   upsertMemberAttributeDefinition,
 } from "@kolekto/db";
 import {
+  addMembersToGroupSchema,
+  archiveGroupSchema,
   archiveMemberSchema,
+  createGroupSchema,
   createMemberSchema,
   findMemberDuplicatesSchema,
   memberCodeSettingsSchema,
   memberFieldSchema,
+  removeMemberFromGroupSchema,
   restoreMemberSchema,
+  setMemberGroupsSchema,
+  updateGroupSchema,
   updateMemberSchema,
 } from "@kolekto/validation";
 import { revalidatePath } from "next/cache";
@@ -222,6 +235,107 @@ export async function deleteMemberFieldAction(slug: string, definitionId: string
   }
   revalidateMembers(slug);
   revalidatePath(`/c/${slug}/settings`);
+  return { ok: true };
+}
+
+// ── Groups ──────────────────────────────────────────────────────────────────
+
+export async function createGroupAction(slug: string, input: unknown): Promise<ActionResult> {
+  const parsed = createGroupSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the group and try again" };
+
+  const caller = await requireCallerContext();
+  try {
+    await createMemberGroup(caller, parsed.data);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not create the group") };
+  }
+  revalidateMembers(slug);
+  return { ok: true };
+}
+
+export async function updateGroupAction(slug: string, input: unknown): Promise<ActionResult> {
+  const parsed = updateGroupSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the group and try again" };
+
+  const caller = await requireCallerContext();
+  try {
+    await updateMemberGroup(caller, parsed.data);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save the group") };
+  }
+  revalidateMembers(slug);
+  return { ok: true };
+}
+
+export async function archiveGroupAction(slug: string, input: unknown): Promise<ActionResult> {
+  const parsed = archiveGroupSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setMemberGroupArchived(caller, parsed.data);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not change the group") };
+  }
+  revalidateMembers(slug);
+  return { ok: true };
+}
+
+export async function deleteGroupAction(slug: string, groupId: string): Promise<ActionResult> {
+  const caller = await requireCallerContext();
+  try {
+    await deleteMemberGroup(caller, groupId);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not delete the group") };
+  }
+  revalidateMembers(slug);
+  return { ok: true };
+}
+
+export async function addMembersToGroupAction(
+  slug: string,
+  input: unknown,
+): Promise<ActionResult & { added?: number }> {
+  const parsed = addMembersToGroupSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Select at least one member" };
+
+  const caller = await requireCallerContext();
+  try {
+    const added = await addMembersToGroup(caller, parsed.data);
+    revalidateMembers(slug);
+    return { ok: true, added };
+  } catch (error) {
+    return { error: messageFrom(error, "Could not add those members") };
+  }
+}
+
+export async function removeMemberFromGroupAction(slug: string, input: unknown): Promise<ActionResult> {
+  const parsed = removeMemberFromGroupSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+
+  const caller = await requireCallerContext();
+  try {
+    await removeMemberFromGroup(caller, parsed.data);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not remove the member from the group") };
+  }
+  revalidateMembers(slug);
+  return { ok: true };
+}
+
+/** Replaces one member's groups with the set the form showed. Removing someone from a group never touches an obligation already assigned to them. */
+export async function setMemberGroupsAction(slug: string, input: unknown): Promise<ActionResult> {
+  const parsed = setMemberGroupsSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setMemberGroups(caller, parsed.data);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save the member's groups") };
+  }
+  revalidateMembers(slug);
   return { ok: true };
 }
 

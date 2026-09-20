@@ -159,6 +159,8 @@ export interface MemberGroup {
   description: string | null;
   pickable_at_join: boolean;
   sort_order: number;
+  archived_at: string | null;
+  created_at: string;
 }
 
 export interface InviteLink {

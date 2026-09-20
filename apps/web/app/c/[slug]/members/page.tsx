@@ -11,6 +11,7 @@ import { notFound } from "next/navigation";
 import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
 import { MembersClient, type MemberRow } from "./MembersClient.tsx";
+import type { GroupRow } from "./GroupsManager.tsx";
 
 export const metadata = { title: "Members" };
 
@@ -63,6 +64,19 @@ export default async function MembersPage({ params }: { params: Promise<{ slug: 
     ]);
   }
 
+  // Groups carry their membership with them: the groups screen answers 'who is
+  // in Block B' and the roster answers 'which groups is this person in', and
+  // both read the same rows.
+  const membersByGroup = new Map<string, string[]>();
+  for (const membership of (groupMemberships ?? []) as { member_id: string; group_id: string }[]) {
+    membersByGroup.set(membership.group_id, [...(membersByGroup.get(membership.group_id) ?? []), membership.member_id]);
+  }
+
+  const groupRows: GroupRow[] = ((groups ?? []) as MemberGroup[]).map((group) => ({
+    group,
+    memberIds: membersByGroup.get(group.id) ?? [],
+  }));
+
   const rows: MemberRow[] = ((members ?? []) as Member[]).map((member) => ({
     member,
     attributes: valuesByMember.get(member.id) ?? {},
@@ -75,7 +89,8 @@ export default async function MembersPage({ params }: { params: Promise<{ slug: 
       communityId={c.id}
       rows={rows}
       definitions={(definitions ?? []) as MemberAttributeDefinition[]}
-      groups={(groups ?? []) as MemberGroup[]}
+      groups={((groups ?? []) as MemberGroup[]).filter((group) => group.archived_at === null)}
+      groupRows={groupRows}
       codeSettings={(codeSettings ?? null) as CommunityMemberCodeSettings | null}
       inviteLinks={(inviteLinks ?? []) as InviteLink[]}
       canCreate={hasPermission(access, "member.create")}
