@@ -127,6 +127,14 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await expect(anonymousPage.getByText("₦5,000").first()).toBeVisible();
   await expect(anonymousPage.getByText("Dues for the 2026 session.")).toBeVisible();
 
+  // A managed collection asks a named list, so the contributor identifies
+  // themselves before anything else (M7). Until they do, the form is not shown.
+  await expect(anonymousPage.getByRole("heading", { name: "Find yourself on the list" })).toBeVisible();
+  await anonymousPage.getByLabel(/Your member ID, identifier, phone or name/).fill("Chidi Eze");
+  await anonymousPage.getByRole("button", { name: "Find me" }).click();
+  await anonymousPage.getByRole("button", { name: "Yes, this is me" }).click();
+  await expect(anonymousPage.getByText("Contributing as")).toBeVisible();
+
   // The collection's own question is asked, separately from contact details.
   await expect(anonymousPage.getByLabel("Matric number")).toBeVisible();
 

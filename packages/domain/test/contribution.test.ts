@@ -188,10 +188,106 @@ describe("item collections", () => {
 });
 
 describe("per-member collections", () => {
-  it("cannot be paid from the public page — each member's amount is on their obligation", () => {
+  const OBLIGATION = "01930000-0000-7000-8000-000000000021";
+
+  it("cannot be paid by a stranger — each member's amount is on their own obligation", () => {
     assert.throws(
       () => resolveContributionAmount(config({ amountModel: "per_member" }), { amountKobo: kobo(500_000) }),
-      (error: unknown) => error instanceof ContributionError && error.code === "NOT_OPEN_TO_CONTRIBUTORS",
+      (error: unknown) => error instanceof ContributionError && error.code === "MEMBER_REQUIRED",
     );
+  });
+
+  it("charges an identified member what their obligation says, not what they sent", () => {
+    const resolved = resolveContributionAmount(
+      config({
+        amountModel: "per_member",
+        obligation: {
+          id: OBLIGATION,
+          expectedAmountKobo: kobo(750_000),
+          waivedAmountKobo: kobo(0),
+          status: "unpaid",
+        },
+      }),
+      { amountKobo: kobo(100) },
+    );
+
+    assert.equal(resolved.amountKobo, 750_000n);
+  });
+
+  it("subtracts a waiver, because the community already forgave that part", () => {
+    const resolved = resolveContributionAmount(
+      config({
+        amountModel: "per_member",
+        obligation: {
+          id: OBLIGATION,
+          expectedAmountKobo: kobo(750_000),
+          waivedAmountKobo: kobo(250_000),
+          status: "unpaid",
+        },
+      }),
+      {},
+    );
+
+    assert.equal(resolved.amountKobo, 500_000n);
+  });
+
+  it("refuses to charge an exempt member anything at all", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({
+            amountModel: "per_member",
+            obligation: {
+              id: OBLIGATION,
+              expectedAmountKobo: kobo(750_000),
+              waivedAmountKobo: kobo(0),
+              status: "exempt",
+            },
+          }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "OBLIGATION_EXEMPT",
+    );
+  });
+
+  it("refuses when the whole balance was waived", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({
+            amountModel: "per_member",
+            obligation: {
+              id: OBLIGATION,
+              expectedAmountKobo: kobo(750_000),
+              waivedAmountKobo: kobo(750_000),
+              status: "unpaid",
+            },
+          }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "NOTHING_OWED",
+    );
+  });
+});
+
+describe("a fixed collection with an identified member", () => {
+  it("prefers that member's obligation over the headline amount", () => {
+    // The collection asks ₦5,000; this member was granted a ₦2,000 waiver.
+    // Charging the headline would be charging them for a waiver they hold.
+    const resolved = resolveContributionAmount(
+      config({
+        amountModel: "fixed",
+        fixedAmountKobo: kobo(500_000),
+        obligation: {
+          id: "01930000-0000-7000-8000-000000000022",
+          expectedAmountKobo: kobo(500_000),
+          waivedAmountKobo: kobo(200_000),
+          status: "unpaid",
+        },
+      }),
+      {},
+    );
+
+    assert.equal(resolved.amountKobo, 300_000n);
   });
 });

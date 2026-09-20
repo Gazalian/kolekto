@@ -85,6 +85,14 @@ export default async function PublicCollectionPage({
 
         <h1 className="text-2xl font-semibold text-[var(--color-text)]">{collection.collection_name}</h1>
 
+        {/* WHO IS THIS FOR — answered before the contributor scrolls, because
+            it decides whether they are about to be asked to find themselves. */}
+        <p className="text-sm text-[var(--color-text-muted)]">
+          {collection.audience_mode === "public"
+            ? "Open to anyone with this link."
+            : `For members of ${collection.community_name}. You will be asked to find yourself on the list.`}
+        </p>
+
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--color-text-muted)]">
           {collection.amount_model === "fixed" && collection.fixed_amount_kobo && (
             <span className="font-medium text-[var(--color-text)]">{naira(collection.fixed_amount_kobo)}</span>
@@ -134,6 +142,7 @@ export default async function PublicCollectionPage({
         <ContributeForm
           communitySlug={communitySlug}
           collectionSlug={collectionSlug}
+          audienceMode={collection.audience_mode}
           amountModel={collection.amount_model}
           fixedAmount={collection.fixed_amount_kobo ? naira(collection.fixed_amount_kobo) : null}
           minAmount={collection.min_amount_kobo ? naira(collection.min_amount_kobo) : null}

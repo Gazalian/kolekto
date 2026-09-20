@@ -61,7 +61,11 @@ select bag_eq(
   $$,
   $$ values ('get_public_collection'), ('get_public_collection_tiers'),
             ('get_public_collection_fields'), ('redeem_invite_link'),
-            ('get_public_invite'), ('get_public_collection_items') $$,
+            ('get_public_invite'), ('get_public_collection_items'),
+            -- M7: contributor self-identification. Both are read-only, scoped
+            -- to one collection's audience, and neither can list anybody.
+            -- app.resolve_collection_audience, which CAN, stays ungranted.
+            ('find_collection_member'), ('get_collection_member_context') $$,
   'anon can execute exactly the whitelisted public-collection-page functions plus redeem_invite_link (MEM-05)'
 );
 

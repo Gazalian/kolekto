@@ -167,6 +167,36 @@ export function loadDatabaseUrl(): string {
   return required("SUPABASE_DB_URL");
 }
 
+/**
+ * The key that signs a contributor's identification cookie.
+ *
+ * A contributor has no account and no Supabase session (PRD 0.3). Once they
+ * have found themselves on a community's roll, the server has to remember
+ * which member that was, and the browser must not be able to change the answer
+ * — substituting another member id would be substituting another person.
+ *
+ * So the cookie carries a signature, this is the key, and it is server-only for
+ * the same reason as the service-role key: anyone holding it can mint an
+ * identification for any member id they can guess.
+ */
+export function loadSessionSecret(): string {
+  if (typeof window !== "undefined") {
+    throw new ConfigError(
+      "loadSessionSecret() was called in a browser context. The key that signs contributor identification must " +
+        "never reach the client — with it, a browser could claim to be any member. This is a bug, not a " +
+        "configuration problem.",
+    );
+  }
+  const secret = required("KOLEKTO_SESSION_SECRET");
+  if (secret.length < 32) {
+    throw new ConfigError(
+      "KOLEKTO_SESSION_SECRET is shorter than 32 characters. Generate one with: " +
+        "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"",
+    );
+  }
+  return secret;
+}
+
 /** Reset the cache. Tests only. */
 export function resetConfigCache(): void {
   cached = undefined;

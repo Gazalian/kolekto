@@ -2,7 +2,8 @@
 
 import { Banner, Button, SelectField, TextField } from "@kolekto/ui";
 import { useState, useTransition } from "react";
-import { submitContributionAction, type ContributionResult } from "./actions.ts";
+import { forgetMemberAction, submitContributionAction, type ContributionResult } from "./actions.ts";
+import { FindYourself, type IdentifiedMember } from "./FindYourself.tsx";
 
 /**
  * The contributor's form. Three rules it follows, all of them product
@@ -44,6 +45,7 @@ interface PublicField {
 export function ContributeForm({
   communitySlug,
   collectionSlug,
+  audienceMode,
   amountModel,
   fixedAmount,
   minAmount,
@@ -57,6 +59,8 @@ export function ContributeForm({
 }: {
   communitySlug: string;
   collectionSlug: string;
+  /** `public` means anyone with the link. Anything else means a named list, and the contributor identifies first. */
+  audienceMode: "all_members" | "groups" | "selected_members" | "public";
   amountModel: "fixed" | "open_amount" | "tiers" | "per_member" | "items";
   fixedAmount: string | null;
   minAmount: string | null;
@@ -78,9 +82,26 @@ export function ContributeForm({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<ContributionResult["summary"] | null>(null);
+  const [member, setMember] = useState<IdentifiedMember | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  if (amountModel === "per_member") {
+  const isManaged = audienceMode !== "public";
+
+  // A managed collection asks named people, so it asks who is here first.
+  // Nothing about amounts, questions or contact details appears until the
+  // contributor has said "yes, this is me".
+  if (isManaged && !member && !done) {
+    return (
+      <FindYourself
+        communitySlug={communitySlug}
+        collectionSlug={collectionSlug}
+        organiser={organiser}
+        onIdentified={setMember}
+      />
+    );
+  }
+
+  if (!isManaged && amountModel === "per_member") {
     return (
       <Banner tone="info">
         This collection is for a named list of members, each with their own amount. {organiser} will send you your own
@@ -95,6 +116,23 @@ export function ContributeForm({
         <h2 className="text-lg font-semibold text-[var(--color-text)]">Your details are checked, {done.contributorName}</h2>
 
         <dl className="divide-y divide-[var(--color-border)]">
+          {done.memberName && (
+            <div className="flex justify-between gap-3 py-2 text-sm">
+              <dt className="text-[var(--color-text-muted)]">Contributing as</dt>
+              <dd className="font-medium text-[var(--color-text)]">
+                {done.memberName}
+                {done.memberCode && (
+                  <span className="block text-xs font-normal text-[var(--color-text-muted)]">{done.memberCode}</span>
+                )}
+              </dd>
+            </div>
+          )}
+          {done.cycleLabel && (
+            <div className="flex justify-between gap-3 py-2 text-sm">
+              <dt className="text-[var(--color-text-muted)]">For the period</dt>
+              <dd className="font-medium text-[var(--color-text)]">{done.cycleLabel}</dd>
+            </div>
+          )}
           {done.tierName && (
             <div className="flex justify-between gap-3 py-2 text-sm">
               <dt className="text-[var(--color-text-muted)]">You chose</dt>
@@ -115,13 +153,19 @@ export function ContributeForm({
           </div>
         </dl>
 
-        {/* The exact state of affairs, said plainly. No receipt, no reference
-            number, no "payment successful" — nothing has been paid, and
-            nothing has been stored. */}
-        <Banner tone="info">
-          {organiser} cannot take payment through Kolekto yet. Nothing has been charged and these details have not been
-          saved — please contact {organiser} to arrange payment, and check back here when online payment opens.
-        </Banner>
+        {/* The payment boundary (ADR 0012). This is where M7 stops: the amount
+            is resolved and everything needed to pay it is in hand. The exact
+            state of affairs is said plainly — no receipt, no reference number,
+            no "payment successful", because nothing has been paid and nothing
+            has been stored. */}
+        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
+          <p className="text-sm font-medium text-[var(--color-text)]">Ready to continue to payment</p>
+          <p className="text-sm text-[var(--color-text-muted)]">
+            {organiser} cannot take payment through Kolekto yet. Nothing has been charged, nothing has been saved, and
+            nothing you owe has changed — contact {organiser} to arrange payment, and check back here when online
+            payment opens.
+          </p>
+        </div>
 
         {thankYouMessage && <p className="text-sm text-[var(--color-text-muted)]">{thankYouMessage}</p>}
 
@@ -190,6 +234,70 @@ export function ContributeForm({
             </label>
           ))}
         </fieldset>
+      )}
+
+      {member && (
+        <section className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-4">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+                Contributing as
+              </p>
+              <p className="text-base font-semibold text-[var(--color-text)]">{member.fullName}</p>
+              {member.memberCode && (
+                <p className="text-xs text-[var(--color-text-muted)]">{member.memberCode}</p>
+              )}
+            </div>
+            <button
+              type="button"
+              className="text-xs font-medium text-[var(--color-primary)] hover:underline"
+              onClick={() =>
+                startTransition(async () => {
+                  await forgetMemberAction();
+                  setMember(null);
+                })
+              }
+            >
+              Not you?
+            </button>
+          </div>
+
+          {member.cycleLabel && (
+            <p className="text-sm text-[var(--color-text-muted)]">For the period {member.cycleLabel}</p>
+          )}
+
+          {/* What the community expects of this member, read from their own
+              obligation. `paid` is not a state anything here can produce: only
+              a verified payment will ever set it. */}
+          {member.expectedAmount ? (
+            <dl className="flex flex-col gap-1 text-sm">
+              <div className="flex justify-between gap-3">
+                <dt className="text-[var(--color-text-muted)]">Expected</dt>
+                <dd className="font-semibold text-[var(--color-text)]">{member.expectedAmount}</dd>
+              </div>
+              {member.waivedAmount && (
+                <div className="flex justify-between gap-3">
+                  <dt className="text-[var(--color-text-muted)]">Waived by {organiser}</dt>
+                  <dd className="font-medium text-[var(--color-text)]">−{member.waivedAmount}</dd>
+                </div>
+              )}
+              <div className="flex justify-between gap-3">
+                <dt className="text-[var(--color-text-muted)]">Status</dt>
+                <dd className="font-medium text-[var(--color-text)]">
+                  {member.obligationStatus === "exempt"
+                    ? "Exempt — nothing to pay"
+                    : member.obligationStatus === "paid"
+                      ? "Paid"
+                      : "Awaiting contribution"}
+                </dd>
+              </div>
+            </dl>
+          ) : (
+            <p className="text-sm text-[var(--color-text-muted)]">
+              {organiser} has not recorded an amount against your name for this collection. You can still contribute.
+            </p>
+          )}
+        </section>
       )}
 
       {amountModel === "items" && (
@@ -291,7 +399,9 @@ export function ContributeForm({
         />
       )}
 
-      {amountModel === "fixed" && fixedAmount && (
+      {/* The collection's headline amount, shown only when this contributor
+          has no obligation of their own to show instead. */}
+      {amountModel === "fixed" && fixedAmount && !member?.expectedAmount && (
         <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
           <p className="text-sm text-[var(--color-text-muted)]">Amount</p>
           <p className="text-xl font-semibold text-[var(--color-text)]">{fixedAmount}</p>

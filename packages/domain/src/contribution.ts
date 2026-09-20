@@ -56,6 +56,28 @@ export interface ContributionConfig {
   readonly maxAmountKobo: Kobo | null;
   readonly tiers: readonly ContributionTier[];
   readonly items?: readonly ContributionItem[] | undefined;
+  /**
+   * What an identified member owes on this collection, from their obligation
+   * row. Present only after the contributor has identified themselves on a
+   * managed collection; loaded by the server from the database, never sent by
+   * the browser.
+   */
+  readonly obligation?: ContributionObligation | undefined;
+}
+
+/**
+ * The obligation an identified member is paying against.
+ *
+ * `expectedAmountKobo` is what they were asked for and `waivedAmountKobo` is
+ * what the community forgave (OBL-08) — a waiver reduces what is owed without
+ * anybody paying it, and is never counted as money collected. What remains to
+ * pay is the difference, computed here rather than anywhere a browser can see.
+ */
+export interface ContributionObligation {
+  readonly id: string;
+  readonly expectedAmountKobo: Kobo;
+  readonly waivedAmountKobo: Kobo;
+  readonly status: "unpaid" | "in_installments" | "overdue" | "paid" | "exempt" | "cancelled";
 }
 
 /** What the contributor's browser sent. Every field is untrusted. */
@@ -85,6 +107,9 @@ export type ContributionErrorCode =
   | "UNKNOWN_ITEM"
   | "INVALID_QUANTITY"
   | "QUANTITY_ABOVE_LIMIT"
+  | "MEMBER_REQUIRED"
+  | "NOTHING_OWED"
+  | "OBLIGATION_EXEMPT"
   | "NOT_OPEN_TO_CONTRIBUTORS"
   | "MISCONFIGURED";
 
@@ -98,12 +123,44 @@ export class ContributionError extends Error {
   }
 }
 
+/**
+ * What is left to pay on an obligation.
+ *
+ * Nothing is subtracted for money received, because no money has been received
+ * anywhere in this phase (ADR 0006). A waiver is the one reduction that exists,
+ * and it is a decision an officer recorded, not a payment.
+ */
+function amountOwed(obligation: ContributionObligation): Kobo {
+  if (obligation.status === "exempt") {
+    throw new ContributionError(
+      "OBLIGATION_EXEMPT",
+      "You have been exempted from this collection. There is nothing to pay.",
+    );
+  }
+  if (obligation.status === "cancelled") {
+    throw new ContributionError("NOTHING_OWED", "This is no longer being asked of you.");
+  }
+
+  const owed = (obligation.expectedAmountKobo - obligation.waivedAmountKobo) as Kobo;
+  if (owed <= ZERO) {
+    throw new ContributionError("NOTHING_OWED", "Your balance on this collection has been fully waived.");
+  }
+  return owed;
+}
+
 export function resolveContributionAmount(
   config: ContributionConfig,
   selection: ContributionSelection,
 ): ResolvedContribution {
   switch (config.amountModel) {
     case "fixed": {
+      // An identified member's own obligation wins over the collection's
+      // headline amount: an officer may have waived part of what THEY owe, and
+      // charging the headline would be charging them for a waiver they were
+      // granted.
+      if (config.obligation) {
+        return { amountKobo: amountOwed(config.obligation), tierId: null };
+      }
       if (config.fixedAmountKobo === null || config.fixedAmountKobo <= ZERO) {
         throw new ContributionError("MISCONFIGURED", "This collection has no contribution amount set.");
       }
@@ -187,12 +244,16 @@ export function resolveContributionAmount(
     }
 
     case "per_member": {
-      // Each member owes a different amount, recorded on their obligation.
-      // There is nothing for an anonymous contributor to resolve against.
-      throw new ContributionError(
-        "NOT_OPEN_TO_CONTRIBUTORS",
-        "This collection is for a specific list of members, each with their own amount.",
-      );
+      // Each member owes a different amount, recorded on their obligation. An
+      // anonymous contributor has nothing to resolve against — but one who has
+      // identified themselves on the roll does, and it is their own row.
+      if (!config.obligation) {
+        throw new ContributionError(
+          "MEMBER_REQUIRED",
+          "This collection is for a specific list of members, each with their own amount. Find yourself first.",
+        );
+      }
+      return { amountKobo: amountOwed(config.obligation), tierId: null };
     }
   }
 }

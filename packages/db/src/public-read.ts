@@ -29,6 +29,8 @@ export interface PublicCollection {
   category: string;
   participation_mode: "open" | "managed";
   amount_model: "fixed" | "open_amount" | "tiers" | "per_member" | "items";
+  /** Whether this collection is for anyone with the link, or for a named list of members. Who those members are never travels. */
+  audience_mode: "all_members" | "groups" | "selected_members" | "public";
   payment_plan: "full_only" | "installments_allowed";
   fixed_amount_kobo: string | null;
   min_amount_kobo: string | null;
@@ -106,6 +108,87 @@ export async function getPublicCollectionItems(collectionId: string): Promise<Pu
     tx<PublicCollectionItem[]>`select * from app.get_public_collection_items(${collectionId})`,
   );
   return [...rows];
+}
+
+// ── Contributor self-identification (20260920170000) ───────────────────────
+//
+// The only public surface that touches a community's roll. Both functions are
+// scoped to one collection's audience by the database; neither can list
+// anybody, and `app.resolve_collection_audience` — which can — is granted to no
+// role at all.
+
+export interface CollectionMemberMatch {
+  /** `one` carries the member; `many` carries only a count; `none` carries nothing. */
+  match_status: "none" | "one" | "many";
+  member_id: string | null;
+  full_name: string | null;
+  member_code: string | null;
+  /** What this community calls its primary identifier ("Matric number"), for the prompt. */
+  identifier_label: string | null;
+  identifier_value: string | null;
+  match_count: number;
+}
+
+/**
+ * "Find yourself" on a managed collection.
+ *
+ * The query is matched by equality against what the person already knows —
+ * their member code, a unique attribute, their phone, their email — or against
+ * at least two parts of their name. Several matches deliberately come back as a
+ * count and nothing else: showing a stranger a list of candidates is showing
+ * them somebody else's name.
+ */
+export async function findCollectionMember(
+  collectionId: string,
+  query: string,
+): Promise<CollectionMemberMatch> {
+  const rows = await withCallerContext(ANONYMOUS, (tx) =>
+    tx<CollectionMemberMatch[]>`select * from app.find_collection_member(${collectionId}, ${query})`,
+  );
+  return (
+    rows[0] ?? {
+      match_status: "none",
+      member_id: null,
+      full_name: null,
+      member_code: null,
+      identifier_label: null,
+      identifier_value: null,
+      match_count: 0,
+    }
+  );
+}
+
+export interface CollectionMemberContext {
+  member_id: string;
+  full_name: string;
+  member_code: string | null;
+  identifier_label: string | null;
+  identifier_value: string | null;
+  /** Null when this member has no obligation on this collection — they may still contribute if the collection lets them. */
+  obligation_id: string | null;
+  cycle_key: string | null;
+  cycle_label: string | null;
+  expected_amount_kobo: string | null;
+  waived_amount_kobo: string | null;
+  obligation_status: "unpaid" | "in_installments" | "overdue" | "paid" | "exempt" | "cancelled" | null;
+  due_at: Date | null;
+}
+
+/**
+ * What an identified contributor is being asked for.
+ *
+ * `null` when the answer is no — a member who was archived since the lookup, an
+ * id from another community, a collection that has closed. The reason is never
+ * given, because every reason is a fact about somebody else.
+ */
+export async function getCollectionMemberContext(
+  collectionId: string,
+  memberId: string,
+): Promise<CollectionMemberContext | null> {
+  const rows = await withCallerContext(ANONYMOUS, (tx) =>
+    tx<CollectionMemberContext[]>`select * from app.get_collection_member_context(${collectionId}, ${memberId})`,
+  );
+  return rows[0] ?? null;
 }
 
 export async function getPublicCollectionFields(collectionId: string): Promise<PublicCollectionField[]> {
