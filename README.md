@@ -81,7 +81,7 @@ nvm use                 # Node 22
 npm install
 cp .env.example .env.local
 npm run db:start        # local Supabase via the CLI
-npm run db:reset        # DESTRUCTIVE — see below. First run only.
+npm run db:migrate      # apply migrations, keep your data
 npm run verify          # typecheck, invariant gates, tests
 npm run db:test         # pgTAP suite
 ```
@@ -97,7 +97,8 @@ clone, and almost never afterwards.
 ```bash
 npm run db:migrate      # apply pending migrations, keep all data
 npm run db:backup       # snapshot your rows to backups/<timestamp>.sql
-npm run db:restore      # put them back (after a reset, or on another machine)
+npm run db:restore      # put them back, and verify every row arrived
+npm run db:marker create|check   # prove persistence with marker data
 ```
 
 The backup carries data only — the schema always comes from

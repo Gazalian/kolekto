@@ -19,7 +19,7 @@
     "test:domain": "npm run test --workspace packages/domain",
     "db:start": "supabase start",
     "db:stop": "supabase stop",
-    "db:reset": "supabase db reset",
+    "db:reset": "node scripts/db/reset.mjs",
     "db:diff": "supabase db diff",
     "db:test": "supabase test db",
     "test:e2e": "playwright test",
@@ -27,7 +27,8 @@
     "verify": "npm run typecheck && npm run invariants && npm run test",
     "db:migrate": "supabase migration up --local",
     "db:backup": "node scripts/db/backup.mjs",
-    "db:restore": "node scripts/db/restore.mjs"
+    "db:restore": "node scripts/db/restore.mjs",
+    "db:marker": "node scripts/db/persistence-marker.mjs"
   },
   "devDependencies": {
     "typescript": "^5.7.0",

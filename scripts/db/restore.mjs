@@ -91,15 +91,84 @@ if (result.status !== 0) {
   process.exit(1);
 }
 
-// Duplicate-key notices are expected when restoring over seeded rows and are
-// not failures; anything else is worth reading.
 const problems = (result.stderr ?? "")
   .split("\n")
-  .filter((line) => line.trim() !== "" && !/duplicate key value|already exists/i.test(line));
+  .filter((line) => line.trim() !== "" && !/^NOTICE:/i.test(line) && !/truncate cascades/i.test(line));
 
 if (problems.length > 0) {
   console.warn("Restored with notices:");
   for (const line of problems.slice(0, 20)) console.warn(`  ${line}`);
 }
 
-console.log("Done. Sign in with the same email address you used before — the account came back with the data.");
+/**
+ * Count what the dump said it held, and what the database now holds, and refuse
+ * to call the restore a success unless they agree.
+ *
+ * This exists because both earlier versions of this script reported success
+ * while restoring nothing — once because the dump contained only the auth
+ * tables, once because every COPY collided with a seeded row and failed. Both
+ * printed "Done." A restore that cannot tell the difference between working and
+ * not working is not a backup system, it is a false sense of one.
+ */
+const expected = new Map();
+for (const block of dump.split(/^COPY /m).slice(1)) {
+  const table = block.slice(0, block.indexOf(" "));
+  const body = block.slice(block.indexOf("FROM stdin;\n") + "FROM stdin;\n".length);
+
+  // Count up to the terminator line, which for an empty table is the FIRST
+  // line of the body. Searching for "\n\\." instead walked past it into the
+  // next table's data and reported six rows for tables that held none — a
+  // verification that invents a discrepancy is as useless as one that misses a
+  // real one.
+  const lines = body.split("\n");
+  const end = lines.indexOf("\\.");
+  const rows = end === -1 ? 0 : lines.slice(0, end).filter((line) => line !== "").length;
+
+  expected.set(table, (expected.get(table) ?? 0) + rows);
+}
+
+const counts = spawnSync(
+  "docker",
+  [
+    "exec",
+    "-i",
+    CONTAINER,
+    "psql",
+    "-U",
+    "supabase_admin",
+    "-d",
+    "postgres",
+    "-t",
+    "-A",
+    "-F",
+    "|",
+  ],
+  {
+    input: [...expected.keys()].map((table) => `select '${table}', count(*) from ${table};`).join("\n"),
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  },
+);
+
+const actual = new Map(
+  (counts.stdout ?? "")
+    .split("\n")
+    .filter((line) => line.includes("|"))
+    .map((line) => {
+      const [table, count] = line.split("|");
+      return [table, Number.parseInt(count ?? "0", 10)];
+    }),
+);
+
+const short = [...expected.entries()].filter(([table, rows]) => (actual.get(table) ?? 0) < rows);
+
+if (short.length > 0) {
+  console.error("\nRESTORE INCOMPLETE — these tables hold fewer rows than the backup contained:");
+  for (const [table, rows] of short) console.error(`  ${table}: expected ${rows}, found ${actual.get(table) ?? 0}`);
+  console.error("\nNothing has been lost from the backup file; the database is simply not in the state it describes.");
+  process.exit(1);
+}
+
+const total = [...expected.values()].reduce((sum, rows) => sum + rows, 0);
+console.log(`Restored ${total} rows across ${expected.size} tables, and verified every one of them.`);
+console.log("Sign in with the same email address you used before — the account came back with the data.");
