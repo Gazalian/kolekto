@@ -57,7 +57,7 @@ export default async function CollectionDetailPage({
     return {
       obligation,
       memberName: member?.full_name ?? "Member",
-      memberIdentifier: member?.identifier ?? null,
+      memberIdentifier: member?.member_code ?? null,
     };
   });
 
@@ -73,7 +73,7 @@ export default async function CollectionDetailPage({
       obligations={obligationRows}
       assignableMembers={((members ?? []) as Member[])
         .filter((member) => !assignedMemberIds.has(member.id) && member.status !== "archived" && member.status !== "merged")
-        .map((member) => ({ id: member.id, fullName: member.full_name, identifier: member.identifier }))}
+        .map((member) => ({ id: member.id, fullName: member.full_name, identifier: member.member_code }))}
       activity={(activity ?? []) as AuditLog[]}
       permissions={{
         canEdit: hasPermission(access, "collection.draft"),

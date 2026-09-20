@@ -91,8 +91,9 @@ select bag_eq(
   $$ values
       ('users'), ('communities'), ('community_slug_history'), ('community_labels'),
       ('permissions'), ('role_permissions'), ('leadership_terms'), ('officer_terms'),
-      ('members'), ('member_attribute_definitions'), ('member_groups'),
-      ('member_group_memberships'), ('member_contacts'),
+      ('members'), ('member_attribute_definitions'), ('member_attribute_values'),
+      ('member_groups'), ('member_group_memberships'), ('member_contacts'),
+      ('community_member_code_settings'),
       ('invite_links'), ('officer_invitations'),
       ('collections'), ('collection_tiers'), ('collection_fields'),
       ('collection_code_settings'), ('obligations'), ('audit_logs')

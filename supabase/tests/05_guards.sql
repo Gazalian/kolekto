@@ -28,8 +28,8 @@ insert into public.communities (id, slug, name, type, is_personal, created_by) v
 insert into public.officer_terms (community_id, user_id, role, actor_name_snapshot, start_reason) values
   ('cccccccc-cccc-4ccc-8ccc-cccccccccccc', '55555555-5555-4555-8555-555555555555', 'owner', 'Guard Person', 'created');
 
-insert into public.members (id, community_id, full_name, phone_e164, identifier, status) values
-  ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'A Member', '+2348031234567', 'CSC/2026/001', 'active');
+insert into public.members (id, community_id, full_name, phone_e164, member_code, status) values
+  ('dddddddd-dddd-4ddd-8ddd-dddddddddddd', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'A Member', '+2348031234567', 'GRD/0001', 'active');
 
 insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, created_by) values
   ('eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee', 'cccccccc-cccc-4ccc-8ccc-cccccccccccc', 'dues-2026', '2026 Departmental Dues', 'dues', 'managed', 'fixed', 2000000, 'active', '55555555-5555-4555-8555-555555555555');

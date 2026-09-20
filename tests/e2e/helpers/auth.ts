@@ -47,6 +47,21 @@ export async function signInAsNewUser(page: Page, prefix = "e2e"): Promise<strin
     await page.getByLabel("6-digit code").fill(code);
     await page.getByRole("button", { name: "Verify and sign in" }).click();
 
+    // The same stall reaches the verify call, not only the send — observed as
+    // "Processing this request timed out, please retry after a moment" on the
+    // code screen while the app sat on /login. Both halves of the flow get the
+    // same treatment: start again with a fresh address rather than retrying a
+    // code whose request may or may not have been consumed upstream.
+    try {
+      await page.waitForURL(/\/communities/, { timeout: 30_000 });
+    } catch {
+      if (attempt === 2) {
+        throw new Error("The local stack did not complete a sign-in after two attempts");
+      }
+      await page.getByRole("button", { name: /Use a different email/ }).click();
+      continue;
+    }
+
     await expect(page).toHaveURL(/\/communities/);
     return email;
   }

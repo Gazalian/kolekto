@@ -48,18 +48,40 @@ insert into public.officer_terms (community_id, user_id, role, title, leadership
   ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000002', 'treasurer', 'Financial Secretary', '11000000-0000-4000-8000-000000000001', 'Tunde Adeyemi', 'invited'),
   ('10000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000003', 'collector', 'Class Rep, 300L',     '11000000-0000-4000-8000-000000000001', 'Ngozi Okonkwo', 'invited');
 
-insert into public.member_attribute_definitions (community_id, key, label, type, options, required_at_join, sort_order) values
-  ('10000000-0000-4000-8000-000000000002', 'level',      'Level',      'single_select', array['100','200','300','400','500'], true, 1),
-  ('10000000-0000-4000-8000-000000000002', 'department', 'Department', 'text',          null,                                false, 2);
+-- The community's own member profile schema (§2). `matric_number` is the field
+-- this community identifies people by, which is why it is unique and primary:
+-- it drives search, duplicate detection and — later — a contributor finding
+-- themselves on a collection page.
+insert into public.member_attribute_definitions
+  (id, community_id, key, label, type, options, required_at_join, is_unique, is_primary_identifier, sort_order) values
+  ('15000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', 'matric_number', 'Matric number', 'text',          null,                                 true,  true,  true,  0),
+  ('15000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', 'level',         'Level',         'single_select', array['100','200','300','400','500'], true,  false, false, 1),
+  ('15000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000002', 'department',    'Department',    'text',          null,                                 false, false, false, 2);
+
+-- Member codes are issued by app.next_member_code(); the seed writes them
+-- directly, so the sequence has to be moved past what it handed out by hand.
+insert into public.community_member_code_settings (community_id, prefix, padding, next_number) values
+  ('10000000-0000-4000-8000-000000000002', 'CSC/', 4, 4);
 
 insert into public.member_groups (id, community_id, name, pickable_at_join, sort_order) values
   ('12000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', '300 Level', true, 1),
   ('12000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '400 Level', true, 2);
 
-insert into public.members (id, community_id, full_name, phone_e164, email, identifier, attributes, status, joined_via) values
-  ('13000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', 'Chidi Eze',      '+2348000000011', 'chidi@example.test',  'CSC/2023/001', '{"level":"300","department":"Computer Science"}', 'active',    'invite_link'),
-  ('13000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', 'Fatima Sani',    '+2348000000012', 'fatima@example.test', 'CSC/2023/002', '{"level":"300","department":"Computer Science"}', 'active',    'invite_link'),
-  ('13000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000002', 'Emeka Nwosu',    '+2348000000013', null,                  'CSC/2022/044', '{"level":"400","department":"Computer Science"}', 'unclaimed', 'import');
+insert into public.members (id, community_id, full_name, phone_e164, email, member_code, status, joined_via) values
+  ('13000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', 'Chidi Eze',      '+2348000000011', 'chidi@example.test',  'CSC/0001', 'active',    'invite_link'),
+  ('13000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', 'Fatima Sani',    '+2348000000012', 'fatima@example.test', 'CSC/0002', 'active',    'invite_link'),
+  ('13000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000002', 'Emeka Nwosu',    '+2348000000013', null,                  'CSC/0003', 'unclaimed', 'import');
+
+insert into public.member_attribute_values (member_id, definition_id, community_id, value_text, value_norm) values
+  ('13000000-0000-4000-8000-000000000001', '15000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', 'CSC/2023/001',     'csc/2023/001'),
+  ('13000000-0000-4000-8000-000000000001', '15000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '300',              '300'),
+  ('13000000-0000-4000-8000-000000000001', '15000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000002', 'Computer Science', 'computer science'),
+  ('13000000-0000-4000-8000-000000000002', '15000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', 'CSC/2023/002',     'csc/2023/002'),
+  ('13000000-0000-4000-8000-000000000002', '15000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '300',              '300'),
+  ('13000000-0000-4000-8000-000000000002', '15000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000002', 'Computer Science', 'computer science'),
+  ('13000000-0000-4000-8000-000000000003', '15000000-0000-4000-8000-000000000001', '10000000-0000-4000-8000-000000000002', 'CSC/2022/044',     'csc/2022/044'),
+  ('13000000-0000-4000-8000-000000000003', '15000000-0000-4000-8000-000000000002', '10000000-0000-4000-8000-000000000002', '400',              '400'),
+  ('13000000-0000-4000-8000-000000000003', '15000000-0000-4000-8000-000000000003', '10000000-0000-4000-8000-000000000002', 'Computer Science', 'computer science');
 
 insert into public.member_group_memberships (member_id, group_id) values
   ('13000000-0000-4000-8000-000000000001', '12000000-0000-4000-8000-000000000001'),

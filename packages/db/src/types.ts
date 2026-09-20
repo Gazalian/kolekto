@@ -82,21 +82,74 @@ export interface OfficerTerm {
   actor_name_snapshot: string;
 }
 
+/**
+ * A person on a community roll.
+ *
+ * Two identities, and they are not the same thing (§5). `member_code` is
+ * Kolekto's — KWASU/0021, issued by the database, stable, what a contributor
+ * types to find themselves. The community's own identifying field — a matric
+ * number, a house number — is not a column here at all: it is one of the
+ * community's `member_attribute_definitions`, marked primary, with its value in
+ * `member_attribute_values`. That is what lets a school and an estate identify
+ * their people differently without either one bending a column named for the
+ * other.
+ */
 export interface Member {
   id: string;
   community_id: string;
   full_name: string;
   phone_e164: string | null;
   email: string | null;
-  identifier: string | null;
-  attributes: Record<string, string | number | null>;
+  member_code: string | null;
   status: MemberStatus;
   joined_via: MemberJoinedVia;
+  is_entity: boolean;
   user_id: string | null;
   claimed_at: string | null;
   created_at: string;
   updated_at: string;
   archived_at: string | null;
+}
+
+export interface MemberAttributeDefinition {
+  id: string;
+  community_id: string;
+  key: string;
+  label: string;
+  type: MemberAttributeType;
+  options: string[] | null;
+  required_at_join: boolean;
+  is_unique: boolean;
+  is_primary_identifier: boolean;
+  sort_order: number;
+  created_at: string;
+}
+
+export interface MemberAttributeValue {
+  member_id: string;
+  definition_id: string;
+  community_id: string;
+  value_text: string;
+  /** Trimmed and case-folded. What uniqueness and search compare; never shown. */
+  value_norm: string;
+  is_unique: boolean;
+}
+
+export interface CommunityMemberCodeSettings {
+  community_id: string;
+  prefix: string | null;
+  padding: number;
+  next_number: number;
+}
+
+/** One duplicate candidate from `app.find_member_duplicates`. `exact` means the community's own unique field already belongs to someone; `possible` means a shared phone, email or name. */
+export interface MemberDuplicate {
+  member_id: string;
+  full_name: string;
+  member_code: string | null;
+  status: MemberStatus;
+  match_reason: string;
+  match_strength: "exact" | "possible";
 }
 
 export interface MemberGroup {

@@ -119,7 +119,7 @@ set local role authenticated;
 set local request.jwt.claims = '{"sub":"99999999-9999-4999-8999-999999999992","role":"authenticated"}';
 select lives_ok(
   $$ select app.update_member(
-       (select id from tmp_new_member), 'Test Member Updated', '+2348012345678', null, null, '{}'::jsonb
+       (select id from tmp_new_member), 'Test Member Updated', '+2348012345678', null, '{}'::jsonb
      ) $$,
   'an admin (member.edit) can update a member'
 );

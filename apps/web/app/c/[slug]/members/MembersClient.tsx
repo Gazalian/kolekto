@@ -1,12 +1,20 @@
 "use client";
 
-import type { InviteLink, Member, MemberGroup } from "@kolekto/db";
+import type {
+  CommunityMemberCodeSettings,
+  InviteLink,
+  Member,
+  MemberAttributeDefinition,
+  MemberDuplicate,
+  MemberGroup,
+} from "@kolekto/db";
 import {
   Badge,
   Banner,
   Button,
   Dialog,
   EmptyState,
+  SelectField,
   Table,
   Tbody,
   Td,
@@ -15,17 +23,27 @@ import {
   Thead,
   Tr,
 } from "@kolekto/ui";
-import { Plus, UserPlus } from "lucide-react";
+import { Plus, Settings2, UserPlus } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import {
   approveMemberAction,
   archiveMemberAction,
   createInviteLinkAction,
   createMemberAction,
+  findDuplicatesAction,
   rejectMemberAction,
+  restoreMemberAction,
   revokeInviteLinkAction,
   updateMemberAction,
 } from "./actions.ts";
+import { MemberProfileConfig } from "./MemberProfileConfig.tsx";
+
+export interface MemberRow {
+  member: Member;
+  /** The community's own fields, keyed by definition key. */
+  attributes: Record<string, string>;
+  groupIds: string[];
+}
 
 const STATUS_TONE: Record<Member["status"], "neutral" | "success" | "warning" | "danger" | "info"> = {
   active: "success",
@@ -36,44 +54,87 @@ const STATUS_TONE: Record<Member["status"], "neutral" | "success" | "warning" | 
   merged: "neutral",
 };
 
-interface Props {
+export function MembersClient({
+  slug,
+  communityId,
+  rows,
+  definitions,
+  groups,
+  codeSettings,
+  inviteLinks,
+  canCreate,
+  canEdit,
+  canArchive,
+  canInvite,
+  canApprove,
+  canConfigure,
+}: {
   slug: string;
   communityId: string;
-  members: Member[];
-  inviteLinks: InviteLink[];
+  rows: MemberRow[];
+  definitions: MemberAttributeDefinition[];
   groups: MemberGroup[];
+  codeSettings: CommunityMemberCodeSettings | null;
+  inviteLinks: InviteLink[];
   canCreate: boolean;
   canEdit: boolean;
   canArchive: boolean;
   canInvite: boolean;
   canApprove: boolean;
-  communitySlugForLink: string;
-}
-
-export function MembersClient(props: Props) {
-  const { slug, communityId, members, inviteLinks, canCreate, canEdit, canArchive, canInvite, canApprove } = props;
+  canConfigure: boolean;
+}) {
   const [query, setQuery] = useState("");
+  const [groupFilter, setGroupFilter] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
-  const [editing, setEditing] = useState<Member | null>(null);
-  const [archiving, setArchiving] = useState<Member | null>(null);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [editing, setEditing] = useState<MemberRow | null>(null);
+  const [archiving, setArchiving] = useState<MemberRow | null>(null);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const pending = members.filter((m) => m.status === "pending_approval");
-  const roster = members.filter((m) => m.status !== "pending_approval");
+  // The field the community identifies people by. It gets its own column,
+  // because it is the thing an officer scans the list for (§5, §45).
+  const primary = definitions.find((definition) => definition.is_primary_identifier) ?? null;
+  const secondary = definitions.filter((definition) => !definition.is_primary_identifier).slice(0, 2);
+  const fieldKeys = definitions.map((definition) => definition.key);
+
+  const pending = rows.filter((row) => row.member.status === "pending_approval");
+  const roster = rows.filter((row) => row.member.status !== "pending_approval");
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return roster;
-    return roster.filter(
-      (m) => m.full_name.toLowerCase().includes(q) || m.phone_e164?.includes(q) || m.identifier?.toLowerCase().includes(q),
-    );
-  }, [roster, query]);
+    return roster.filter((row) => {
+      if (!showArchived && row.member.status === "archived") return false;
+      if (showArchived && row.member.status !== "archived") return false;
+      if (groupFilter && !row.groupIds.includes(groupFilter)) return false;
+      if (!q) return true;
+
+      // Search covers everything that identifies a person: their name, the code
+      // Kolekto issued, their contact details, and every community field value —
+      // so "KWASU/0021", "20/53A/021" and "John" all find the same member (§18).
+      return (
+        row.member.full_name.toLowerCase().includes(q) ||
+        (row.member.member_code ?? "").toLowerCase().includes(q) ||
+        (row.member.phone_e164 ?? "").includes(q) ||
+        (row.member.email ?? "").toLowerCase().includes(q) ||
+        Object.values(row.attributes).some((value) => value.toLowerCase().includes(q))
+      );
+    });
+  }, [roster, query, groupFilter, showArchived]);
+
+  const groupName = (id: string) => groups.find((group) => group.id === id)?.name ?? "";
 
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-xl font-semibold text-[var(--color-text)]">Members</h1>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {canConfigure && (
+            <Button variant="secondary" onClick={() => setConfigOpen(true)}>
+              <Settings2 className="h-4 w-4" aria-hidden="true" /> Member profile
+            </Button>
+          )}
           {canInvite && (
             <Button variant="secondary" onClick={() => setInviteOpen(true)}>
               <UserPlus className="h-4 w-4" aria-hidden="true" /> Invite link
@@ -87,60 +148,103 @@ export function MembersClient(props: Props) {
         </div>
       </div>
 
+      {error && <Banner tone="danger">{error}</Banner>}
+
       {pending.length > 0 && canApprove && (
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Pending approval ({pending.length})</h2>
           <div className="flex flex-col gap-2">
-            {pending.map((member) => (
-              <PendingRow key={member.id} slug={slug} member={member} />
+            {pending.map((row) => (
+              <PendingRow key={row.member.id} slug={slug} row={row} />
             ))}
           </div>
         </section>
       )}
 
-      <TextField label="Search" placeholder="Search by name, phone or identifier" value={query} onChange={(e) => setQuery(e.target.value)} />
+      <div className="grid gap-3 sm:grid-cols-[2fr_1fr_auto] sm:items-end">
+        <TextField
+          label="Search"
+          placeholder={`Search by name, member ID${primary ? `, ${primary.label.toLowerCase()}` : ""} or phone`}
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+        {groups.length > 0 && (
+          <SelectField label="Group" value={groupFilter} onChange={(event) => setGroupFilter(event.target.value)}>
+            <option value="">All groups</option>
+            {groups.map((group) => (
+              <option key={group.id} value={group.id}>
+                {group.name}
+              </option>
+            ))}
+          </SelectField>
+        )}
+        <Button variant={showArchived ? "primary" : "secondary"} onClick={() => setShowArchived((v) => !v)}>
+          {showArchived ? "Showing archived" : "Show archived"}
+        </Button>
+      </div>
 
       {filtered.length === 0 ? (
         <EmptyState
-          title={roster.length === 0 ? "No members yet" : "No matches"}
-          description={roster.length === 0 ? "Add members directly or share an invite link." : "Try a different search."}
+          title={showArchived ? "No archived members" : roster.length === 0 ? "No members yet" : "No matches"}
+          description={
+            roster.length === 0
+              ? "Add members directly or share an invite link. Each one gets a member ID automatically."
+              : "Try a different search, or clear the filters."
+          }
         />
       ) : (
         <Table data-responsive>
           <Thead>
             <Tr>
+              <Th>Member ID</Th>
               <Th>Name</Th>
-              <Th>Phone</Th>
-              <Th>Identifier</Th>
+              {primary && <Th>{primary.label}</Th>}
+              {secondary.map((definition) => (
+                <Th key={definition.id}>{definition.label}</Th>
+              ))}
+              <Th>Groups</Th>
               <Th>Status</Th>
               <Th />
             </Tr>
           </Thead>
           <Tbody>
-            {filtered.map((member) => (
-              <Tr key={member.id}>
-                <Td data-label="Name">{member.full_name}</Td>
-                <Td data-label="Phone">{member.phone_e164 ?? "—"}</Td>
-                <Td data-label="Identifier">{member.identifier ?? "—"}</Td>
+            {filtered.map((row) => (
+              <Tr key={row.member.id}>
+                <Td data-label="Member ID">
+                  <span className="font-mono text-xs text-[var(--color-text)]">{row.member.member_code ?? "—"}</span>
+                </Td>
+                <Td data-label="Name">{row.member.full_name}</Td>
+                {primary && <Td data-label={primary.label}>{row.attributes[primary.key] ?? "—"}</Td>}
+                {secondary.map((definition) => (
+                  <Td key={definition.id} data-label={definition.label}>
+                    {row.attributes[definition.key] ?? "—"}
+                  </Td>
+                ))}
+                <Td data-label="Groups">
+                  {row.groupIds.length === 0 ? "—" : row.groupIds.map(groupName).filter(Boolean).join(", ")}
+                </Td>
                 <Td data-label="Status">
-                  <Badge tone={STATUS_TONE[member.status]}>{member.status.replace("_", " ")}</Badge>
+                  <Badge tone={STATUS_TONE[row.member.status]}>{row.member.status.replace("_", " ")}</Badge>
                 </Td>
                 <Td data-label="">
                   <div className="flex justify-end gap-2">
-                    {canEdit && (
+                    {canEdit && row.member.status !== "archived" && (
                       <button
                         type="button"
                         className="text-xs font-medium text-[var(--color-primary)] hover:underline"
-                        onClick={() => setEditing(member)}
+                        onClick={() => setEditing(row)}
                       >
                         Edit
                       </button>
                     )}
-                    {canArchive && member.status !== "archived" && (
+                    {canArchive && row.member.status === "archived" && (
+                      <RestoreButton slug={slug} memberId={row.member.id} onError={setError} />
+                    )}
+                    {canArchive && row.member.status !== "archived" && (
                       <button
                         type="button"
                         className="text-xs font-medium text-[var(--color-danger)] hover:underline"
-                        onClick={() => setArchiving(member)}
+                        onClick={() => setArchiving(row)}
                       >
                         Archive
                       </button>
@@ -153,25 +257,285 @@ export function MembersClient(props: Props) {
         </Table>
       )}
 
-      {canInvite && inviteLinks.length > 0 && <InviteLinksSection slug={slug} inviteLinks={inviteLinks} communitySlug={props.communitySlugForLink} />}
+      {canInvite && inviteLinks.length > 0 && <InviteLinksSection slug={slug} inviteLinks={inviteLinks} />}
 
-      <CreateMemberDialog open={createOpen} onClose={() => setCreateOpen(false)} slug={slug} communityId={communityId} />
-      {editing && <EditMemberDialog member={editing} onClose={() => setEditing(null)} slug={slug} />}
-      {archiving && <ArchiveMemberDialog member={archiving} onClose={() => setArchiving(null)} slug={slug} />}
-      {canInvite && <CreateInviteLinkDialog open={inviteOpen} onClose={() => setInviteOpen(false)} slug={slug} communityId={communityId} />}
+      {createOpen && (
+        <MemberDialog
+          title="Add member"
+          slug={slug}
+          communityId={communityId}
+          definitions={definitions}
+          groups={groups}
+          fieldKeys={fieldKeys}
+          onClose={() => setCreateOpen(false)}
+        />
+      )}
+
+      {editing && (
+        <MemberDialog
+          title={`Edit ${editing.member.full_name}`}
+          slug={slug}
+          communityId={communityId}
+          definitions={definitions}
+          groups={groups}
+          fieldKeys={fieldKeys}
+          existing={editing}
+          onClose={() => setEditing(null)}
+        />
+      )}
+
+      {archiving && <ArchiveDialog slug={slug} row={archiving} onClose={() => setArchiving(null)} />}
+
+      {canInvite && inviteOpen && (
+        <CreateInviteLinkDialog slug={slug} communityId={communityId} onClose={() => setInviteOpen(false)} />
+      )}
+
+      {canConfigure && configOpen && (
+        <MemberProfileConfig
+          slug={slug}
+          communityId={communityId}
+          definitions={definitions}
+          codeSettings={codeSettings}
+          memberCount={rows.length}
+          onClose={() => setConfigOpen(false)}
+        />
+      )}
     </div>
   );
 }
 
-function PendingRow({ slug, member }: { slug: string; member: Member }) {
+function RestoreButton({
+  slug,
+  memberId,
+  onError,
+}: {
+  slug: string;
+  memberId: string;
+  onError: (message: string) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  return (
+    <button
+      type="button"
+      disabled={isPending}
+      className="text-xs font-medium text-[var(--color-primary)] hover:underline"
+      onClick={() =>
+        startTransition(async () => {
+          const result = await restoreMemberAction(slug, memberId);
+          if (result.error) onError(result.error);
+        })
+      }
+    >
+      Restore
+    </button>
+  );
+}
+
+/**
+ * One dialog for adding and for editing, because the fields are the same and a
+ * community that adds a field should not have to discover it twice.
+ *
+ * Adding runs a duplicate check first (§7/§43). An exact match is refused by the
+ * database whatever this form does; a possible match is shown here, with the
+ * existing member named, and the person decides.
+ */
+function MemberDialog({
+  title,
+  slug,
+  communityId,
+  definitions,
+  groups,
+  fieldKeys,
+  existing,
+  onClose,
+}: {
+  title: string;
+  slug: string;
+  communityId: string;
+  definitions: MemberAttributeDefinition[];
+  groups: MemberGroup[];
+  fieldKeys: string[];
+  existing?: MemberRow;
+  onClose: () => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const [duplicates, setDuplicates] = useState<MemberDuplicate[] | null>(null);
+  const [pendingForm, setPendingForm] = useState<FormData | null>(null);
+
+  function submit(formData: FormData, confirmed: boolean): void {
+    setError(null);
+    startTransition(async () => {
+      if (existing) {
+        formData.set("memberId", existing.member.id);
+        const result = await updateMemberAction(slug, fieldKeys, formData);
+        if (result.error) setError(result.error);
+        else onClose();
+        return;
+      }
+
+      formData.set("communityId", communityId);
+      formData.set("confirmPossibleDuplicate", confirmed ? "true" : "false");
+
+      if (!confirmed) {
+        const attributes: Record<string, string> = {};
+        for (const key of fieldKeys) {
+          const value = formData.get(`attr:${key}`);
+          if (typeof value === "string" && value.trim() !== "") attributes[key] = value;
+        }
+
+        const check = await findDuplicatesAction({
+          communityId,
+          fullName: String(formData.get("fullName") ?? ""),
+          phoneE164: String(formData.get("phoneE164") ?? "") || undefined,
+          email: String(formData.get("email") ?? "") || undefined,
+          attributes,
+        });
+
+        if (check.duplicates && check.duplicates.length > 0) {
+          setDuplicates(check.duplicates);
+          setPendingForm(formData);
+          return;
+        }
+      }
+
+      const result = await createMemberAction(slug, fieldKeys, formData);
+      if (result.error) setError(result.error);
+      else onClose();
+    });
+  }
+
+  if (duplicates && pendingForm) {
+    const hasExact = duplicates.some((duplicate) => duplicate.match_strength === "exact");
+    return (
+      <Dialog open onClose={onClose} title={hasExact ? "This member already exists" : "Possible duplicate"}>
+        <div className="flex flex-col gap-4">
+          <Banner tone={hasExact ? "danger" : "info"}>
+            {hasExact
+              ? "A member already holds one of these identifying details. Two records for the same person cannot be told apart later."
+              : "Someone on this roll looks like the person you are adding. Check before continuing."}
+          </Banner>
+
+          <ul className="flex flex-col gap-2">
+            {duplicates.map((duplicate) => (
+              <li
+                key={`${duplicate.member_id}-${duplicate.match_reason}`}
+                className="rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 text-sm"
+              >
+                <p className="font-medium text-[var(--color-text)]">
+                  {duplicate.full_name}{" "}
+                  <span className="font-mono text-xs text-[var(--color-text-muted)]">{duplicate.member_code ?? ""}</span>
+                </p>
+                <p className="text-xs text-[var(--color-text-muted)]">{duplicate.match_reason}</p>
+              </li>
+            ))}
+          </ul>
+
+          {error && <Banner tone="danger">{error}</Banner>}
+
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setDuplicates(null);
+                setPendingForm(null);
+              }}
+            >
+              Go back
+            </Button>
+            {!hasExact && (
+              <Button variant="secondary" loading={isPending} onClick={() => submit(pendingForm, true)}>
+                They are different people — add anyway
+              </Button>
+            )}
+          </div>
+        </div>
+      </Dialog>
+    );
+  }
+
+  return (
+    <Dialog open onClose={onClose} title={title}>
+      <form
+        className="flex flex-col gap-4"
+        action={(formData) => submit(formData, false)}
+      >
+        <TextField label="Full name" name="fullName" defaultValue={existing?.member.full_name ?? ""} required />
+        <TextField
+          label="Phone number"
+          name="phoneE164"
+          placeholder="+2348012345678"
+          defaultValue={existing?.member.phone_e164 ?? ""}
+        />
+        <TextField label="Email" name="email" type="email" defaultValue={existing?.member.email ?? ""} />
+
+        {definitions.map((definition) =>
+          definition.type === "single_select" ? (
+            <SelectField
+              key={definition.id}
+              label={`${definition.label}${definition.is_primary_identifier ? " (identifies this member)" : ""}`}
+              name={`attr:${definition.key}`}
+              defaultValue={existing?.attributes[definition.key] ?? ""}
+              {...(definition.is_unique ? { hint: "Must be unique in this community." } : {})}
+            >
+              <option value="">—</option>
+              {(definition.options ?? []).map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </SelectField>
+          ) : (
+            <TextField
+              key={definition.id}
+              label={`${definition.label}${definition.is_primary_identifier ? " (identifies this member)" : ""}`}
+              name={`attr:${definition.key}`}
+              type={definition.type === "date" ? "date" : "text"}
+              inputMode={definition.type === "number" ? "numeric" : undefined}
+              defaultValue={existing?.attributes[definition.key] ?? ""}
+              {...(definition.is_unique ? { hint: "Must be unique in this community." } : {})}
+            />
+          ),
+        )}
+
+        {!existing && groups.length > 0 && (
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium text-[var(--color-text)]">Groups</legend>
+            {groups.map((group) => (
+              <label key={group.id} className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+                <input
+                  type="checkbox"
+                  name="groupIds"
+                  value={group.id}
+                  className="h-4 w-4 rounded border-[var(--color-border-strong)]"
+                />
+                {group.name}
+              </label>
+            ))}
+          </fieldset>
+        )}
+
+        {error && <Banner tone="danger">{error}</Banner>}
+
+        <Button type="submit" loading={isPending}>
+          {existing ? "Save changes" : "Add member"}
+        </Button>
+      </form>
+    </Dialog>
+  );
+}
+
+function PendingRow({ slug, row }: { slug: string; row: MemberRow }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-warning-bg)]/40 px-4 py-2.5">
       <div>
-        <p className="text-sm font-medium text-[var(--color-text)]">{member.full_name}</p>
-        <p className="text-xs text-[var(--color-text-muted)]">{member.phone_e164}</p>
+        <p className="text-sm font-medium text-[var(--color-text)]">{row.member.full_name}</p>
+        <p className="text-xs text-[var(--color-text-muted)]">
+          {row.member.member_code} · {row.member.phone_e164}
+        </p>
         {error && <p className="text-xs font-medium text-[var(--color-danger)]">{error}</p>}
       </div>
       <div className="flex gap-2">
@@ -181,7 +545,7 @@ function PendingRow({ slug, member }: { slug: string; member: Member }) {
           disabled={isPending}
           onClick={() =>
             startTransition(async () => {
-              const result = await rejectMemberAction(slug, member.id);
+              const result = await rejectMemberAction(slug, row.member.id);
               if (result.error) setError(result.error);
             })
           }
@@ -193,7 +557,7 @@ function PendingRow({ slug, member }: { slug: string; member: Member }) {
           disabled={isPending}
           onClick={() =>
             startTransition(async () => {
-              const result = await approveMemberAction(slug, member.id);
+              const result = await approveMemberAction(slug, row.member.id);
               if (result.error) setError(result.error);
             })
           }
@@ -205,89 +569,25 @@ function PendingRow({ slug, member }: { slug: string; member: Member }) {
   );
 }
 
-function CreateMemberDialog({ open, onClose, slug, communityId }: { open: boolean; onClose: () => void; slug: string; communityId: string }) {
+function ArchiveDialog({ slug, row, onClose }: { slug: string; row: MemberRow; onClose: () => void }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <Dialog open={open} onClose={onClose} title="Add member">
+    <Dialog
+      open
+      onClose={onClose}
+      title={`Archive ${row.member.full_name}?`}
+      description="Their history is kept and they can be restored later. They stop appearing on the active roster."
+    >
       <form
         className="flex flex-col gap-4"
         action={(formData) =>
           startTransition(async () => {
-            formData.set("communityId", communityId);
-            const result = await createMemberAction(slug, formData);
-            if (result.error) setError(result.error);
-            else {
-              setError(null);
-              onClose();
-            }
-          })
-        }
-      >
-        <TextField label="Full name" name="fullName" required />
-        <TextField label="Phone number" name="phoneE164" placeholder="+2348012345678" />
-        <TextField label="Email" name="email" type="email" />
-        <TextField label="Member identifier" name="identifier" hint="Matric number, member ID, etc. Optional." />
-        {error && <Banner tone="danger">{error}</Banner>}
-        <Button type="submit" loading={isPending}>
-          Add member
-        </Button>
-      </form>
-    </Dialog>
-  );
-}
-
-function EditMemberDialog({ member, onClose, slug }: { member: Member; onClose: () => void; slug: string }) {
-  const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <Dialog open onClose={onClose} title={`Edit ${member.full_name}`}>
-      <form
-        className="flex flex-col gap-4"
-        action={(formData) =>
-          startTransition(async () => {
-            formData.set("memberId", member.id);
-            const result = await updateMemberAction(slug, formData);
-            if (result.error) setError(result.error);
-            else {
-              setError(null);
-              onClose();
-            }
-          })
-        }
-      >
-        <TextField label="Full name" name="fullName" defaultValue={member.full_name} required />
-        <TextField label="Phone number" name="phoneE164" defaultValue={member.phone_e164 ?? ""} />
-        <TextField label="Email" name="email" type="email" defaultValue={member.email ?? ""} />
-        <TextField label="Member identifier" name="identifier" defaultValue={member.identifier ?? ""} />
-        {error && <Banner tone="danger">{error}</Banner>}
-        <Button type="submit" loading={isPending}>
-          Save changes
-        </Button>
-      </form>
-    </Dialog>
-  );
-}
-
-function ArchiveMemberDialog({ member, onClose, slug }: { member: Member; onClose: () => void; slug: string }) {
-  const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <Dialog open onClose={onClose} title={`Archive ${member.full_name}?`} description="Their history is kept. They will no longer appear on the active roster.">
-      <form
-        className="flex flex-col gap-4"
-        action={(formData) =>
-          startTransition(async () => {
-            formData.set("memberId", member.id);
+            formData.set("memberId", row.member.id);
             const result = await archiveMemberAction(slug, formData);
             if (result.error) setError(result.error);
-            else {
-              setError(null);
-              onClose();
-            }
+            else onClose();
           })
         }
       >
@@ -301,24 +601,26 @@ function ArchiveMemberDialog({ member, onClose, slug }: { member: Member; onClos
   );
 }
 
-function CreateInviteLinkDialog({ open, onClose, slug, communityId }: { open: boolean; onClose: () => void; slug: string; communityId: string }) {
+function CreateInviteLinkDialog({
+  slug,
+  communityId,
+  onClose,
+}: {
+  slug: string;
+  communityId: string;
+  onClose: () => void;
+}) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
 
   return (
-    <Dialog open={open} onClose={() => { setLink(null); onClose(); }} title="Create invite link">
+    <Dialog open onClose={onClose} title="Create invite link">
       {link ? (
         <div className="flex flex-col gap-3">
           <Banner tone="success">Link created. Copy it now — it is shown only once.</Banner>
           <TextField label="Invite link" readOnly value={link} onFocus={(e) => e.currentTarget.select()} />
-          <Button
-            onClick={() => {
-              void navigator.clipboard.writeText(link);
-            }}
-          >
-            Copy link
-          </Button>
+          <Button onClick={() => void navigator.clipboard.writeText(link)}>Copy link</Button>
         </div>
       ) : (
         <form
@@ -351,9 +653,8 @@ function CreateInviteLinkDialog({ open, onClose, slug, communityId }: { open: bo
   );
 }
 
-function InviteLinksSection({ slug, inviteLinks, communitySlug }: { slug: string; inviteLinks: InviteLink[]; communitySlug: string }) {
+function InviteLinksSection({ slug, inviteLinks }: { slug: string; inviteLinks: InviteLink[] }) {
   const [isPending, startTransition] = useTransition();
-  void communitySlug;
 
   return (
     <section className="flex flex-col gap-3">

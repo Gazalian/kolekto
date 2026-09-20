@@ -21,6 +21,7 @@ import type {
   CommunityType,
   InviteStatus,
   MemberAttributeType,
+  MemberDuplicate,
   MemberStatus,
   OfficerRole,
   ParticipationMode,
@@ -72,6 +73,18 @@ export async function updateCommunityProfile(
 
 // ── Members ────────────────────────────────────────────────────────────────
 
+/**
+ * `attributes` is a map of the community's own field keys to values — the same
+ * shape the old `members.attributes` column held, now validated against
+ * `member_attribute_definitions` and stored as rows. The community's identifying
+ * field (matric number, house number) is one of these keys; there is no separate
+ * identifier argument, because which field identifies a person is the
+ * community's decision, not the schema's.
+ *
+ * `confirmPossibleDuplicate` is the answer to a warning the caller has already
+ * been shown. An *exact* duplicate — the community's unique field already
+ * belongs to somebody — is refused whatever this says.
+ */
 export async function createMember(
   caller: CallerContext,
   input: {
@@ -79,15 +92,15 @@ export async function createMember(
     fullName: string;
     phoneE164?: string | undefined;
     email?: string | undefined;
-    identifier?: string | undefined;
     attributes?: MemberAttributes | undefined;
     groupIds?: string[] | undefined;
+    confirmPossibleDuplicate?: boolean | undefined;
   },
 ): Promise<string> {
   const [row] = await call(caller, (tx) =>
     tx<{ id: string }[]>`select app.create_member(
       ${input.communityId}, ${input.fullName}, ${input.phoneE164 ?? null}, ${input.email ?? null},
-      ${input.identifier ?? null}, ${tx.json(input.attributes ?? {})}, ${input.groupIds ?? []}
+      ${tx.json(input.attributes ?? {})}, ${input.groupIds ?? []}, ${input.confirmPossibleDuplicate ?? false}
     ) as id`,
   );
   return row!.id;
@@ -100,20 +113,94 @@ export async function updateMember(
     fullName: string;
     phoneE164?: string | undefined;
     email?: string | undefined;
-    identifier?: string | undefined;
     attributes?: MemberAttributes | undefined;
   },
 ): Promise<void> {
   await call(caller, (tx) =>
     tx`select app.update_member(
       ${input.memberId}, ${input.fullName}, ${input.phoneE164 ?? null}, ${input.email ?? null},
-      ${input.identifier ?? null}, ${tx.json(input.attributes ?? {})}
+      ${tx.json(input.attributes ?? {})}
     )`,
   );
 }
 
 export async function archiveMember(caller: CallerContext, input: { memberId: string; reason?: string | undefined }): Promise<void> {
   await call(caller, (tx) => tx`select app.archive_member(${input.memberId}, ${input.reason ?? null})`);
+}
+
+/** §42: the other half of archiving. Returns the status the member came back as — `active` only if they still have the phone number that status means (PRD 3.3). */
+export async function restoreMember(
+  caller: CallerContext,
+  input: { memberId: string; reason?: string | undefined },
+): Promise<MemberStatus> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ status: MemberStatus }[]>`select app.restore_member(${input.memberId}, ${input.reason ?? null}) as status`,
+  );
+  return row!.status;
+}
+
+/** Asked before a member is created, so a person can be shown the existing record and decide. Creation asks again — a check the client performed is not a check. */
+export async function findMemberDuplicates(
+  caller: CallerContext,
+  input: {
+    communityId: string;
+    fullName?: string | undefined;
+    phoneE164?: string | undefined;
+    email?: string | undefined;
+    attributes?: MemberAttributes | undefined;
+    excludeMemberId?: string | undefined;
+  },
+): Promise<MemberDuplicate[]> {
+  const rows = await call(caller, (tx) =>
+    tx<MemberDuplicate[]>`select * from app.find_member_duplicates(
+      ${input.communityId}, ${input.fullName ?? null}, ${input.phoneE164 ?? null}, ${input.email ?? null},
+      ${tx.json(input.attributes ?? {})}, ${input.excludeMemberId ?? null}
+    )`,
+  );
+  return [...rows];
+}
+
+// ── Community member profile configuration ─────────────────────────────────
+
+export async function updateMemberCodeSettings(
+  caller: CallerContext,
+  input: { communityId: string; prefix?: string | undefined; padding?: number | undefined; startingNumber?: number | undefined },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.update_member_code_settings(
+      ${input.communityId}, ${input.prefix ?? null}, ${input.padding ?? 4}, ${input.startingNumber ?? null}
+    )`,
+  );
+}
+
+export async function upsertMemberAttributeDefinition(
+  caller: CallerContext,
+  input: {
+    communityId: string;
+    key: string;
+    label: string;
+    type: MemberAttributeType;
+    options?: readonly string[] | undefined;
+    requiredAtJoin?: boolean | undefined;
+    isUnique?: boolean | undefined;
+    isPrimaryIdentifier?: boolean | undefined;
+    sortOrder?: number | undefined;
+    definitionId?: string | undefined;
+  },
+): Promise<string> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ id: string }[]>`select app.upsert_member_attribute_definition(
+      ${input.communityId}, ${input.key}, ${input.label}, ${input.type},
+      ${input.options ? [...input.options] : null}, ${input.requiredAtJoin ?? false},
+      ${input.isUnique ?? false}, ${input.isPrimaryIdentifier ?? false},
+      ${input.sortOrder ?? 0}, ${input.definitionId ?? null}
+    ) as id`,
+  );
+  return row!.id;
+}
+
+export async function deleteMemberAttributeDefinition(caller: CallerContext, definitionId: string): Promise<void> {
+  await call(caller, (tx) => tx`select app.delete_member_attribute_definition(${definitionId})`);
 }
 
 // ── Member invite links (MEM-05) ──────────────────────────────────────────
