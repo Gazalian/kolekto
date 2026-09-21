@@ -292,7 +292,7 @@ function ItemImage({
         type="file"
         accept={ACCEPT}
         className="sr-only"
-        aria-label="Item image"
+        aria-label="Photo"
         onChange={(event) => {
           choose(event.target.files?.[0]);
           event.target.value = "";

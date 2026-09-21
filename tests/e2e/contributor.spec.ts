@@ -156,7 +156,7 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
   await page.getByLabel("Question").fill("Hall of residence");
   await page.getByLabel("Required").check();
   await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/departmental-dues-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -241,7 +241,7 @@ test("identification cannot be forged: the server refuses a contribution with no
 
   await createDuesCollection(page, "Levy M7", "2000");
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
   await expect(page).toHaveURL(/\/collections\/levy-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
   await publish(page);
@@ -320,7 +320,7 @@ test("a group collection only knows the members of that group, and never another
   await page.getByRole("checkbox", { name: "300 Level" }).check();
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/level-dues-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -370,7 +370,7 @@ test("a recurring charge shows the period it is asking about", async ({ page, br
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/service-charge-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -417,7 +417,7 @@ test("an open collection asks nobody to identify, and a closed one takes nothing
   await page.getByRole("button", { name: "Continue" }).click(); // no range
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — anyone
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/building-fund-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");

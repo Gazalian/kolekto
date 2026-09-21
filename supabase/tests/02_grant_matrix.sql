@@ -103,7 +103,10 @@ select bag_eq(
       ('collections'), ('collection_tiers'), ('collection_fields'),
       ('collection_code_settings'), ('collection_audience_groups'),
       ('collection_items'), ('collection_recurrences'), ('collection_cycles'),
-      ('obligations'), ('audit_logs')
+      ('obligations'), ('audit_logs'),
+      -- M7.5: who has been admitted at a collection's door. Readable by
+      -- whoever may work that door; written only through app functions.
+      ('event_check_ins')
   $$,
   'authenticated can SELECT exactly the allowlisted tables and no others'
 );

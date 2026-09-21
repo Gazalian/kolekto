@@ -88,7 +88,7 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await page.getByRole("button", { name: "Continue" }).click();
 
   await expect(page.getByText("Check this over")).toBeVisible();
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   // Saving runs three server actions in sequence (create, then the questions,
   // then the navigation), so this one assertion gets a longer budget than the
@@ -191,7 +191,7 @@ test("a tiered collection prices a contribution from the option the contributor 
   await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — open by default
   await page.getByRole("button", { name: "Continue" }).click(); // no extra questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/alumni-dinner-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");

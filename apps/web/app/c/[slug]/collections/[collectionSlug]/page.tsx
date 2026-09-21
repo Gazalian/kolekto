@@ -8,6 +8,7 @@ import type {
   CollectionTier,
   Community,
   Member,
+  MemberGroup,
   Obligation,
 } from "@kolekto/db";
 import { notFound } from "next/navigation";
@@ -16,6 +17,7 @@ import { requireCallerContext } from "../../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../../lib/permissions.ts";
 import { createClient } from "../../../../../lib/supabase/server.ts";
 import { CollectionDetailClient, type ObligationRow } from "./CollectionDetailClient.tsx";
+import { EXPORT_FIELDS } from "./export-fields.ts";
 
 export async function generateMetadata({ params }: { params: Promise<{ collectionSlug: string }> }) {
   const { collectionSlug } = await params;
@@ -58,6 +60,9 @@ export default async function CollectionDetailPage({
     { data: items },
     { data: recurrence },
     { data: cycles },
+    { data: attributeDefinitions },
+    { data: memberGroups },
+    { data: checkIns },
   ] = await Promise.all([
       supabase.from("collection_tiers").select("*").eq("collection_id", collection.id).order("sort_order"),
       supabase.from("collection_fields").select("*").eq("collection_id", collection.id).order("sort_order"),
@@ -86,7 +91,35 @@ export default async function CollectionDetailPage({
         .select("*")
         .eq("collection_id", collection.id)
         .order("period_start", { ascending: false }),
+      // Offered as export columns under their own labels, so a CSV says
+      // "Matric number" rather than custom_field_1 (M7.5 part D).
+      supabase.from("member_attribute_definitions").select("key, label").eq("community_id", c.id).order("sort_order"),
+      supabase.from("member_groups").select("*").eq("community_id", c.id).is("archived_at", null).order("sort_order"),
+      // The door's own record (M7.5 part E). Newest first, so the first row
+      // per obligation is the visit that matters.
+      supabase
+        .from("event_check_ins")
+        .select("obligation_id, checked_in_at, checked_out_at")
+        .eq("collection_id", collection.id)
+        .order("checked_in_at", { ascending: false }),
     ]);
+
+  const customExportFields = (attributeDefinitions ?? []).map((definition) => ({
+    key: `attr:${definition.key as string}`,
+    label: definition.label as string,
+  }));
+
+  // The latest visit per person — what "were they here?" means at a door.
+  const latestVisit = new Map<string, { checked_in_at: string; checked_out_at: string | null }>();
+  for (const visit of checkIns ?? []) {
+    const key = visit.obligation_id as string;
+    if (!latestVisit.has(key)) {
+      latestVisit.set(key, {
+        checked_in_at: visit.checked_in_at as string,
+        checked_out_at: (visit.checked_out_at as string | null) ?? null,
+      });
+    }
+  }
 
   const membersById = new Map((members ?? []).map((member) => [member.id as string, member as Member]));
 
@@ -145,12 +178,26 @@ export default async function CollectionDetailPage({
       })}
       audienceCounts={audience}
       activity={(activity ?? []) as AuditLog[]}
+      exportFields={{ fixed: [...EXPORT_FIELDS], custom: customExportFields }}
+      exportGroups={(memberGroups ?? []) as MemberGroup[]}
+      checkInPeople={obligationRows.map((row) => {
+        const visit = latestVisit.get(row.obligation.id);
+        return {
+          obligationId: row.obligation.id,
+          name: row.memberName,
+          identifier: row.memberIdentifier,
+          checkedInAt: visit?.checked_in_at ?? null,
+          checkedOutAt: visit?.checked_out_at ?? null,
+        };
+      })}
       permissions={{
         canEdit: hasPermission(access, "collection.draft"),
         canPublish: hasPermission(access, "collection.publish"),
         canAssign: hasPermission(access, "obligation.assign"),
         canExempt: hasPermission(access, "obligation.exempt"),
         canShare: hasPermission(access, "collection.share"),
+        canExport: hasPermission(access, "member.export"),
+        canCheckIn: hasPermission(access, "attendance.check_in"),
       }}
     />
   );

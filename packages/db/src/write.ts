@@ -867,3 +867,25 @@ export async function waiveObligationAmount(
     tx`select app.waive_obligation_amount(${input.obligationId}, ${input.waivedAmountKobo.toString()}, ${input.reason})`,
   );
 }
+
+// ── Event operations (M7.5) ─────────────────────────────────────────────────
+//
+// Admitting somebody at a door. The obligation is the guest list entry — no
+// purchase is recorded anywhere in this phase (ADR 0006/0012), so what can
+// honestly be checked in is the roll an officer created. Both calls are
+// idempotent: the database returns the existing visit rather than raising
+// when somebody is already inside, because a second tap at a busy entrance
+// must not produce an error an operator has to read.
+
+/** Admits the member an obligation belongs to. Returns the visit's id — the existing one when they are already inside. */
+export async function checkInObligation(caller: CallerContext, obligationId: string): Promise<string> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ check_in_obligation: string }[]>`select app.check_in_obligation(${obligationId})`,
+  );
+  return row!.check_in_obligation;
+}
+
+/** Records that somebody admitted earlier has left. Does nothing if they are already outside. */
+export async function checkOutObligation(caller: CallerContext, obligationId: string): Promise<void> {
+  await call(caller, (tx) => tx`select app.check_out_obligation(${obligationId})`);
+}

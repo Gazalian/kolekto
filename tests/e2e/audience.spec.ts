@@ -68,7 +68,7 @@ test("aim a collection at a group, then add obligations for newly eligible membe
   await page.getByRole("button", { name: "Continue" }).click(); // no extra questions
 
   await expect(page.getByText("Specific groups")).toBeVisible();
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
   await expect(page).toHaveURL(/\/collections\/level-dues-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
 

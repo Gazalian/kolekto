@@ -80,7 +80,7 @@ test("a fundraiser suggests amounts, and a contributor can still choose their ow
   await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — public
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/medical-fund-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -143,7 +143,7 @@ test("an item collection prices an order by the item chosen and how many", async
   await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/aso-ebi-order-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -210,7 +210,7 @@ test("a ticketed event carries its date and venue, and the venue can still chang
   await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/annual-dinner-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -261,7 +261,7 @@ test("a recurring charge owes per period, and no period opens by itself", async 
   await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — all members
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/estate-service-charge/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -327,7 +327,7 @@ test("a flyer can be uploaded during creation, shown on the public page, and rem
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
   await expect(page.getByText("Flyer", { exact: true })).toBeVisible();
   await expect(page.getByText("Added", { exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/harvest-offering-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -376,7 +376,7 @@ test("a file that is not an image is refused before it reaches storage", async (
   await page.getByRole("button", { name: "Continue" }).click(); // cover image — none, and that is fine
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/building-fund-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -399,13 +399,13 @@ test("an item's own image uploads, shows on the public page, and can be replaced
   await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/snack-pack-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
 
   await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel("Item image").setInputFiles({ name: "jollof.png", mimeType: "image/png", buffer: TINY_PNG });
+  await page.getByLabel("Photo").setInputFiles({ name: "jollof.png", mimeType: "image/png", buffer: TINY_PNG });
   await expect(page.getByRole("button", { name: "Replace image" })).toBeVisible({ timeout: 45_000 });
   await page.getByRole("button", { name: "Save items" }).click();
   await expect(page.getByText("Items saved.")).toBeVisible();
@@ -444,7 +444,7 @@ test("a ticket buyer can take more than one type, and name an attendee per ticke
   await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/founders-gala-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -506,7 +506,7 @@ test("ticket types can be reordered, and the public page follows that order", as
   await page.getByRole("button", { name: "Continue" }).click(); // cover image
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/sponsor-packages-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -544,7 +544,7 @@ test("an oversized item image is refused before it reaches storage", async ({ pa
   await page.getByRole("button", { name: "Continue" }).click(); // cover image
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/bake-sale-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -552,7 +552,7 @@ test("an oversized item image is refused before it reaches storage", async ({ pa
 
   // 6 MB of PNG-shaped bytes: over the 5 MB ceiling, refused in the browser
   // before any of it is posted, and the page keeps working.
-  await page.getByLabel("Item image").setInputFiles({
+  await page.getByLabel("Photo").setInputFiles({
     name: "huge.png",
     mimeType: "image/png",
     buffer: Buffer.alloc(6 * 1024 * 1024, 1),
@@ -560,7 +560,7 @@ test("an oversized item image is refused before it reaches storage", async ({ pa
   await expect(page.getByText("That image is larger than 5 MB.")).toBeVisible();
 
   // And a file that is not an image at all.
-  await page.getByLabel("Item image").setInputFiles({
+  await page.getByLabel("Photo").setInputFiles({
     name: "notes.txt",
     mimeType: "text/plain",
     buffer: Buffer.from("not an image"),
@@ -582,7 +582,7 @@ test("the public page works at phone width", async ({ page, browser }) => {
   await page.getByRole("button", { name: "Continue" }).click(); // cover image
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Open this draft" }).click();
 
   await expect(page).toHaveURL(/\/collections\/mobile-offering-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -611,4 +611,148 @@ test("the public page works at phone width", async ({ page, browser }) => {
   await expect(contributor.getByText("₦2,500").first()).toBeVisible();
 
   await phone.close();
+});
+
+test("a half-finished collection survives leaving the browser, and resumes where it was", async ({ page }) => {
+  await signInAsNewUser(page, "e2e-types");
+  const communitySlug = await createCommunity(page, `E2E Draft ${Date.now()}`);
+
+  // M7.5 part A: each Continue saves that step. Nothing here clicks a save
+  // button, because there is no longer one to click.
+  await startCollection(page, /Items or packages/, "Resumed Catalog 2026");
+  await page.getByLabel("Item").first().fill("Jollof");
+  await page.getByLabel("Price").first().fill("3000");
+  await page.getByRole("button", { name: "Add another item" }).click();
+  await page.getByLabel("Item").nth(1).fill("Chicken");
+  await page.getByLabel("Price").nth(1).fill("2000");
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution — saves the items
+
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByText("Your progress is saved automatically.")).toBeVisible();
+
+  // Leave. Not "go back" — leave, the way a person with a phone call does.
+  await page.goto(`/c/${communitySlug}/collections`);
+  await page.waitForLoadState("networkidle");
+
+  // The draft is on the list, and opening it shows the work.
+  await expect(page.getByText("Resumed Catalog 2026")).toBeVisible();
+  await page.getByRole("link", { name: /Resumed Catalog 2026/ }).click();
+  await page.waitForLoadState("networkidle");
+  await expect(page).toHaveURL(/\/collections\/resumed-catalog-2026/);
+  await expect(page.getByText("Draft", { exact: true })).toBeVisible();
+
+  // Both items survived, with their prices.
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByLabel("Item").first()).toHaveValue("Jollof");
+  await expect(page.getByLabel("Item").nth(1)).toHaveValue("Chicken");
+  await expect(page.getByLabel("Price").first()).toHaveValue("3000");
+
+  // Editing an item twice must not leave two of it: ids are stable across saves.
+  await page.getByLabel("Item").first().fill("Jollof Rice");
+  await page.getByRole("button", { name: "Save items" }).click();
+  await expect(page.getByText("Items saved.")).toBeVisible();
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByLabel("Item")).toHaveCount(2);
+  await expect(page.getByLabel("Item").first()).toHaveValue("Jollof Rice");
+});
+
+test("an event's door: find a guest, check them in, check them out", async ({ page }) => {
+  await signInAsNewUser(page, "e2e-door");
+  const communitySlug = await createCommunity(page, `E2E Door ${Date.now()}`);
+
+  // A guest list is what a door can check (M7.5 part E): no purchase is
+  // recorded anywhere in this phase, so the people who can be admitted are
+  // the members an officer put on the collection.
+  await page.getByRole("link", { name: "Members" }).click();
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: "Add member" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Full name").fill("Ada Guest");
+  await dialog.getByLabel("Phone number").fill("+2348097770001");
+  await dialog.getByRole("button", { name: "Add member", exact: true }).click();
+  await expect(page.getByText("Ada Guest")).toBeVisible();
+
+  await startCollection(page, /Dues or a levy/, "Annual Gala 2026");
+  await page.getByLabel("Amount each person pays").fill("10000");
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await page.getByRole("button", { name: "Open this draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/annual-gala-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+
+  // Put the guest on the list.
+  await page.getByRole("button", { name: "Members" }).click();
+  await page.getByRole("button", { name: "Add members" }).click();
+  const assign = page.getByRole("dialog");
+  await assign.getByRole("checkbox").first().check();
+  await assign.getByRole("button", { name: /Add 1 member/ }).click();
+  await expect(page.getByRole("cell", { name: "₦10,000" })).toBeVisible();
+
+  // This is a dues collection, not an event, so it has no door — the tab
+  // belongs to ticketed events only.
+  await expect(page.getByRole("button", { name: "Check-in" })).toHaveCount(0);
+
+  // Export is where the roll leaves the system, and it is here for every type.
+  await page.getByRole("button", { name: "Export" }).click();
+  await expect(page.getByRole("heading", { name: "Export" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Download CSV" })).toBeEnabled();
+
+  await expect(page.getByLabel("Full name")).toBeChecked();
+  await expect(page.getByLabel("Expected amount")).toBeChecked();
+});
+
+test("a ticketed event has a door, and it opens and closes", async ({ page }) => {
+  await signInAsNewUser(page, "e2e-door");
+  await createCommunity(page, `E2E Gala ${Date.now()}`);
+
+  await page.getByRole("link", { name: "Members" }).click();
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: "Add member" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Full name").fill("Bola Attendee");
+  await dialog.getByLabel("Phone number").fill("+2348097770002");
+  await dialog.getByRole("button", { name: "Add member", exact: true }).click();
+  await expect(page.getByText("Bola Attendee")).toBeVisible();
+
+  await startCollection(page, /Tickets for an event/, "Founders Night 2026");
+  await page.getByLabel("Option name").first().fill("Regular");
+  await page.getByLabel("Price").first().fill("10000");
+  await page.getByLabel("When does it start?").fill("2026-12-20T18:00");
+  await page.getByLabel("Where is it?").fill("Ostrich Hall, Ilorin");
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
+
+  // A door needs a list, and a list needs a managed audience.
+  await page.getByRole("radio", { name: /Everyone on the roll/ }).check();
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await page.getByRole("button", { name: "Open this draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/founders-night-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+
+  await page.getByRole("button", { name: "Members" }).click();
+  await page.getByRole("button", { name: "Add members" }).click();
+  const assign = page.getByRole("dialog");
+  await assign.getByRole("checkbox").first().check();
+  await assign.getByRole("button", { name: /Add 1 member/ }).click();
+  await expect(page.getByRole("cell", { name: "₦10,000" })).toBeVisible();
+
+  // The door.
+  await page.getByRole("button", { name: "Check-in" }).click();
+  await expect(page.getByText("Not arrived")).toBeVisible();
+
+  await page.getByLabel("Find someone").fill("Bola");
+  await page.getByRole("button", { name: "Check in" }).click();
+  await expect(page.getByText("Inside")).toBeVisible({ timeout: 30_000 });
+
+  await page.getByRole("button", { name: "Check out" }).click();
+  await expect(page.getByText("Left")).toBeVisible({ timeout: 30_000 });
 });

@@ -45,8 +45,11 @@ import { QuestionsEditor, questionsToFields, type QuestionDraft } from "../Quest
  * database can actually check. Nothing here is a display label standing in for
  * a domain fact.
  *
- * Every step shows only what the previous answers made relevant. Nothing is
- * saved until the last step, and what is saved is a draft.
+ * Every step shows only what the previous answers made relevant, and every
+ * step saves as it is completed (M7.5 part A) — the draft is a real
+ * collection row from the Details step onward, so closing the browser
+ * halfway loses nothing. What exists is always a draft: no link works and
+ * nothing is public until it is published.
  */
 
 type AmountModelKey = "fixed" | "open_amount" | "tiers" | "per_member" | "items";
@@ -254,161 +257,195 @@ export function NewCollectionForm({
   }
 
   /**
-   * Creates the draft the moment the organiser has said enough to satisfy
-   * `createCollectionSchema` (name, category and the amount fields the chosen
-   * type requires) — one step earlier than "Review" — so the Cover image step
-   * that follows has a real collection to upload against instead of asking the
-   * organiser to find the uploader in settings afterwards.
+   * Creates the draft, or updates the one already created, from the identity
+   * and contribution fields. Called every time a step that owns any of those
+   * fields is completed.
    *
-   * Idempotent: going back and forward again does not create a second draft.
+   * Idempotent: the draft is created once, and every later call is an update
+   * of the same row. Returns the row's id and slug so the caller can go on to
+   * save the parts that need them.
    */
-  function ensureDraftCreated(onDone: (ok: boolean) => void): void {
-    if (draftId) {
-      onDone(true);
-      return;
-    }
-    setError(null);
-    startTransition(async () => {
-      const created = await createCollectionAction(slug, { communityId, ...collectionConfig() });
-      if (created.error || !created.collectionId || !created.collectionSlug) {
-        setError(created.error ?? "Could not create the collection");
-        onDone(false);
-        return;
+  async function saveCollectionRow(): Promise<{ id: string; slug: string } | null> {
+    if (draftId && draftSlug) {
+      const updated = await updateCollectionAction(slug, draftSlug, {
+        collectionId: draftId,
+        ...collectionConfig(),
+      });
+      if (updated.error) {
+        setError(updated.error);
+        return null;
       }
-      setDraftId(created.collectionId);
-      setDraftSlug(created.collectionSlug);
-      setDraftHref(`/c/${slug}/collections/${created.collectionSlug}`);
-      onDone(true);
-    });
+      return { id: draftId, slug: draftSlug };
+    }
+
+    const created = await createCollectionAction(slug, { communityId, ...collectionConfig() });
+    if (created.error || !created.collectionId || !created.collectionSlug) {
+      setError(created.error ?? "Could not save this collection");
+      return null;
+    }
+    setDraftId(created.collectionId);
+    setDraftSlug(created.collectionSlug);
+    setDraftHref(`/c/${slug}/collections/${created.collectionSlug}`);
+    return { id: created.collectionId, slug: created.collectionSlug };
   }
 
-  function submit(): void {
-    setError(null);
-    startTransition(async () => {
-      // By this point the draft was created at the Cover image step. Anything
-      // changed since (visibility, amounts, name) is saved as an update rather
-      // than a second collection.
-      const saved = draftId
-        ? await updateCollectionAction(slug, draftSlug!, { collectionId: draftId, ...collectionConfig() })
-        : await createCollectionAction(slug, { communityId, ...collectionConfig() });
+  /**
+   * Saves what one step owns, so leaving the browser after it loses nothing
+   * (M7.5 part A). Every call is a full replace of that step's own data
+   * against a collection that already exists, which makes retrying safe and
+   * makes a second click a no-op rather than a duplicate.
+   *
+   * The ids that come back from the list writes are carried into the drafts:
+   * a tier sent without an id becomes a new row, so identity has to survive
+   * the round trip or editing an option twice would leave two of it.
+   */
+  async function persistStep(current: number): Promise<boolean> {
+    // Nothing before Details is the collection's own data yet — the intent
+    // picker only decides which questions get asked.
+    if (current < 1) return true;
 
-      if (saved.error) {
-        setError(saved.error);
-        return;
+    const row = await saveCollectionRow();
+    if (!row) return false;
+
+    const save = async (what: string, run: () => Promise<{ error?: string }>): Promise<boolean> => {
+      const result = await run();
+      if (result.error) {
+        setError(`Your progress is saved, but ${what} was not: ${result.error}`);
+        return false;
       }
+      return true;
+    };
 
-      const collectionId = draftId ?? (saved as { collectionId?: string }).collectionId;
-      const collectionSlug = draftSlug ?? (saved as { collectionSlug?: string }).collectionSlug;
-      if (!collectionId || !collectionSlug) {
-        setError("Could not create the collection");
-        return;
-      }
-      if (!draftId) {
-        setDraftId(collectionId);
-        setDraftSlug(collectionSlug);
-      }
-
-      const href = `/c/${slug}/collections/${collectionSlug}`;
-      setDraftHref(href);
-
-      /** Everything after creation edits a draft that already exists, so a failure leaves the draft to be finished by hand rather than losing the work. */
-      const save = async (what: string, run: () => Promise<{ error?: string }>): Promise<boolean> => {
-        const result = await run();
+    if (current === 2) {
+      if (amountModel === "tiers") {
+        const result = await setCollectionTiersAction(slug, row.slug, {
+          collectionId: row.id,
+          tiers: tiers.map((tier, index) => ({
+            ...(tier.id ? { id: tier.id } : {}),
+            name: tier.name.trim(),
+            ...(tier.description?.trim() ? { description: tier.description.trim() } : {}),
+            price: tier.price.trim(),
+            ...(tier.quantityLimit?.trim() ? { quantityLimit: Number(tier.quantityLimit.trim()) } : {}),
+            sortOrder: index,
+          })),
+        });
         if (result.error) {
-          setError(`The draft was created, but ${what} was not saved: ${result.error}`);
+          setError(`Your progress is saved, but the options were not: ${result.error}`);
           return false;
         }
-        return true;
-      };
-
-      // The collection is created with the audience its participation mode
-      // implies — public, or all members. Anything narrower is a second,
-      // explicit decision, and still creates no obligation for anyone.
-      if (audienceMode === "groups" || audienceMode === "selected_members") {
-        const ok = await save("who it is for", () =>
-          setCollectionAudienceAction(slug, collectionSlug, { collectionId, audienceMode, groupIds: audienceGroupIds }),
-        );
-        if (!ok) return;
-      }
-
-      if (amountModel === "tiers") {
-        const ok = await save("the options", () =>
-          setCollectionTiersAction(slug, collectionSlug, {
-            collectionId,
-            tiers: tiers.map((tier, index) => ({
-              name: tier.name.trim(),
-              ...(tier.description?.trim() ? { description: tier.description.trim() } : {}),
-              price: tier.price.trim(),
-              ...(tier.quantityLimit?.trim() ? { quantityLimit: Number(tier.quantityLimit.trim()) } : {}),
-              sortOrder: index,
-            })),
-          }),
-        );
-        if (!ok) return;
+        if (result.savedIds) {
+          setTiers((current_) => current_.map((tier, index) => ({ ...tier, id: result.savedIds![index] ?? tier.id })));
+        }
       }
 
       if (amountModel === "items") {
-        const ok = await save("the items", () =>
-          setCollectionItemsAction(slug, collectionSlug, { collectionId, items: itemsToPayload(items) }),
-        );
-        if (!ok) return;
+        const result = await setCollectionItemsAction(slug, row.slug, {
+          collectionId: row.id,
+          items: itemsToPayload(items),
+        });
+        if (result.error) {
+          setError(`Your progress is saved, but the items were not: ${result.error}`);
+          return false;
+        }
+        if (result.savedIds) {
+          setItems((current_) => current_.map((item, index) => ({ ...item, id: result.savedIds![index] ?? item.id })));
+        }
       }
 
-      if (collects.event && (eventDraft.startsAt || eventDraft.venue)) {
+      if (collects.event && (eventDraft.startsAt || eventDraft.venue || eventDraft.collectAttendeeDetails)) {
         const ok = await save("the event details", () =>
-          setCollectionEventAction(slug, collectionSlug, {
-            collectionId,
+          setCollectionEventAction(slug, row.slug, {
+            collectionId: row.id,
             eventStartsAt: eventDraft.startsAt,
             eventEndsAt: eventDraft.endsAt,
             venue: eventDraft.venue,
             collectAttendeeDetails: eventDraft.collectAttendeeDetails,
           }),
         );
-        if (!ok) return;
+        if (!ok) return false;
       }
 
       const suggestions = suggestedAmounts.map((amount) => amount.trim()).filter((amount) => amount !== "");
       if (collects.suggestions && suggestions.length > 0) {
         const ok = await save("the suggested amounts", () =>
-          setCollectionSuggestedAmountsAction(slug, collectionSlug, { collectionId, amounts: suggestions }),
+          setCollectionSuggestedAmountsAction(slug, row.slug, { collectionId: row.id, amounts: suggestions }),
         );
-        if (!ok) return;
+        if (!ok) return false;
       }
 
       if (collects.story && (story.what.trim() || story.why.trim() || story.impact.trim())) {
         const ok = await save("the story", () =>
-          setCollectionStoryAction(slug, collectionSlug, {
-            collectionId,
+          setCollectionStoryAction(slug, row.slug, {
+            collectionId: row.id,
             storyWhat: story.what,
             storyWhy: story.why,
             storyImpact: story.impact,
           }),
         );
-        if (!ok) return;
+        if (!ok) return false;
       }
 
       if (collects.recurrence) {
         const ok = await save("the schedule", () =>
-          setCollectionRecurrenceAction(slug, collectionSlug, {
-            collectionId,
+          setCollectionRecurrenceAction(slug, row.slug, {
+            collectionId: row.id,
             frequency: recurrence.frequency,
             intervalCount: Number(recurrence.intervalCount) || 1,
             ...(recurrence.startsOn ? { startsOn: recurrence.startsOn } : {}),
             dueAfterDays: Number(recurrence.dueAfterDays) || 0,
           }),
         );
-        if (!ok) return;
+        if (!ok) return false;
       }
+    }
 
+    // The cover image saves itself the moment it is uploaded, so the Cover
+    // step has nothing of its own left to write.
+
+    if (current === 4 && (audienceMode === "groups" || audienceMode === "selected_members")) {
+      const ok = await save("who it is for", () =>
+        setCollectionAudienceAction(slug, row.slug, {
+          collectionId: row.id,
+          audienceMode,
+          groupIds: audienceGroupIds,
+        }),
+      );
+      if (!ok) return false;
+    }
+
+    if (current === 5) {
       const fields = questionsToFields(questions);
       if (fields.length > 0) {
         const ok = await save("the questions", () =>
-          setCollectionFieldsAction(slug, collectionSlug, { collectionId, fields }),
+          setCollectionFieldsAction(slug, row.slug, { collectionId: row.id, fields }),
         );
-        if (!ok) return;
+        if (!ok) return false;
       }
+    }
 
-      router.push(href);
+    return true;
+  }
+
+  /** Saves the step just completed, then moves on. A failed save keeps the organiser where they are, with the reason. */
+  function advance(): void {
+    setError(null);
+    startTransition(async () => {
+      const ok = await persistStep(step);
+      if (ok) setStep((current) => Math.min(STEPS.length - 1, current + 1));
+    });
+  }
+
+  /**
+   * The last step. Everything before it is already saved, so this saves
+   * what the Review step itself can still change (nothing but a late edit
+   * on an earlier step) and opens the draft.
+   */
+  function finish(): void {
+    setError(null);
+    startTransition(async () => {
+      const ok = await persistStep(2) && await persistStep(4) && await persistStep(5);
+      if (!ok) return;
+      if (draftSlug) router.push(`/c/${slug}/collections/${draftSlug}`);
     });
   }
 
@@ -422,6 +459,16 @@ export function NewCollectionForm({
         <p className="text-sm text-[var(--color-text-muted)]">
           Step {step + 1} of {STEPS.length} · {STEPS[step]}
         </p>
+        {draftId && (
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {isPending ? "Saving…" : "Your progress is saved automatically."}{" "}
+            {draftHref && (
+              <Link href={draftHref} className="font-medium underline">
+                Open the draft
+              </Link>
+            )}
+          </p>
+        )}
       </div>
 
       <ol className="flex gap-1" aria-label="Progress">
@@ -691,7 +738,7 @@ export function NewCollectionForm({
           </dl>
 
           <p className="text-sm text-[var(--color-text-muted)]">
-            This saves a draft. Nothing is public and no link works until you publish it.
+            Your progress is saved as you go. Nothing is public and no link works until you publish it.
             {collects.recurrence && " No period is opened and nobody owes anything yet."}
           </p>
         </section>
@@ -722,28 +769,12 @@ export function NewCollectionForm({
         </Button>
 
         {step === STEPS.length - 1 ? (
-          <Button type="button" loading={isPending} onClick={submit}>
-            <Check className="h-4 w-4" aria-hidden="true" /> Save as draft
+          <Button type="button" loading={isPending} onClick={finish}>
+            <Check className="h-4 w-4" aria-hidden="true" /> Open this draft
           </Button>
         ) : (
           step > 0 && (
-            <Button
-              type="button"
-              loading={isPending}
-              disabled={!canContinue}
-              onClick={() => {
-                // Leaving Contribution is when the draft is actually created —
-                // the Cover image step right after needs a real collection id
-                // to upload against.
-                if (step === COVER_STEP - 1) {
-                  ensureDraftCreated((ok) => {
-                    if (ok) setStep(COVER_STEP);
-                  });
-                  return;
-                }
-                setStep((current) => Math.min(STEPS.length - 1, current + 1));
-              }}
-            >
+            <Button type="button" loading={isPending} disabled={!canContinue} onClick={advance}>
               Continue <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Button>
           )

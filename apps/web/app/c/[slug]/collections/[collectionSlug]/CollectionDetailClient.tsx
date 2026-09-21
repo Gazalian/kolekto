@@ -8,6 +8,7 @@ import type {
   CollectionItem,
   CollectionRecurrence,
   CollectionTier,
+  MemberGroup,
   Obligation,
 } from "@kolekto/db";
 import { Badge, Banner, Button, Card, CardBody, Dialog } from "@kolekto/ui";
@@ -29,6 +30,9 @@ import {
 import { formatDistanceToNow } from "../../../../../lib/format.ts";
 import { transitionCollectionStatusAction } from "../actions.ts";
 import { ObligationsPanel } from "./ObligationsPanel.tsx";
+import { CheckInPanel, type CheckInPerson } from "./CheckInPanel.tsx";
+import { ExportPanel } from "./ExportPanel.tsx";
+import type { ExportFieldChoice } from "./export-fields.ts";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 
 export interface ObligationRow {
@@ -49,6 +53,8 @@ export interface CollectionPermissions {
   canAssign: boolean;
   canExempt: boolean;
   canShare: boolean;
+  canExport: boolean;
+  canCheckIn: boolean;
 }
 
 /** The transitions an officer can reach from here, in the order a person would want them. Mirrors app.transition_collection_status, which is what actually decides. */
@@ -111,6 +117,9 @@ export function CollectionDetailClient({
   audienceGroups,
   audienceCounts,
   activity,
+  exportFields,
+  exportGroups,
+  checkInPeople,
   permissions,
 }: {
   slug: string;
@@ -126,12 +135,17 @@ export function CollectionDetailClient({
   audienceGroups: string[];
   audienceCounts: { eligible: number; with_obligation: number; awaiting: number };
   activity: AuditLog[];
+  exportFields: { fixed: ExportFieldChoice[]; custom: ExportFieldChoice[] };
+  exportGroups: MemberGroup[];
+  checkInPeople: CheckInPerson[];
   permissions: CollectionPermissions;
 }) {
   const isManaged = collection.participation_mode === "managed";
   const tabs = [
     { key: "overview", label: "Overview" },
     ...(isManaged ? [{ key: "members", label: "Members" }] : []),
+    ...(collection.category === "event" ? [{ key: "checkin", label: "Check-in" }] : []),
+    { key: "export", label: "Export" },
     { key: "activity", label: "Activity" },
     { key: "settings", label: "Settings" },
   ] as const;
@@ -224,6 +238,15 @@ export function CollectionDetailClient({
               This is a draft. Its link does not work and nobody outside your officers can see it.
             </Banner>
           )}
+
+          {/* M7.5 part B: the same components the public page renders, from
+              this collection's own rows — not a summary that can drift. */}
+          <Link
+            href={`/c/${slug}/collections/${collection.slug}/preview`}
+            className="self-start text-sm font-medium text-[var(--color-primary)] hover:underline"
+          >
+            Preview as a contributor →
+          </Link>
 
           {isLive && (
             <Card>
@@ -373,6 +396,26 @@ export function CollectionDetailClient({
           openCycleKey={cycles.find((cycle) => cycle.closed_at === null)?.cycle_key ?? null}
           canAssign={permissions.canAssign}
           canExempt={permissions.canExempt}
+        />
+      )}
+
+      {tab === "checkin" && (
+        <CheckInPanel
+          slug={slug}
+          collectionSlug={collection.slug}
+          people={checkInPeople}
+          canCheckIn={permissions.canCheckIn}
+        />
+      )}
+
+      {tab === "export" && (
+        <ExportPanel
+          slug={slug}
+          collectionSlug={collection.slug}
+          fixedFields={exportFields.fixed}
+          customFields={exportFields.custom}
+          groups={exportGroups}
+          canExport={permissions.canExport}
         />
       )}
 

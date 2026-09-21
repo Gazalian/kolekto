@@ -55,6 +55,14 @@ import { createClient } from "../../../../lib/supabase/server.ts";
 export interface ActionResult {
   error?: string;
   ok?: boolean;
+  /**
+   * For the writes that replace a whole list (tiers, items): the ids the rows
+   * now hold, in display order. The creation wizard saves a step each time it
+   * is completed, and a row sent with no id is a new row — so the client
+   * carries these back into its drafts to keep identity stable across saves
+   * (ADR 0010).
+   */
+  savedIds?: string[];
 }
 
 function messageFrom(error: unknown, fallback: string): string {
@@ -185,7 +193,23 @@ export async function setCollectionTiersAction(
     return { error: messageFrom(error, "Could not save the options") };
   }
   revalidateCollection(slug, collectionSlug);
-  return { ok: true };
+  // The ids the rows now hold, in display order. The wizard saves a step
+  // every time it is completed (M7.5 part A), and a payload with no id makes
+  // a NEW row — so without reading these back, editing an option twice would
+  // give it two different identities. ADR 0010: identity is the id.
+  return { ok: true, savedIds: await readRowIds("collection_tiers", parsed.data.collectionId) };
+}
+
+/** Ids of a collection's tiers or items, in the order a contributor sees them. RLS scopes the read to communities the caller holds a role in. */
+async function readRowIds(table: "collection_tiers" | "collection_items", collectionId: string): Promise<string[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from(table)
+    .select("id")
+    .eq("collection_id", collectionId)
+    .order("sort_order")
+    .order("name");
+  return (data ?? []).map((row) => row.id as string);
 }
 
 export async function setTierHiddenAction(
@@ -229,6 +253,11 @@ export async function setCollectionItemsAction(
         priceKobo: fromNaira(item.price),
         quantityAvailable: item.quantityAvailable,
         maxPerOrder: item.maxPerOrder,
+        // Was dropped here, which is why an uploaded item image never
+        // survived the save that followed it: the editor produced the URL,
+        // the schema carried it, the write function accepted it, and this
+        // mapping quietly left it out.
+        imageUrl: item.imageUrl,
         sortOrder: item.sortOrder ?? index,
       })),
     });
@@ -236,7 +265,7 @@ export async function setCollectionItemsAction(
     return { error: messageFrom(error, "Could not save the items") };
   }
   revalidateCollection(slug, collectionSlug);
-  return { ok: true };
+  return { ok: true, savedIds: await readRowIds("collection_items", parsed.data.collectionId) };
 }
 
 export async function setItemHiddenAction(
