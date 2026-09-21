@@ -73,7 +73,7 @@ export function TiersEditor({
                 <div className="flex gap-1">
                   <button
                     type="button"
-                    aria-label={`Move ${tier.name || `option ${index + 1}`} up`}
+                    aria-label={`Move ${tier.name || `row ${index + 1}`} up`}
                     disabled={index === 0}
                     className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40"
                     onClick={() => move(index, -1)}
@@ -82,7 +82,7 @@ export function TiersEditor({
                   </button>
                   <button
                     type="button"
-                    aria-label={`Move ${tier.name || `option ${index + 1}`} down`}
+                    aria-label={`Move ${tier.name || `row ${index + 1}`} down`}
                     disabled={index === tiers.length - 1}
                     className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40"
                     onClick={() => move(index, 1)}

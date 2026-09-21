@@ -94,7 +94,7 @@ export function ItemsEditor({
                 <div className="flex gap-1">
                   <button
                     type="button"
-                    aria-label={`Move ${item.name || `item ${index + 1}`} up`}
+                    aria-label={`Move ${item.name || `row ${index + 1}`} up`}
                     disabled={index === 0}
                     className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40"
                     onClick={() => move(index, -1)}
@@ -103,7 +103,7 @@ export function ItemsEditor({
                   </button>
                   <button
                     type="button"
-                    aria-label={`Move ${item.name || `item ${index + 1}`} down`}
+                    aria-label={`Move ${item.name || `row ${index + 1}`} down`}
                     disabled={index === items.length - 1}
                     className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40"
                     onClick={() => move(index, 1)}
