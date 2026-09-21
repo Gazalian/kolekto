@@ -32,6 +32,11 @@ export async function redeemInviteLinkAction(token: string, formData: FormData):
     fullName: formData.get("fullName"),
     phoneE164: formData.get("phoneE164"),
     email: formData.get("email") || undefined,
+    // Only meaningful when the invitation allows a choice at all — the
+    // database re-checks every id against this link's own pickable set
+    // regardless of what arrives here (SEC-18: a client-supplied id never
+    // implies eligibility).
+    groupIds: formData.getAll("groupId").filter((value): value is string => typeof value === "string"),
     attributes,
   });
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Invalid input" };

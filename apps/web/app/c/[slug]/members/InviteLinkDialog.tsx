@@ -36,8 +36,11 @@ export function InviteLinkDialog({
   const [label, setLabel] = useState("");
   const [approveJoiners, setApproveJoiners] = useState(false);
   const [presetGroups, setPresetGroups] = useState<Set<string>>(new Set());
+  const [allowGroupChoice, setAllowGroupChoice] = useState(false);
+  const [allowMultiGroup, setAllowMultiGroup] = useState(false);
   const [asked, setAsked] = useState<Set<string>>(new Set());
   const [required, setRequired] = useState<Set<string>>(new Set());
+  const pickableCount = groups.filter((group) => group.pickable_at_join).length;
 
   function toggle(set: Set<string>, id: string, on: boolean): Set<string> {
     const next = new Set(set);
@@ -90,6 +93,39 @@ export function InviteLinkDialog({
                 {group.name}
               </label>
             ))}
+          </fieldset>
+        )}
+
+        {pickableCount > 0 && (
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium text-[var(--color-text)]">Let joiners choose a group</legend>
+            <p className="text-xs text-[var(--color-text-muted)]">
+              Offers the {pickableCount} group{pickableCount === 1 ? "" : "s"} marked &quot;pickable at join&quot; in
+              Groups. Joiners see only those — never the rest of the community&apos;s groups.
+            </p>
+            <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-[var(--color-border-strong)]"
+                checked={allowGroupChoice}
+                onChange={(event) => {
+                  setAllowGroupChoice(event.target.checked);
+                  if (!event.target.checked) setAllowMultiGroup(false);
+                }}
+              />
+              Let joiners pick a group themselves
+            </label>
+            {allowGroupChoice && (
+              <label className="ml-6 flex items-center gap-2 text-sm text-[var(--color-text)]">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-[var(--color-border-strong)]"
+                  checked={allowMultiGroup}
+                  onChange={(event) => setAllowMultiGroup(event.target.checked)}
+                />
+                Allow more than one
+              </label>
+            )}
           </fieldset>
         )}
 
@@ -150,6 +186,8 @@ export function InviteLinkDialog({
               const result = await createInviteLinkAction(slug, {
                 communityId,
                 groupIds: [...presetGroups],
+                allowGroupChoice,
+                allowMultiGroup,
                 approveJoiners,
                 ...(label.trim() ? { label } : {}),
                 askedAttributeKeys: [...asked],

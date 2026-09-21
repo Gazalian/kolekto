@@ -16,12 +16,16 @@ import {
   setCollectionFieldsAction,
   setCollectionItemsAction,
   setCollectionRecurrenceAction,
+  setCollectionStoryAction,
   setCollectionSuggestedAmountsAction,
   setCollectionTiersAction,
+  updateCollectionAction,
 } from "../actions.ts";
+import { CoverUploader } from "../CoverUploader.tsx";
 import { EventEditor, emptyEvent, type EventDraft } from "../EventEditor.tsx";
 import { emptyItem, ItemsEditor, itemsToPayload, type ItemDraft } from "../ItemsEditor.tsx";
 import { emptyRecurrence, RecurrenceEditor, type RecurrenceDraft } from "../RecurrenceEditor.tsx";
+import { emptyStory, StoryEditor, type StoryDraft } from "../StoryEditor.tsx";
 import { SuggestedAmountsEditor } from "../SuggestedAmountsEditor.tsx";
 import { emptyTier, TiersEditor, type TierDraft } from "../TiersEditor.tsx";
 import { QuestionsEditor, questionsToFields, type QuestionDraft } from "../QuestionsEditor.tsx";
@@ -61,6 +65,7 @@ interface Intent {
     recurrence?: boolean;
     suggestions?: boolean;
     target?: boolean;
+    story?: boolean;
   };
   /** Shown above the contribution step, in the organiser's own terms. */
   contributionHeading: string;
@@ -107,8 +112,8 @@ const INTENTS: Intent[] = [
     participationMode: "open",
     amountModel: "open_amount",
     schedule: "one_time",
-    collects: { suggestions: true, target: true },
-    contributionHeading: "What may people give?",
+    collects: { suggestions: true, target: true, story: true },
+    contributionHeading: "Tell your story, then set what people may give",
   },
   {
     key: "tiers",
@@ -153,7 +158,9 @@ const INTENTS: Intent[] = [
   },
 ];
 
-const STEPS = ["Purpose", "Details", "Contribution", "Who pays", "Questions", "Review"] as const;
+const STEPS = ["Purpose", "Details", "Contribution", "Cover image", "Who pays", "Questions", "Review"] as const;
+/** The step index at which the draft is created, so the cover-image step has a real collection to upload against. */
+const COVER_STEP = 3;
 
 export function NewCollectionForm({
   slug,
@@ -171,6 +178,13 @@ export function NewCollectionForm({
   const [step, setStep] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [draftHref, setDraftHref] = useState<string | null>(null);
+  // Set once the draft is created, at the Contribution → Cover image
+  // transition (§1/§33: the flyer belongs in the creation flow, not hidden in
+  // settings — which means a real collection has to exist by the time this
+  // step renders, so its uploader has something to attach the image to).
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftSlug, setDraftSlug] = useState<string | null>(null);
+  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
 
   const [intent, setIntent] = useState<Intent>(INTENTS[0]!);
   const [name, setName] = useState("");
@@ -185,6 +199,7 @@ export function NewCollectionForm({
   const [maxAmount, setMaxAmount] = useState("");
   const [targetAmount, setTargetAmount] = useState("");
   const [suggestedAmounts, setSuggestedAmounts] = useState<string[]>([]);
+  const [story, setStory] = useState<StoryDraft>(emptyStory());
   const [tiers, setTiers] = useState<TierDraft[]>([emptyTier()]);
   const [items, setItems] = useState<ItemDraft[]>([emptyItem()]);
   const [eventDraft, setEventDraft] = useState<EventDraft>(emptyEvent());
@@ -220,31 +235,79 @@ export function NewCollectionForm({
     }
   })();
 
+  /** The fields `create` and `update` share. Everything type-specific (tiers, items, event, recurrence, fields, audience) is its own call, made once a collection id exists. */
+  function collectionConfig() {
+    return {
+      name,
+      description: description || undefined,
+      category: intent.category,
+      participationMode,
+      amountModel,
+      schedule: intent.schedule,
+      fixedAmount: amountModel === "fixed" ? fixedAmount : "",
+      minAmount: amountModel === "open_amount" ? minAmount : "",
+      maxAmount: amountModel === "open_amount" ? maxAmount : "",
+      targetAmount,
+      deadlineAt,
+      visibility,
+    };
+  }
+
+  /**
+   * Creates the draft the moment the organiser has said enough to satisfy
+   * `createCollectionSchema` (name, category and the amount fields the chosen
+   * type requires) — one step earlier than "Review" — so the Cover image step
+   * that follows has a real collection to upload against instead of asking the
+   * organiser to find the uploader in settings afterwards.
+   *
+   * Idempotent: going back and forward again does not create a second draft.
+   */
+  function ensureDraftCreated(onDone: (ok: boolean) => void): void {
+    if (draftId) {
+      onDone(true);
+      return;
+    }
+    setError(null);
+    startTransition(async () => {
+      const created = await createCollectionAction(slug, { communityId, ...collectionConfig() });
+      if (created.error || !created.collectionId || !created.collectionSlug) {
+        setError(created.error ?? "Could not create the collection");
+        onDone(false);
+        return;
+      }
+      setDraftId(created.collectionId);
+      setDraftSlug(created.collectionSlug);
+      setDraftHref(`/c/${slug}/collections/${created.collectionSlug}`);
+      onDone(true);
+    });
+  }
+
   function submit(): void {
     setError(null);
     startTransition(async () => {
-      const created = await createCollectionAction(slug, {
-        communityId,
-        name,
-        description: description || undefined,
-        category: intent.category,
-        participationMode,
-        amountModel,
-        schedule: intent.schedule,
-        fixedAmount: amountModel === "fixed" ? fixedAmount : "",
-        minAmount: amountModel === "open_amount" ? minAmount : "",
-        maxAmount: amountModel === "open_amount" ? maxAmount : "",
-        targetAmount,
-        deadlineAt,
-        visibility,
-      });
+      // By this point the draft was created at the Cover image step. Anything
+      // changed since (visibility, amounts, name) is saved as an update rather
+      // than a second collection.
+      const saved = draftId
+        ? await updateCollectionAction(slug, draftSlug!, { collectionId: draftId, ...collectionConfig() })
+        : await createCollectionAction(slug, { communityId, ...collectionConfig() });
 
-      if (created.error || !created.collectionId || !created.collectionSlug) {
-        setError(created.error ?? "Could not create the collection");
+      if (saved.error) {
+        setError(saved.error);
         return;
       }
 
-      const { collectionId, collectionSlug } = created;
+      const collectionId = draftId ?? (saved as { collectionId?: string }).collectionId;
+      const collectionSlug = draftSlug ?? (saved as { collectionSlug?: string }).collectionSlug;
+      if (!collectionId || !collectionSlug) {
+        setError("Could not create the collection");
+        return;
+      }
+      if (!draftId) {
+        setDraftId(collectionId);
+        setDraftSlug(collectionSlug);
+      }
+
       const href = `/c/${slug}/collections/${collectionSlug}`;
       setDraftHref(href);
 
@@ -298,6 +361,7 @@ export function NewCollectionForm({
             eventStartsAt: eventDraft.startsAt,
             eventEndsAt: eventDraft.endsAt,
             venue: eventDraft.venue,
+            collectAttendeeDetails: eventDraft.collectAttendeeDetails,
           }),
         );
         if (!ok) return;
@@ -307,6 +371,18 @@ export function NewCollectionForm({
       if (collects.suggestions && suggestions.length > 0) {
         const ok = await save("the suggested amounts", () =>
           setCollectionSuggestedAmountsAction(slug, collectionSlug, { collectionId, amounts: suggestions }),
+        );
+        if (!ok) return;
+      }
+
+      if (collects.story && (story.what.trim() || story.why.trim() || story.impact.trim())) {
+        const ok = await save("the story", () =>
+          setCollectionStoryAction(slug, collectionSlug, {
+            collectionId,
+            storyWhat: story.what,
+            storyWhy: story.why,
+            storyImpact: story.impact,
+          }),
         );
         if (!ok) return;
       }
@@ -412,6 +488,13 @@ export function NewCollectionForm({
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">{intent.contributionHeading}</h2>
 
+          {collects.story && (
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium text-[var(--color-text)]">Your story</h3>
+              <StoryEditor story={story} onChange={setStory} />
+            </div>
+          )}
+
           {intent.key === "custom" && (
             <SelectField
               label="Contribution type"
@@ -494,6 +577,32 @@ export function NewCollectionForm({
 
       {step === 3 && (
         <section className="flex flex-col gap-4">
+          <div>
+            <h2 className="text-sm font-semibold text-[var(--color-text)]">Add a flyer</h2>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Optional, but this is what {intent.key === "event" ? "an event page" : "a collection"} looks like without
+              one — shown at the top of the public page, so give contributors something to recognise. You can add or
+              change it later too.
+            </p>
+          </div>
+          {draftId && draftSlug ? (
+            <CoverUploader
+              slug={slug}
+              collectionSlug={draftSlug}
+              collectionId={draftId}
+              coverImageUrl={coverImageUrl}
+              onChanged={setCoverImageUrl}
+            />
+          ) : (
+            <p className="text-sm text-[var(--color-danger)]">
+              {error ?? "Could not create the draft. Go back and try again."}
+            </p>
+          )}
+        </section>
+      )}
+
+      {step === 4 && (
+        <section className="flex flex-col gap-4">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Who is expected to contribute?</h2>
 
           <p className="text-sm text-[var(--color-text-muted)]">
@@ -529,7 +638,7 @@ export function NewCollectionForm({
         </section>
       )}
 
-      {step === 4 && (
+      {step === 5 && (
         <section className="flex flex-col gap-4">
           <div>
             <h2 className="text-sm font-semibold text-[var(--color-text)]">Anything else to ask contributors?</h2>
@@ -542,12 +651,13 @@ export function NewCollectionForm({
         </section>
       )}
 
-      {step === 5 && (
+      {step === 6 && (
         <section className="flex flex-col gap-4">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">Check this over</h2>
           <dl className="divide-y divide-[var(--color-border)] rounded-[var(--radius-md)] border border-[var(--color-border)]">
             <Row label="Name" value={name} />
             <Row label="For" value={description || "—"} />
+            <Row label="Flyer" value={coverImageUrl ? "Added" : "None yet"} />
             <Row label="Contribution" value={AMOUNT_MODEL_LABEL[amountModel] ?? amountModel} />
             {amountModel === "fixed" && <Row label="Amount" value={fixedAmount} />}
             {collects.recurrence && (
@@ -572,6 +682,9 @@ export function NewCollectionForm({
               <Row label="Suggested" value={suggestedAmounts.filter((amount) => amount.trim() !== "").join(", ")} />
             )}
             {targetAmount && <Row label="Target" value={targetAmount} />}
+            {collects.story && (story.what || story.why || story.impact) && (
+              <Row label="Story" value="Added" />
+            )}
             <Row label="Who it is for" value={AUDIENCE_LABELS[audienceMode].title} />
             <Row label="Deadline" value={deadlineAt || "None"} />
             <Row label="Questions" value={questions.length === 0 ? "None" : questions.map((q) => q.label).join(", ")} />
@@ -616,8 +729,20 @@ export function NewCollectionForm({
           step > 0 && (
             <Button
               type="button"
+              loading={isPending}
               disabled={!canContinue}
-              onClick={() => setStep((current) => Math.min(STEPS.length - 1, current + 1))}
+              onClick={() => {
+                // Leaving Contribution is when the draft is actually created —
+                // the Cover image step right after needs a real collection id
+                // to upload against.
+                if (step === COVER_STEP - 1) {
+                  ensureDraftCreated((ok) => {
+                    if (ok) setStep(COVER_STEP);
+                  });
+                  return;
+                }
+                setStep((current) => Math.min(STEPS.length - 1, current + 1));
+              }}
             >
               Continue <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Button>

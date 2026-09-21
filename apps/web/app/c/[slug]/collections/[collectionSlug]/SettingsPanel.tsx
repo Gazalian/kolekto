@@ -18,6 +18,7 @@ import {
   setCollectionFieldsAction,
   setCollectionItemsAction,
   setCollectionRecurrenceAction,
+  setCollectionStoryAction,
   setCollectionSuggestedAmountsAction,
   setCollectionTiersAction,
   setItemHiddenAction,
@@ -28,6 +29,7 @@ import { CoverUploader } from "../CoverUploader.tsx";
 import { EventEditor, type EventDraft } from "../EventEditor.tsx";
 import { ItemsEditor, itemsToPayload, type ItemDraft } from "../ItemsEditor.tsx";
 import { RecurrenceEditor, type RecurrenceDraft } from "../RecurrenceEditor.tsx";
+import { StoryEditor, type StoryDraft } from "../StoryEditor.tsx";
 import { SuggestedAmountsEditor } from "../SuggestedAmountsEditor.tsx";
 import { QuestionsEditor, questionsToFields, type QuestionDraft } from "../QuestionsEditor.tsx";
 import { TiersEditor, type TierDraft } from "../TiersEditor.tsx";
@@ -114,16 +116,23 @@ export function SettingsPanel({
       price: nairaFromKobo(item.price_kobo),
       quantityAvailable: item.quantity_available === null ? "" : String(item.quantity_available),
       maxPerOrder: item.max_per_order === null ? "" : String(item.max_per_order),
+      imageUrl: item.image_url ?? undefined,
     })),
   );
   const [eventDraft, setEventDraft] = useState<EventDraft>({
     startsAt: toLocalInput(collection.event_starts_at),
     endsAt: toLocalInput(collection.event_ends_at),
     venue: collection.venue ?? "",
+    collectAttendeeDetails: collection.collect_attendee_details,
   });
   const [suggestedAmounts, setSuggestedAmounts] = useState<string[]>(
     collection.suggested_amounts_kobo.map((amount) => nairaFromKobo(amount)),
   );
+  const [storyDraft, setStoryDraft] = useState<StoryDraft>({
+    what: collection.story_what ?? "",
+    why: collection.story_why ?? "",
+    impact: collection.story_impact ?? "",
+  });
   const [recurrenceDraft, setRecurrenceDraft] = useState<RecurrenceDraft>({
     frequency: recurrence?.frequency ?? "monthly",
     intervalCount: String(recurrence?.interval_count ?? 1),
@@ -357,7 +366,13 @@ export function SettingsPanel({
 
             {isDraft ? (
               <>
-                <ItemsEditor items={itemDrafts} onChange={setItemDrafts} />
+                <ItemsEditor
+                  items={itemDrafts}
+                  onChange={setItemDrafts}
+                  slug={slug}
+                  collectionSlug={collection.slug}
+                  collectionId={collection.id}
+                />
                 <Button
                   variant="secondary"
                   loading={isPending}
@@ -423,6 +438,7 @@ export function SettingsPanel({
                       eventStartsAt: eventDraft.startsAt,
                       eventEndsAt: eventDraft.endsAt,
                       venue: eventDraft.venue,
+                      collectAttendeeDetails: eventDraft.collectAttendeeDetails,
                     }),
                   )
                 }
@@ -459,6 +475,39 @@ export function SettingsPanel({
                 }
               >
                 Save suggested amounts
+              </Button>
+            )}
+          </CardBody>
+        </Card>
+      )}
+
+      {collection.category === "fundraiser" && (
+        <Card>
+          <CardBody className="flex flex-col gap-4">
+            <div>
+              <h2 className="text-sm font-semibold text-[var(--color-text)]">Your story</h2>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Shown on the public page before the amount — a campaign with a clear story raises more than a bare
+                target figure.
+              </p>
+            </div>
+            <StoryEditor story={storyDraft} onChange={setStoryDraft} disabled={isFinished} />
+            {!isFinished && (
+              <Button
+                variant="secondary"
+                loading={isPending}
+                onClick={() =>
+                  save("Story saved.", () =>
+                    setCollectionStoryAction(slug, collection.slug, {
+                      collectionId: collection.id,
+                      storyWhat: storyDraft.what,
+                      storyWhy: storyDraft.why,
+                      storyImpact: storyDraft.impact,
+                    }),
+                  )
+                }
+              >
+                Save story
               </Button>
             )}
           </CardBody>

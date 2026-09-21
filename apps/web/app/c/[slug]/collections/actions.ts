@@ -15,6 +15,7 @@ import {
   setCollectionFields,
   setCollectionItems,
   setCollectionRecurrence,
+  setCollectionStory,
   setCollectionSuggestedAmounts,
   setCollectionTiers,
   syncCollectionObligations,
@@ -35,6 +36,7 @@ import {
   setCollectionFieldsSchema,
   setCollectionItemsSchema,
   setCollectionRecurrenceSchema,
+  setCollectionStorySchema,
   setCollectionSuggestedAmountsSchema,
   setCollectionTiersSchema,
   syncObligationsSchema,
@@ -46,6 +48,7 @@ import {
 import { revalidatePath } from "next/cache";
 import { requireCallerContext } from "../../../../lib/caller.ts";
 import { removeCollectionCover, uploadCollectionCover } from "../../../../lib/collection-cover.ts";
+import { removeItemImage, uploadItemImage } from "../../../../lib/item-image.ts";
 import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
 
@@ -267,6 +270,7 @@ export async function setCollectionEventAction(
       eventStartsAt: parsed.data.eventStartsAt,
       eventEndsAt: parsed.data.eventEndsAt,
       venue: parsed.data.venue,
+      collectAttendeeDetails: parsed.data.collectAttendeeDetails,
     });
   } catch (error) {
     return { error: messageFrom(error, "Could not save the event details") };
@@ -291,6 +295,26 @@ export async function setCollectionSuggestedAmountsAction(
     });
   } catch (error) {
     return { error: messageFrom(error, "Could not save the suggested amounts") };
+  }
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
+// ── A fundraiser's story (§5/§19) ────────────────────────────────────────────
+
+export async function setCollectionStoryAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult> {
+  const parsed = setCollectionStorySchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the story and try again" };
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionStory(caller, parsed.data);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save the story") };
   }
   revalidateCollection(slug, collectionSlug);
   return { ok: true };
@@ -481,6 +505,42 @@ export async function removeCoverAction(
   if (removed.error) return { error: removed.error };
 
   revalidateCollection(slug, collectionSlug);
+  return { ok: true };
+}
+
+// ── Item images (§4/§16/§21) ─────────────────────────────────────────────────
+//
+// Same shape as the flyer actions just above: the browser holds no storage
+// credential, `assertMayEditCollection` is the one gate, and a failed attach
+// takes the object back out rather than leaving orphaned storage.
+
+export async function uploadItemImageAction(
+  slug: string,
+  collectionSlug: string,
+  collectionId: string,
+  formData: FormData,
+): Promise<ActionResult & { url?: string }> {
+  const permitted = await assertMayEditCollection(collectionId);
+  if ("error" in permitted) return { error: permitted.error };
+
+  const file = formData.get("image");
+  if (!(file instanceof File)) return { error: "Choose an image to upload" };
+
+  const uploaded = await uploadItemImage(permitted.communityId, collectionId, file);
+  if (uploaded.error || !uploaded.url) return { error: uploaded.error ?? "The image could not be uploaded" };
+
+  // Unlike the flyer, an item image is not attached by its own write function
+  // — it travels with the rest of that item's fields the next time the item
+  // list is saved (setCollectionItemsAction). This call only produces the URL.
+  return { ok: true, url: uploaded.url };
+}
+
+export async function removeItemImageAction(collectionId: string, url: string): Promise<ActionResult> {
+  const permitted = await assertMayEditCollection(collectionId);
+  if ("error" in permitted) return { error: permitted.error };
+
+  const removed = await removeItemImage(permitted.communityId, collectionId, url);
+  if (removed.error) return { error: removed.error };
   return { ok: true };
 }
 

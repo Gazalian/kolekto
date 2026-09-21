@@ -43,6 +43,12 @@ export interface PublicCollection {
   event_starts_at: Date | null;
   event_ends_at: Date | null;
   venue: string | null;
+  /** §18: whether the public form asks for one name per ticket unit ordered, not only the buyer's. */
+  collect_attendee_details: boolean;
+  /** §5/§19. Null on every collection whose category is not `fundraiser`. */
+  story_what: string | null;
+  story_why: string | null;
+  story_impact: string | null;
   status: "active" | "paused" | "closed";
   display_options: Record<string, boolean>;
   fee_mode: "community_absorbs" | "contributor_pays";

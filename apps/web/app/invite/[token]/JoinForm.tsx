@@ -21,15 +21,36 @@ export function JoinForm({
   communityName,
   fields,
   approveJoiners,
+  pickableGroups,
+  allowMultiGroup,
 }: {
   token: string;
   communityName: string;
   fields: PublicInvite["fields"];
   approveJoiners: boolean;
+  /** The groups this link lets a joiner choose from. Empty when the link does not offer a choice. */
+  pickableGroups: PublicInvite["pickable_groups"];
+  /** Whether more than one of `pickableGroups` may be selected. When false, choosing one clears any other. */
+  allowMultiGroup: boolean;
 }) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [joined, setJoined] = useState<JoinResult | null>(null);
+  const [selectedGroups, setSelectedGroups] = useState<Set<string>>(new Set());
+
+  function toggleGroup(id: string, on: boolean): void {
+    setSelectedGroups((current) => {
+      if (!on) {
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      }
+      // A single-choice link keeps exactly one id selected, the same way a
+      // radio group would — picking a second option replaces the first
+      // rather than adding to it.
+      return allowMultiGroup ? new Set(current).add(id) : new Set([id]);
+    });
+  }
 
   if (joined?.memberCode) {
     return (
@@ -66,6 +87,29 @@ export function JoinForm({
       <TextField label="Full name" name="fullName" required autoComplete="name" />
       <TextField label="Phone number" name="phoneE164" placeholder="+2348012345678" required autoComplete="tel" />
       <TextField label="Email" name="email" type="email" autoComplete="email" hint="Optional." />
+
+      {pickableGroups.length > 0 && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium text-[var(--color-text)]">
+            {allowMultiGroup ? "Which groups suit you?" : "Which group suits you?"}
+          </legend>
+          {pickableGroups.map((group) => (
+            <label key={group.id} className="flex items-center gap-2 text-sm text-[var(--color-text)]">
+              <input
+                type={allowMultiGroup ? "checkbox" : "radio"}
+                name={allowMultiGroup ? undefined : "pickable-group"}
+                className="h-4 w-4"
+                checked={selectedGroups.has(group.id)}
+                onChange={(event) => toggleGroup(group.id, event.target.checked)}
+              />
+              {group.name}
+              {/* Hidden mirror so the value reaches FormData under one name,
+                  `getAll`-able, whichever input type is rendered above. */}
+              {selectedGroups.has(group.id) && <input type="hidden" name="groupId" value={group.id} />}
+            </label>
+          ))}
+        </fieldset>
+      )}
 
       {fields.map((field) =>
         field.type === "single_select" ? (

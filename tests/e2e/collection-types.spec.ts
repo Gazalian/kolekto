@@ -60,6 +60,11 @@ test("a fundraiser suggests amounts, and a contributor can still choose their ow
 
   await startCollection(page, /Fundraiser/, "Medical Fund 2026");
 
+  // §5/§19: a fundraiser asks for a story, not a bare description.
+  await page.getByLabel("What is this for?").fill("Emergency surgery for a member's father.");
+  await page.getByLabel("Why does this matter?").fill("He is the sole provider for six children.");
+  await page.getByLabel("What will donations fund?").fill("₦500,000 covers the full theatre bill.");
+
   await page.getByLabel("Smallest contribution").fill("1000");
   await page.getByLabel("Largest contribution").fill("500000");
 
@@ -71,6 +76,8 @@ test("a fundraiser suggests amounts, and a contributor can still choose their ow
   await page.getByRole("textbox", { name: "Suggestion 2" }).fill("20000");
 
   await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — public
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
   await page.getByRole("button", { name: "Save as draft" }).click();
@@ -85,6 +92,10 @@ test("a fundraiser suggests amounts, and a contributor can still choose their ow
   const contributor = await anonymous.newPage();
   await contributor.goto(`/${communitySlug}/medical-fund-2026`);
   await contributor.waitForLoadState("networkidle");
+
+  // The story reads before the amount block (§25: fundraising is story-first).
+  await expect(contributor.getByText("Emergency surgery for a member's father.")).toBeVisible();
+  await expect(contributor.getByText("₦500,000 covers the full theatre bill.")).toBeVisible();
 
   // A suggestion fills the field; it does not decide the amount. The server
   // resolves what is actually owed from what the form sends.
@@ -128,6 +139,8 @@ test("an item collection prices an order by the item chosen and how many", async
   await page.getByLabel("Price").nth(1).fill("50000");
 
   await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
   await page.getByRole("button", { name: "Save as draft" }).click();
@@ -182,6 +195,8 @@ test("a ticketed event carries its date and venue, and the venue can still chang
   await page.getByLabel("Where is it?").fill("Ostrich Hall, Ilorin");
 
   await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
   await page.getByRole("button", { name: "Save as draft" }).click();
@@ -231,6 +246,8 @@ test("a recurring charge owes per period, and no period opens by itself", async 
   await page.getByLabel("How often").selectOption("monthly");
   await page.getByLabel("First period starts").fill("2026-10-01");
   await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — all members
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
   await page.getByRole("button", { name: "Save as draft" }).click();
@@ -267,20 +284,17 @@ test("a recurring charge owes per period, and no period opens by itself", async 
   await expect(page.getByText("2 expected")).toBeVisible();
 });
 
-test("a flyer can be uploaded, shown on the public page, and removed", async ({ page, browser }) => {
+test("a flyer can be uploaded during creation, shown on the public page, and removed", async ({ page, browser }) => {
   await signInAsNewUser(page, "e2e-types");
   const communitySlug = await createCommunity(page, `E2E Flyer ${Date.now()}`);
 
+  // §1/§33: the flyer belongs in the creation flow, not discoverable only
+  // after the fact in settings — so this uploads it at the Cover image step,
+  // the moment the draft first exists, rather than afterwards.
   await startCollection(page, /An open contribution/, "Harvest Offering 2026");
   await page.getByRole("button", { name: "Continue" }).click(); // contribution
-  await page.getByRole("button", { name: "Continue" }).click(); // who pays
-  await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Save as draft" }).click();
 
-  await expect(page).toHaveURL(/\/collections\/harvest-offering-2026/, { timeout: 45_000 });
-  await page.waitForLoadState("networkidle");
-
-  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
   await expect(page.getByText("No flyer yet")).toBeVisible();
 
   // The browser holds no storage credential: this posts bytes to a server
@@ -296,6 +310,17 @@ test("a flyer can be uploaded, shown on the public page, and removed", async ({ 
   await expect(flyer).toHaveAttribute("src", /\/storage\/v1\/object\/public\/collection-covers\//, {
     timeout: 45_000,
   });
+
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await expect(page.getByText("Flyer", { exact: true })).toBeVisible();
+  await expect(page.getByText("Added", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Save as draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/harvest-offering-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("img[src*='collection-covers']")).toBeVisible();
 
   await publish(page);
 
@@ -323,15 +348,9 @@ test("a file that is not an image is refused before it reaches storage", async (
   await createCommunity(page, `E2E Flyer Type ${Date.now()}`);
 
   await startCollection(page, /An open contribution/, "Building Fund 2026");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Save as draft" }).click();
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
 
-  await expect(page).toHaveURL(/\/collections\/building-fund-2026/, { timeout: 45_000 });
-  await page.waitForLoadState("networkidle");
-
-  await page.getByRole("button", { name: "Settings" }).click();
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
   await page.getByLabel("Collection flyer").setInputFiles({
     name: "notes.txt",
     mimeType: "text/plain",
@@ -340,4 +359,115 @@ test("a file that is not an image is refused before it reaches storage", async (
 
   await expect(page.getByText("Upload a JPG, PNG or WebP image.")).toBeVisible();
   await expect(page.getByText("No flyer yet")).toBeVisible();
+
+  // A rejected file does not block the rest of the wizard — the page did not
+  // break, which is the defect this feature was built to rule out.
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image — none, and that is fine
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await page.getByRole("button", { name: "Save as draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/building-fund-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+  await expect(page.locator("img[src*='collection-covers']")).toHaveCount(0);
+});
+
+test("an item's own image uploads, shows on the public page, and can be replaced", async ({ page, browser }) => {
+  await signInAsNewUser(page, "e2e-types");
+  const communitySlug = await createCommunity(page, `E2E Item Image ${Date.now()}`);
+
+  // §4/§16: an item's image is added where the item itself is edited — the
+  // draft has to exist first (the upload is scoped to a real collection id),
+  // so this reaches it through Settings, exactly where `ItemsEditor` renders
+  // once a collection has been created, rather than during the wizard.
+  await startCollection(page, /Items or packages/, "Snack Pack 2026");
+  await page.getByLabel("Item").first().fill("Jollof Rice");
+  await page.getByLabel("Price").first().fill("3000");
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await page.getByRole("button", { name: "Save as draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/snack-pack-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Item image").setInputFiles({ name: "jollof.png", mimeType: "image/png", buffer: TINY_PNG });
+  await expect(page.getByRole("button", { name: "Replace image" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Save items" }).click();
+  await expect(page.getByText("Items saved.")).toBeVisible();
+
+  await publish(page);
+
+  const anonymous = await browser.newContext();
+  const contributor = await anonymous.newPage();
+  await contributor.goto(`/${communitySlug}/snack-pack-2026`);
+  await contributor.waitForLoadState("networkidle");
+  await expect(contributor.locator("img[src*='collection-covers/']").first()).toBeVisible();
+
+  await anonymous.close();
+});
+
+test("a ticket buyer can take more than one type, and name an attendee per ticket", async ({ page, browser }) => {
+  await signInAsNewUser(page, "e2e-types");
+  const communitySlug = await createCommunity(page, `E2E Ticket Basket ${Date.now()}`);
+
+  // §17/§18: several ticket types in one order, each with its own quantity,
+  // plus one attendee name per ticket — the "VIP × 2, Regular × 1" case.
+  await startCollection(page, /Tickets for an event/, "Founders Gala 2026");
+  await page.getByLabel("Option name").first().fill("Regular");
+  await page.getByLabel("Price").first().fill("10000");
+  await page.getByRole("button", { name: "Add another option" }).click();
+  await page.getByLabel("Option name").nth(1).fill("VIP");
+  await page.getByLabel("Price").nth(1).fill("25000");
+  await page.getByLabel("Limit").nth(1).fill("5"); // VIP quantity_limit — plenty for this order
+
+  await page.getByLabel("When does it start?").fill("2026-12-20T18:00");
+  await page.getByLabel("Where is it?").fill("Ostrich Hall, Ilorin");
+  await page.getByRole("checkbox", { name: "Collect attendee details" }).check();
+
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await page.getByRole("button", { name: "Save as draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/founders-gala-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+
+  await publish(page);
+
+  const anonymous = await browser.newContext();
+  const contributor = await anonymous.newPage();
+  await contributor.goto(`/${communitySlug}/founders-gala-2026`);
+  await contributor.waitForLoadState("networkidle");
+
+  await expect(contributor.getByRole("heading", { name: "Which tickets?" })).toBeVisible();
+
+  // VIP × 2
+  await contributor.getByRole("checkbox").nth(1).check();
+  await contributor.getByLabel("How many VIP?").fill("2");
+  // Regular × 1
+  await contributor.getByRole("checkbox").nth(0).check();
+
+  // The server asks for exactly three names — two VIP tickets and one Regular.
+  await expect(contributor.getByLabel("Ticket 3 — name")).toBeVisible();
+  await contributor.getByLabel("Ticket 1 — name").fill("Ada Obi");
+  await contributor.getByLabel("Ticket 2 — name").fill("Bola Ade");
+  await contributor.getByLabel("Ticket 3 — name").fill("Chidi Eze");
+
+  await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Phone number").fill("+2348011112222");
+  await contributor.getByRole("button", { name: "Continue" }).click();
+
+  await expect(contributor.getByText("2 × VIP")).toBeVisible();
+  await expect(contributor.getByText("1 × Regular")).toBeVisible();
+  // 2 × ₦25,000 + 1 × ₦10,000
+  await expect(contributor.getByText("₦60,000").first()).toBeVisible();
+  await expect(contributor.getByText("Ada Obi, Bola Ade, Chidi Eze")).toBeVisible();
+
+  await anonymous.close();
 });

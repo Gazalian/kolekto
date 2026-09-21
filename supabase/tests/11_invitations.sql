@@ -15,7 +15,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(20);
+select plan(26);
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
 insert into auth.users (id, instance_id, aud, role, email) values
@@ -267,6 +267,146 @@ select throws_ok(
 );
 
 reset role;
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 20260921100000 — a joiner choosing their own group
+--
+-- Coverage for `pickable_groups` and the `allow_group_choice`/`allow_multi_group`
+-- branch of `app.redeem_invite_link`, which existed since 20260920140000 but had
+-- no test exercising it — the assertions above only ever used links with
+-- `allow_group_choice = false`.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- A second community, so "a group from another community" has somewhere to be from.
+insert into public.communities (id, slug, name, type, is_personal, created_by) values
+  ('72000000-0000-4000-8000-00000000000b', 'invite-tests-other', 'Invite Tests Other', 'university_association', false, '71000000-0000-4000-8000-000000000001');
+insert into public.officer_terms (community_id, user_id, role, actor_name_snapshot, start_reason) values
+  ('72000000-0000-4000-8000-00000000000b', '71000000-0000-4000-8000-000000000001', 'owner', 'Invite Owner', 'created');
+insert into public.community_member_code_settings (community_id, prefix, padding, next_number) values
+  ('72000000-0000-4000-8000-00000000000b', 'OTH/', 4, 1);
+
+insert into public.member_groups (id, community_id, name, pickable_at_join, sort_order, archived_at) values
+  -- Two pickable groups in the invitation's own community: what a chooser should see.
+  ('74000000-0000-4000-8000-000000000003', '72000000-0000-4000-8000-00000000000a', '100 Level', true, 2, null),
+  ('74000000-0000-4000-8000-000000000004', '72000000-0000-4000-8000-00000000000a', '200 Level', true, 3, null),
+  -- Pickable, but archived — must not be offered or accepted.
+  ('74000000-0000-4000-8000-000000000005', '72000000-0000-4000-8000-00000000000a', 'Old Level', true, 4, now()),
+  -- Pickable, but in a different community entirely.
+  ('74000000-0000-4000-8000-000000000006', '72000000-0000-4000-8000-00000000000b', 'Other Group', true, 0, null);
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"71000000-0000-4000-8000-000000000001","role":"authenticated"}';
+
+-- A link that never offers a choice at all — freshly created here rather than
+-- reusing `tmp_link`, which by this point in the file has already been revoked.
+create temporary table tmp_no_choice_link as
+  select * from app.create_invite_link(
+    '72000000-0000-4000-8000-00000000000a', '{}', false, false, false, null, null, 'No choice'
+  );
+
+-- Single-choice link: allow_group_choice on, allow_multi_group off.
+create temporary table tmp_choice_link as
+  select * from app.create_invite_link(
+    '72000000-0000-4000-8000-00000000000a', '{}', true, false, false, null, null, 'Choose your level'
+  );
+
+-- Multi-choice link: both on.
+create temporary table tmp_multi_link as
+  select * from app.create_invite_link(
+    '72000000-0000-4000-8000-00000000000a', '{}', true, true, false, null, null, 'Choose your levels'
+  );
+
+reset role;
+grant select on tmp_no_choice_link, tmp_choice_link, tmp_multi_link to authenticated, anon;
+
+set local role anon;
+
+select is(
+  (select pickable_groups from app.get_public_invite((select token from tmp_no_choice_link))),
+  '[]'::jsonb,
+  'a link with allow_group_choice off offers no pickable groups on the join page'
+);
+
+select is(
+  (select jsonb_agg(g ->> 'name' order by g ->> 'name')
+   from app.get_public_invite((select token from tmp_choice_link)), jsonb_array_elements(pickable_groups) g),
+  '["100 Level", "200 Level"]'::jsonb,
+  'a choice link offers exactly the pickable, unarchived groups of its own community — not the archived one, not the other community''s'
+);
+
+create temporary table tmp_chooser as
+  select * from app.redeem_invite_link(
+    (select token from tmp_choice_link), 'Chidi Chooser', '+2348060000010', null,
+    array['74000000-0000-4000-8000-000000000003']::uuid[]
+  );
+
+reset role;
+grant select on tmp_chooser to authenticated, anon;
+
+select ok(
+  exists (
+    select 1 from public.member_group_memberships
+    where member_id = (select member_id from tmp_chooser)
+      and group_id = '74000000-0000-4000-8000-000000000003'
+  ),
+  'a joiner who chooses a group the link offers lands in it'
+);
+
+set local role anon;
+
+create temporary table tmp_chooser_bad as
+  select * from app.redeem_invite_link(
+    (select token from tmp_choice_link), 'Bad Chooser', '+2348060000011', null,
+    -- Archived pickable group and another community's pickable group, both invalid.
+    array['74000000-0000-4000-8000-000000000005', '74000000-0000-4000-8000-000000000006']::uuid[]
+  );
+
+reset role;
+grant select on tmp_chooser_bad to authenticated, anon;
+
+select is(
+  (select count(*)::integer from public.member_group_memberships
+   where member_id = (select member_id from tmp_chooser_bad)),
+  0,
+  'an archived group and a group from another community are both silently ignored, not honoured (SEC-18)'
+);
+
+set local role anon;
+
+create temporary table tmp_chooser_single as
+  select * from app.redeem_invite_link(
+    (select token from tmp_choice_link), 'Single Chooser', '+2348060000012', null,
+    array['74000000-0000-4000-8000-000000000003', '74000000-0000-4000-8000-000000000004']::uuid[]
+  );
+
+reset role;
+grant select on tmp_chooser_single to authenticated, anon;
+
+select is(
+  (select count(*)::integer from public.member_group_memberships
+   where member_id = (select member_id from tmp_chooser_single)),
+  1,
+  'a single-choice link (allow_multi_group off) honours only the first group offered, even if the browser sends two'
+);
+
+set local role anon;
+
+create temporary table tmp_chooser_multi as
+  select * from app.redeem_invite_link(
+    (select token from tmp_multi_link), 'Multi Chooser', '+2348060000013', null,
+    array['74000000-0000-4000-8000-000000000003', '74000000-0000-4000-8000-000000000004']::uuid[]
+  );
+
+reset role;
+grant select on tmp_chooser_multi to authenticated, anon;
+
+select is(
+  (select count(*)::integer from public.member_group_memberships
+   where member_id = (select member_id from tmp_chooser_multi)),
+  2,
+  'a multi-choice link (allow_multi_group on) honours every valid group offered'
+);
 
 select * from finish();
 rollback;

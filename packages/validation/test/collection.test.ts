@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 
 import {
   assignObligationsSchema,
+  collectionItemSchema,
   createCollectionSchema,
   exemptObligationSchema,
   nairaAmountSchema,
+  setCollectionEventSchema,
   setCollectionFieldsSchema,
+  setCollectionStorySchema,
   setCollectionTiersSchema,
   transitionCollectionStatusSchema,
   waiveObligationSchema,
@@ -204,6 +207,73 @@ describe("lifecycle and obligations", () => {
     );
     assert.equal(
       waiveObligationSchema.safeParse({ obligationId, waivedAmount: "2000", reason: "Hardship" }).success,
+      true,
+    );
+  });
+});
+
+describe("collectionItemSchema", () => {
+  const base = { name: "Blue", price: "35000" };
+
+  it("accepts an item with no image", () => {
+    assert.equal(collectionItemSchema.safeParse(base).success, true);
+  });
+
+  it("accepts an item whose image is a URL — set only by the upload action, never typed", () => {
+    assert.equal(
+      collectionItemSchema.safeParse({ ...base, imageUrl: "https://x.test/storage/v1/object/public/collection-covers/a/b/items/1.png" })
+        .success,
+      true,
+    );
+  });
+
+  it("refuses a value that is not a URL at all", () => {
+    assert.equal(collectionItemSchema.safeParse({ ...base, imageUrl: "not a url" }).success, false);
+  });
+});
+
+describe("setCollectionEventSchema", () => {
+  const COLLECTION_ID_2 = "01930000-0000-7000-8000-00000000000d";
+
+  it("defaults collectAttendeeDetails to false when not sent", () => {
+    const result = setCollectionEventSchema.safeParse({ collectionId: COLLECTION_ID_2 });
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.collectAttendeeDetails, false);
+  });
+
+  it("accepts an explicit true", () => {
+    const result = setCollectionEventSchema.safeParse({
+      collectionId: COLLECTION_ID_2,
+      collectAttendeeDetails: true,
+    });
+    assert.equal(result.success, true);
+    if (result.success) assert.equal(result.data.collectAttendeeDetails, true);
+  });
+});
+
+describe("setCollectionStorySchema", () => {
+  const COLLECTION_ID_3 = "01930000-0000-7000-8000-00000000000e";
+
+  it("accepts all three parts, or none of them", () => {
+    assert.equal(
+      setCollectionStorySchema.safeParse({
+        collectionId: COLLECTION_ID_3,
+        storyWhat: "A library for 200 students",
+        storyWhy: "They share 3 books today",
+        storyImpact: "Buys 500 books",
+      }).success,
+      true,
+    );
+    assert.equal(setCollectionStorySchema.safeParse({ collectionId: COLLECTION_ID_3 }).success, true);
+  });
+
+  it("refuses a story section past 2000 characters", () => {
+    assert.equal(
+      setCollectionStorySchema.safeParse({ collectionId: COLLECTION_ID_3, storyWhat: "x".repeat(2001) }).success,
+      false,
+    );
+    assert.equal(
+      setCollectionStorySchema.safeParse({ collectionId: COLLECTION_ID_3, storyWhat: "x".repeat(2000) }).success,
       true,
     );
   });

@@ -5,6 +5,7 @@ import {
   type ContributionConfig,
   ContributionError,
   resolveContributionAmount,
+  type TierSelectionLine,
 } from "../src/contribution.ts";
 import { kobo } from "../src/money.ts";
 
@@ -45,8 +46,8 @@ describe("tiered collections", () => {
   const tiered = config({
     amountModel: "tiers",
     tiers: [
-      { id: TIER_STANDARD, name: "Standard", priceKobo: kobo(500_000) },
-      { id: TIER_VIP, name: "Standard", priceKobo: kobo(2_000_000) },
+      { id: TIER_STANDARD, name: "Standard", priceKobo: kobo(500_000), quantityLimit: null, perOrderLimit: null },
+      { id: TIER_VIP, name: "Standard", priceKobo: kobo(2_000_000), quantityLimit: null, perOrderLimit: null },
     ],
   });
 
@@ -75,6 +76,91 @@ describe("tiered collections", () => {
   it("refuses an option that does not belong to this collection", () => {
     assert.throws(
       () => resolveContributionAmount(tiered, { tierId: "01930000-0000-7000-8000-00000000ffff" }),
+      (error: unknown) => error instanceof ContributionError && error.code === "UNKNOWN_TIER",
+    );
+  });
+});
+
+describe("a ticketed event's tier basket — several options, each with a quantity", () => {
+  const REGULAR = "01930000-0000-7000-8000-000000000031";
+  const VIP = "01930000-0000-7000-8000-000000000032";
+
+  const tickets = config({
+    amountModel: "tiers",
+    tiers: [
+      { id: REGULAR, name: "Regular", priceKobo: kobo(1_000_000), quantityLimit: null, perOrderLimit: null },
+      { id: VIP, name: "VIP", priceKobo: kobo(2_500_000), quantityLimit: 5, perOrderLimit: 3 },
+    ],
+  });
+
+  function order(lines: TierSelectionLine[]) {
+    return resolveContributionAmount(tickets, { tierSelections: lines });
+  }
+
+  it("sums VIP × 2 and Regular × 1 into one total, never from the browser", () => {
+    const resolved = order([
+      { tierId: VIP, quantity: 2 },
+      { tierId: REGULAR, quantity: 1 },
+    ]);
+
+    // 2 × ₦25,000 + 1 × ₦10,000
+    assert.equal(resolved.amountKobo, 6_000_000n);
+    assert.equal(resolved.tierId, null); // more than one line — no single answer
+    assert.equal(resolved.lines?.length, 2);
+    assert.equal(resolved.lines?.find((line) => line.tierId === VIP)?.amountKobo, 5_000_000n);
+    assert.equal(resolved.lines?.find((line) => line.tierId === REGULAR)?.amountKobo, 1_000_000n);
+  });
+
+  it("resolves a single-line basket the same as the plain single-choice shape", () => {
+    const resolved = order([{ tierId: REGULAR, quantity: 1 }]);
+    assert.equal(resolved.amountKobo, 1_000_000n);
+    assert.equal(resolved.tierId, REGULAR);
+  });
+
+  it("enforces a per-order limit per line", () => {
+    assert.throws(
+      () => order([{ tierId: VIP, quantity: 4 }]),
+      (error: unknown) => error instanceof ContributionError && error.code === "TIER_QUANTITY_ABOVE_LIMIT",
+    );
+  });
+
+  it("enforces the tier's own remaining quantity", () => {
+    const scarce = config({
+      amountModel: "tiers",
+      tiers: [{ id: VIP, name: "VIP", priceKobo: kobo(2_500_000), quantityLimit: 2, perOrderLimit: null }],
+    });
+    assert.throws(
+      () => resolveContributionAmount(scarce, { tierSelections: [{ tierId: VIP, quantity: 3 }] }),
+      (error: unknown) => error instanceof ContributionError && error.code === "TIER_QUANTITY_ABOVE_LIMIT",
+    );
+  });
+
+  it("refuses a non-whole or non-positive quantity", () => {
+    for (const quantity of [0, -1, 1.5, Number.NaN]) {
+      assert.throws(
+        () => order([{ tierId: REGULAR, quantity }]),
+        (error: unknown) => error instanceof ContributionError && error.code === "INVALID_TIER_QUANTITY",
+      );
+    }
+  });
+
+  it("refuses an empty basket", () => {
+    assert.throws(
+      () => order([]),
+      (error: unknown) => error instanceof ContributionError && error.code === "TIER_REQUIRED",
+    );
+  });
+
+  it("refuses a tier chosen twice rather than silently combining it", () => {
+    assert.throws(
+      () => order([{ tierId: REGULAR, quantity: 1 }, { tierId: REGULAR, quantity: 2 }]),
+      (error: unknown) => error instanceof ContributionError && error.code === "UNKNOWN_TIER",
+    );
+  });
+
+  it("refuses an option that does not belong to this collection", () => {
+    assert.throws(
+      () => order([{ tierId: "01930000-0000-7000-8000-00000000ffff", quantity: 1 }]),
       (error: unknown) => error instanceof ContributionError && error.code === "UNKNOWN_TIER",
     );
   });

@@ -239,6 +239,12 @@ export interface Collection {
   event_starts_at: string | null;
   event_ends_at: string | null;
   venue: string | null;
+  /** §18: whether the public form asks for one name per ticket unit ordered, not only the buyer's. */
+  collect_attendee_details: boolean;
+  /** §5/§19. Null on every collection whose category is not `fundraiser`. */
+  story_what: string | null;
+  story_why: string | null;
+  story_impact: string | null;
   starts_at: string | null;
   deadline_at: string | null;
   status: CollectionStatus;

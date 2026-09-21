@@ -365,6 +365,8 @@ export const collectionItemSchema = z.object({
   /** How many exist to sell. Absent means unlimited, which is not the same as zero. */
   quantityAvailable: z.number().int().min(0).max(1_000_000).optional(),
   maxPerOrder: z.number().int().positive().max(1000).optional(),
+  /** Set only by the upload action, which returns a URL already scoped to this collection — never typed in by hand. */
+  imageUrl: z.string().trim().url().max(500).optional(),
   sortOrder: z.number().int().min(0).max(1000).optional(),
 });
 
@@ -398,6 +400,8 @@ export const setCollectionEventSchema = z
     eventStartsAt: optionalDateTimeSchema,
     eventEndsAt: optionalDateTimeSchema,
     venue: z.string().trim().max(200, "A venue is at most 200 characters").optional(),
+    /** §18: ask the public form for one name per ticket unit ordered, not only the buyer's. */
+    collectAttendeeDetails: z.boolean().default(false),
   })
   .superRefine((value, ctx) => {
     if (value.eventEndsAt && !value.eventStartsAt) {
@@ -441,3 +445,16 @@ export const setCollectionRecurrenceSchema = z.object({
 });
 
 export type SetCollectionRecurrenceInput = z.infer<typeof setCollectionRecurrenceSchema>;
+
+// ── A fundraiser's story (§5, §19) ─────────────────────────────────────────
+
+const storyPartSchema = z.string().trim().max(2000, "Keep each part to 2000 characters or fewer").optional();
+
+export const setCollectionStorySchema = z.object({
+  collectionId: z.string().uuid(),
+  storyWhat: storyPartSchema,
+  storyWhy: storyPartSchema,
+  storyImpact: storyPartSchema,
+});
+
+export type SetCollectionStoryInput = z.infer<typeof setCollectionStorySchema>;

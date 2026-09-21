@@ -102,6 +102,31 @@ export default async function PublicCollectionPage({
         </div>
       </header>
 
+      {/* §5/§19/§25: a fundraiser reads cause/story first, ahead of the event
+          block (which is empty here — fundraisers have no event) and the
+          generic description, which fundraisers do not set (StoryEditor
+          replaces it in the creation flow). */}
+      {collection.category === "fundraiser" && (collection.story_what || collection.story_why || collection.story_impact) && (
+        <div className="flex flex-col gap-4">
+          {collection.story_what && (
+            <p className="whitespace-pre-line text-sm leading-relaxed text-[var(--color-text)]">{collection.story_what}</p>
+          )}
+          {collection.story_why && (
+            <p className="whitespace-pre-line text-sm leading-relaxed text-[var(--color-text-muted)]">
+              {collection.story_why}
+            </p>
+          )}
+          {collection.story_impact && (
+            <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+              <p className="text-xs font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+                What your gift funds
+              </p>
+              <p className="whitespace-pre-line text-sm text-[var(--color-text)]">{collection.story_impact}</p>
+            </div>
+          )}
+        </div>
+      )}
+
       {(eventStart || collection.venue) && (
         <div className="flex flex-col gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm">
           {eventStart && (
@@ -144,6 +169,8 @@ export default async function PublicCollectionPage({
           collectionSlug={collectionSlug}
           audienceMode={collection.audience_mode}
           amountModel={collection.amount_model}
+          allowMultipleTiers={collection.category === "event"}
+          collectAttendeeDetails={collection.collect_attendee_details}
           fixedAmount={collection.fixed_amount_kobo ? naira(collection.fixed_amount_kobo) : null}
           minAmount={collection.min_amount_kobo ? naira(collection.min_amount_kobo) : null}
           maxAmount={collection.max_amount_kobo ? naira(collection.max_amount_kobo) : null}
@@ -153,6 +180,8 @@ export default async function PublicCollectionPage({
             name: tier.name,
             description: tier.description,
             price: naira(tier.price_kobo),
+            quantityLimit: tier.quantity_limit,
+            perOrderLimit: tier.per_order_limit,
           }))}
           items={items.map((item) => ({
             id: item.item_id,
@@ -161,6 +190,7 @@ export default async function PublicCollectionPage({
             price: naira(item.price_kobo),
             quantityAvailable: item.quantity_available,
             maxPerOrder: item.max_per_order,
+            imageUrl: item.image_url,
           }))}
           fields={fields.map((field) => ({
             key: field.key,

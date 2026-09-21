@@ -25,11 +25,26 @@ import { type Kobo, ZERO } from "./money.ts";
 
 export type AmountModel = "fixed" | "open_amount" | "tiers" | "per_member" | "items";
 
-/** A tier as the public page sees it. `id` is the identity; `name` is a label (ADR 0010). */
+/**
+ * A tier as the public page sees it. `id` is the identity; `name` is a label
+ * (ADR 0010).
+ *
+ * `quantityLimit` and `perOrderLimit` exist on `collection_tiers` since the
+ * very first collections migration (COL-13, CODE-02) — provisioned for
+ * ticketing before ticketing had a UI. They are read here for the same
+ * reason `ContributionItem` reads its own stock and per-order limit: a
+ * quantity multiplies a price, which puts it on the money path, so it is
+ * bounded against the collection's own row rather than trusted from a
+ * contributor's browser.
+ */
 export interface ContributionTier {
   readonly id: string;
   readonly name: string;
   readonly priceKobo: Kobo;
+  /** How many of this option remain. `null` is unlimited. */
+  readonly quantityLimit: number | null;
+  /** Most of this option one order may take. `null` is unbounded. */
+  readonly perOrderLimit: number | null;
 }
 
 /**
@@ -80,26 +95,52 @@ export interface ContributionObligation {
   readonly status: "unpaid" | "in_installments" | "overdue" | "paid" | "exempt" | "cancelled";
 }
 
+/** One line of a multi-option order: this tier, this many. */
+export interface TierSelectionLine {
+  readonly tierId: string;
+  readonly quantity: number;
+}
+
 /** What the contributor's browser sent. Every field is untrusted. */
 export interface ContributionSelection {
+  /** A single option, quantity always one — the plain "choose one" shape most tiered collections still use. */
   readonly tierId?: string | undefined;
+  /**
+   * Several options, each with its own quantity — "VIP × 2, Regular × 1" — the
+   * shape a ticketed event needs. Takes priority over `tierId` when both are
+   * present, which a well-behaved caller never does; it exists so the two UIs
+   * can share one resolver rather than one each.
+   */
+  readonly tierSelections?: readonly TierSelectionLine[] | undefined;
   readonly amountKobo?: Kobo | undefined;
   readonly itemId?: string | undefined;
   readonly quantity?: number | undefined;
 }
 
+/** One resolved line of a multi-option order, for a receipt or a confirmation screen. */
+export interface ResolvedTierLine {
+  readonly tierId: string;
+  readonly name: string;
+  readonly quantity: number;
+  readonly amountKobo: Kobo;
+}
+
 export interface ResolvedContribution {
   readonly amountKobo: Kobo;
-  /** The tier this contribution is for, resolved by ID. Null when the collection has no tiers. */
+  /** The tier this contribution is for, resolved by ID. Null when the collection has no tiers, or when it resolved as several lines instead (see `lines`). */
   readonly tierId: string | null;
   /** The item this order is for, resolved by ID, and how many of it. Null on every other kind of collection. */
   readonly itemId?: string | null;
   readonly quantity?: number | null;
+  /** Present only when `tierSelections` resolved more than one line — the per-tier breakdown `amountKobo` is the sum of. */
+  readonly lines?: readonly ResolvedTierLine[] | undefined;
 }
 
 export type ContributionErrorCode =
   | "TIER_REQUIRED"
   | "UNKNOWN_TIER"
+  | "INVALID_TIER_QUANTITY"
+  | "TIER_QUANTITY_ABOVE_LIMIT"
   | "AMOUNT_REQUIRED"
   | "AMOUNT_BELOW_MINIMUM"
   | "AMOUNT_ABOVE_MAXIMUM"
@@ -148,6 +189,66 @@ function amountOwed(obligation: ContributionObligation): Kobo {
   return owed;
 }
 
+/**
+ * Several tier lines, each with its own quantity, summed into one order —
+ * "VIP × 2, Regular × 1, total ₦60,000". Every check `resolveContributionAmount`
+ * already applies to a single item's quantity (whole number, above zero, at
+ * most `perOrderLimit`, at most `quantityLimit` remaining) applies here per
+ * line, because a quantity multiplies a price whichever kind of option it is
+ * attached to.
+ */
+function resolveTierBasket(
+  tiers: readonly ContributionTier[],
+  lines: readonly TierSelectionLine[],
+): ResolvedContribution {
+  const seen = new Set<string>();
+  const resolved: ResolvedTierLine[] = [];
+  let total = ZERO;
+
+  for (const line of lines) {
+    const tier = tiers.find((candidate) => candidate.id === line.tierId);
+    if (!tier) {
+      throw new ContributionError("UNKNOWN_TIER", "One of the options chosen is no longer available.");
+    }
+    if (seen.has(tier.id)) {
+      // A repeat is the same mistake at the receipt layer that a duplicate
+      // display name is at the tier layer: two lines for one option cannot be
+      // told apart, so the second is refused rather than silently added.
+      throw new ContributionError("UNKNOWN_TIER", `"${tier.name}" was chosen more than once. Combine it into one line.`);
+    }
+    seen.add(tier.id);
+
+    if (tier.priceKobo <= ZERO) {
+      throw new ContributionError("MISCONFIGURED", `"${tier.name}" has no price set.`);
+    }
+    if (!Number.isSafeInteger(line.quantity) || line.quantity < 1) {
+      throw new ContributionError("INVALID_TIER_QUANTITY", `Enter how many of "${tier.name}" you want, as a whole number.`);
+    }
+    if (tier.perOrderLimit !== null && line.quantity > tier.perOrderLimit) {
+      throw new ContributionError(
+        "TIER_QUANTITY_ABOVE_LIMIT",
+        `You can take at most ${tier.perOrderLimit} of "${tier.name}" in one order.`,
+      );
+    }
+    if (tier.quantityLimit !== null && line.quantity > tier.quantityLimit) {
+      throw new ContributionError(
+        "TIER_QUANTITY_ABOVE_LIMIT",
+        tier.quantityLimit === 0 ? `"${tier.name}" is sold out.` : `Only ${tier.quantityLimit} of "${tier.name}" are left.`,
+      );
+    }
+
+    const amountKobo = (tier.priceKobo * BigInt(line.quantity)) as Kobo;
+    total = (total + amountKobo) as Kobo;
+    resolved.push({ tierId: tier.id, name: tier.name, quantity: line.quantity, amountKobo });
+  }
+
+  if (resolved.length === 0) {
+    throw new ContributionError("TIER_REQUIRED", "Choose at least one option before continuing.");
+  }
+
+  return { amountKobo: total, tierId: resolved.length === 1 ? resolved[0]!.tierId : null, lines: resolved };
+}
+
 export function resolveContributionAmount(
   config: ContributionConfig,
   selection: ContributionSelection,
@@ -171,6 +272,13 @@ export function resolveContributionAmount(
     }
 
     case "tiers": {
+      // The basket shape — several options, each with a quantity — is what a
+      // ticketed event needs ("VIP × 2, Regular × 1"). It takes priority when
+      // present; a plain "choose one" collection never sends it.
+      if (selection.tierSelections && selection.tierSelections.length > 0) {
+        return resolveTierBasket(config.tiers, selection.tierSelections);
+      }
+
       if (!selection.tierId) {
         throw new ContributionError("TIER_REQUIRED", "Choose an option before continuing.");
       }

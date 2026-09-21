@@ -48,6 +48,8 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
         communityName={invite.community_name}
         fields={invite.fields}
         approveJoiners={invite.approve_joiners}
+        pickableGroups={invite.pickable_groups}
+        allowMultiGroup={invite.allow_multi_group}
       />
 
       <p className="text-xs text-[var(--color-text-muted)]">

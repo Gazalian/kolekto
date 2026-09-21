@@ -26,12 +26,15 @@ export function CoverUploader({
   collectionId,
   coverImageUrl,
   disabled = false,
+  onChanged,
 }: {
   slug: string;
   collectionSlug: string;
   collectionId: string;
   coverImageUrl: string | null;
   disabled?: boolean;
+  /** Optional: told the new URL (or null, on remove) whenever it changes — for a caller with no server round trip of its own to learn from, like the creation wizard. */
+  onChanged?: (url: string | null) => void;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,6 +78,7 @@ export function CoverUploader({
       }
 
       setPreview(result.url);
+      onChanged?.(result.url);
       router.refresh();
     });
   }
@@ -89,6 +93,7 @@ export function CoverUploader({
         return;
       }
       setPreview(null);
+      onChanged?.(null);
       router.refresh();
     });
   }

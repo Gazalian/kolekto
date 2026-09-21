@@ -17,7 +17,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(36);
+select plan(44);
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
 insert into auth.users (id, instance_id, aud, role, email) values
@@ -150,6 +150,28 @@ select throws_ok(
   'an event cannot end before it starts'
 );
 
+-- §18: an organiser may ask the public form to collect one name per ticket
+-- rather than only the buyer's — off by default, on when the event sets it.
+select is(
+  (select collect_attendee_details from public.collections where id = (select id from tmp_dinner)),
+  false,
+  'a ticketed collection does not collect attendee details unless asked to'
+);
+
+select lives_ok(
+  format(
+    $$ select app.set_collection_event(%L, '2026-12-20 18:00+01'::timestamptz, '2026-12-20 23:00+01'::timestamptz, 'Ostrich Hall, Ilorin', true) $$,
+    (select id from tmp_dinner)
+  ),
+  'the event can ask for attendee details'
+);
+
+select is(
+  (select collect_attendee_details from public.collections where id = (select id from tmp_dinner)),
+  true,
+  'the setting is stored'
+);
+
 -- Tickets are tiers: stable ids, availability, and a price that locks on publish.
 select is(
   app.set_collection_tiers(
@@ -173,6 +195,21 @@ select lives_ok(
     (select id from tmp_dinner)
   ),
   'the venue and date can still change after publication — ticket-holders need to be told'
+);
+
+-- Regression: app.get_public_collection was redefined twice in this session
+-- (attendee details, then the fundraiser story) from a copy of the function
+-- that predated audience_mode being added to it, silently dropping the
+-- column from its return shape both times. Nothing caught it until the
+-- public contribution page started treating every open collection as if it
+-- were `audience_mode = null` — which is not `'public'` — and sent every
+-- contributor to "find yourself on the list" ahead of a form that was never
+-- gated at all. Fixed in 20260921140000; this is the test that should have
+-- caught it, and now would.
+select is(
+  (select audience_mode from app.get_public_collection('type-tests', (select slug from public.collections where id = (select id from tmp_dinner)))),
+  'public',
+  'the public page can tell an open collection is not asking a named list'
 );
 
 select throws_ok(
@@ -213,6 +250,37 @@ select throws_ok(
   format($$ select app.set_collection_suggested_amounts(%L, array[500000]::bigint[]) $$, (select id from tmp_asoebi)),
   'P0001', null,
   'suggestions make no sense where the contributor does not choose the amount'
+);
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- A fundraiser's story (§5/§19)
+-- ─────────────────────────────────────────────────────────────────────────────
+
+select lives_ok(
+  format(
+    $$ select app.set_collection_story(%L, 'A library for 200 students', 'Three books shared among 200 children', 'Buys 500 books and a shelf') $$,
+    (select id from tmp_fund)
+  ),
+  'a fundraiser can record its story'
+);
+
+select is(
+  (select story_why from public.collections where id = (select id from tmp_fund)),
+  'Three books shared among 200 children',
+  'the story is stored'
+);
+
+select throws_ok(
+  format($$ select app.set_collection_story(%L, 'Not a fundraiser') $$, (select id from tmp_asoebi)),
+  'P0001', null,
+  'a story makes no sense where the collection is not a fundraiser'
+);
+
+select throws_ok(
+  format($$ select app.set_collection_story(%L, %L) $$, (select id from tmp_fund), repeat('x', 2001)),
+  'P0001', null,
+  'a story section is refused past 2000 characters'
 );
 
 reset role;

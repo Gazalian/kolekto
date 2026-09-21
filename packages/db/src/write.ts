@@ -364,6 +364,8 @@ export interface PublicInvite {
   allow_group_choice: boolean;
   allow_multi_group: boolean;
   preset_group_names: string[];
+  /** The groups a joiner may additionally choose from — only populated when `allow_group_choice` is true. */
+  pickable_groups: { id: string; name: string }[];
   fields: {
     key: string;
     label: string;
@@ -677,11 +679,14 @@ export async function setCollectionEvent(
     eventStartsAt?: string | undefined;
     eventEndsAt?: string | undefined;
     venue?: string | undefined;
+    /** §18: ask the public form for one name per ticket unit ordered, not only the buyer's. */
+    collectAttendeeDetails?: boolean | undefined;
   },
 ): Promise<void> {
   await call(caller, (tx) =>
     tx`select app.set_collection_event(
-      ${input.collectionId}, ${input.eventStartsAt ?? null}, ${input.eventEndsAt ?? null}, ${input.venue ?? null}
+      ${input.collectionId}, ${input.eventStartsAt ?? null}, ${input.eventEndsAt ?? null}, ${input.venue ?? null},
+      ${input.collectAttendeeDetails ?? false}
     )`,
   );
 }
@@ -712,6 +717,23 @@ export async function setCollectionRecurrence(
     tx`select app.set_collection_recurrence(
       ${input.collectionId}, ${input.frequency}, ${input.intervalCount ?? 1},
       ${input.startsOn ?? null}, ${input.dueAfterDays ?? 0}
+    )`,
+  );
+}
+
+/** §5/§19. Refused by the database on any collection whose category is not `fundraiser`. */
+export async function setCollectionStory(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    storyWhat?: string | undefined;
+    storyWhy?: string | undefined;
+    storyImpact?: string | undefined;
+  },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.set_collection_story(
+      ${input.collectionId}, ${input.storyWhat ?? null}, ${input.storyWhy ?? null}, ${input.storyImpact ?? null}
     )`,
   );
 }

@@ -51,6 +51,10 @@ export interface ContributionResult {
   summary?: {
     amount: string;
     tierName: string | null;
+    /** More than one option, each with its own quantity — "VIP × 2, Regular × 1" — when the order resolved to several lines rather than one. */
+    tierLines: { name: string; quantity: number; amount: string }[] | null;
+    /** One name per ticket unit, when the event asked for them (§18). Never persisted — shown on this confirmation and nowhere else. */
+    attendees: string[] | null;
     /** What was ordered, and how many, when the collection sells items. */
     itemName: string | null;
     quantity: number | null;
@@ -236,6 +240,10 @@ export async function submitContributionAction(
     email: string;
     phone: string;
     tierId: string;
+    /** Several options with quantities — a ticketed event's "VIP × 2, Regular × 1". Takes priority over `tierId` when present. */
+    tierSelections?: { tierId: string; quantity: string }[];
+    /** One name per ticket unit, only asked for when the event's `collect_attendee_details` is on. */
+    attendeeNames?: string[];
     amount: string;
     itemId?: string;
     quantity?: string;
@@ -294,6 +302,8 @@ export async function submitContributionAction(
           id: tier.tier_id,
           name: tier.name,
           priceKobo: kobo(tier.price_kobo),
+          quantityLimit: tier.quantity_limit,
+          perOrderLimit: tier.per_order_limit,
         }))
       : [];
 
@@ -326,10 +336,19 @@ export async function submitContributionAction(
       },
       {
         ...(input.tierId ? { tierId: input.tierId } : {}),
+        ...(input.tierSelections && input.tierSelections.length > 0
+          ? {
+              tierSelections: input.tierSelections.map((line) => ({
+                tierId: line.tierId,
+                // Parsed rather than trusted: "3.5" and "abc" both have to
+                // reach the resolver as something it will refuse, not as a
+                // silent 1.
+                quantity: Number(line.quantity),
+              })),
+            }
+          : {}),
         ...(input.amount ? { amountKobo: fromNaira(input.amount) } : {}),
         ...(input.itemId ? { itemId: input.itemId } : {}),
-        // Parsed rather than trusted: "3.5" and "abc" both have to reach the
-        // resolver as something it will refuse, not as a silent 1.
         ...(input.quantity ? { quantity: Number(input.quantity) } : {}),
       },
     );
@@ -338,11 +357,36 @@ export async function submitContributionAction(
     return { error: "That amount could not be read. Enter it in naira, for example 5000." };
   }
 
+  // §18: one name per ticket unit, only when this event asked for it. Checked
+  // against how many tickets the server actually resolved — not what the
+  // browser claims — so a basket trimmed by a stock limit cannot leave a
+  // mismatched attendee list unnoticed.
+  let attendees: string[] | null = null;
+  if (collection.collect_attendee_details && resolved.lines) {
+    const ticketCount = resolved.lines.reduce((sum, line) => sum + line.quantity, 0);
+    const names = (input.attendeeNames ?? []).map((name) => name.trim()).filter((name) => name !== "");
+    if (names.length !== ticketCount) {
+      return {
+        error: `This event asks for a name per ticket — ${ticketCount} needed, ${names.length} given.`,
+      };
+    }
+    attendees = names;
+  }
+
   return {
     ok: true,
     summary: {
       amount: formatNaira(resolved.amountKobo, { decimals: false }),
-      tierName: tiers.find((tier) => tier.id === resolved.tierId)?.name ?? null,
+      tierName: resolved.lines ? null : tiers.find((tier) => tier.id === resolved.tierId)?.name ?? null,
+      attendees,
+      tierLines:
+        resolved.lines && resolved.lines.length > 1
+          ? resolved.lines.map((line) => ({
+              name: line.name,
+              quantity: line.quantity,
+              amount: formatNaira(line.amountKobo, { decimals: false }),
+            }))
+          : null,
       itemName: items.find((item) => item.id === resolved.itemId)?.name ?? null,
       quantity: resolved.quantity ?? null,
       contributorName: contact.data.fullName,

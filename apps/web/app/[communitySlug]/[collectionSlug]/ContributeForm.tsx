@@ -22,6 +22,10 @@ interface PublicTier {
   name: string;
   description: string | null;
   price: string;
+  /** How many remain. `null` is unlimited. Shown only when the collection allows more than one option per order. */
+  quantityLimit: number | null;
+  /** Most of this option one order may take. `null` is unbounded. */
+  perOrderLimit: number | null;
 }
 
 interface PublicItem {
@@ -32,6 +36,7 @@ interface PublicItem {
   /** Shown so a contributor knows what is left before choosing. The server decides what is actually allowed. */
   quantityAvailable: number | null;
   maxPerOrder: number | null;
+  imageUrl: string | null;
 }
 
 interface PublicField {
@@ -47,6 +52,8 @@ export function ContributeForm({
   collectionSlug,
   audienceMode,
   amountModel,
+  allowMultipleTiers = false,
+  collectAttendeeDetails = false,
   fixedAmount,
   minAmount,
   maxAmount,
@@ -62,6 +69,10 @@ export function ContributeForm({
   /** `public` means anyone with the link. Anything else means a named list, and the contributor identifies first. */
   audienceMode: "all_members" | "groups" | "selected_members" | "public";
   amountModel: "fixed" | "open_amount" | "tiers" | "per_member" | "items";
+  /** A ticketed event: several options may be chosen at once, each with its own quantity ("VIP × 2, Regular × 1") rather than picking exactly one (§17/§18). */
+  allowMultipleTiers?: boolean;
+  /** §18: ask for one name per ticket unit ordered, not only the buyer's. Only meaningful alongside `allowMultipleTiers`. */
+  collectAttendeeDetails?: boolean;
   fixedAmount: string | null;
   minAmount: string | null;
   maxAmount: string | null;
@@ -76,6 +87,13 @@ export function ContributeForm({
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [tierId, setTierId] = useState("");
+  // Ticketing only: tierId (above) selects a plain "choose one" collection's
+  // single option; this holds a basket of several, each with its own
+  // quantity, keyed by tier id — only every populated when `allowMultipleTiers`.
+  const [tierQuantities, setTierQuantities] = useState<Record<string, string>>({});
+  // One name per ticket unit, when the event asks for it — index-aligned to
+  // "however many tickets are in the basket right now", not to any one tier.
+  const [attendeeNames, setAttendeeNames] = useState<string[]>([]);
   const [itemId, setItemId] = useState("");
   const [quantity, setQuantity] = useState("1");
   const [amount, setAmount] = useState("");
@@ -86,6 +104,13 @@ export function ContributeForm({
   const [isPending, startTransition] = useTransition();
 
   const isManaged = audienceMode !== "public";
+
+  // How many ticket units are in the basket right now — the number of
+  // attendee-name fields to show, when the event asks for them.
+  const ticketQuantityTotal = Object.values(tierQuantities).reduce((sum, qty) => {
+    const parsed = Number(qty);
+    return sum + (Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+  }, 0);
 
   // A managed collection asks named people, so it asks who is here first.
   // Nothing about amounts, questions or contact details appears until the
@@ -139,6 +164,19 @@ export function ContributeForm({
               <dd className="font-medium text-[var(--color-text)]">{done.tierName}</dd>
             </div>
           )}
+          {done.tierLines && (
+            <div className="flex flex-col gap-1 py-2 text-sm">
+              <dt className="text-[var(--color-text-muted)]">You chose</dt>
+              {done.tierLines.map((line) => (
+                <dd key={line.name} className="flex justify-between gap-3 font-medium text-[var(--color-text)]">
+                  <span>
+                    {line.quantity} × {line.name}
+                  </span>
+                  <span>{line.amount}</span>
+                </dd>
+              ))}
+            </div>
+          )}
           {done.itemName && (
             <div className="flex justify-between gap-3 py-2 text-sm">
               <dt className="text-[var(--color-text-muted)]">You ordered</dt>
@@ -151,6 +189,12 @@ export function ContributeForm({
             <dt className="text-[var(--color-text-muted)]">Amount</dt>
             <dd className="font-medium text-[var(--color-text)]">{done.amount}</dd>
           </div>
+          {done.attendees && done.attendees.length > 0 && (
+            <div className="flex flex-col gap-1 py-2 text-sm">
+              <dt className="text-[var(--color-text-muted)]">Attendees</dt>
+              <dd className="font-medium text-[var(--color-text)]">{done.attendees.join(", ")}</dd>
+            </div>
+          )}
         </dl>
 
         {/* The payment boundary (ADR 0012). This is where M7 stops: the amount
@@ -184,6 +228,16 @@ export function ContributeForm({
         email,
         phone,
         tierId,
+        ...(allowMultipleTiers
+          ? {
+              tierSelections: Object.entries(tierQuantities)
+                .filter(([, qty]) => qty.trim() !== "")
+                .map(([id, qty]) => ({ tierId: id, quantity: qty })),
+            }
+          : {}),
+        ...(collectAttendeeDetails && ticketQuantityTotal > 0
+          ? { attendeeNames: attendeeNames.slice(0, ticketQuantityTotal) }
+          : {}),
         amount,
         itemId,
         quantity,
@@ -202,7 +256,7 @@ export function ContributeForm({
         submit();
       }}
     >
-      {amountModel === "tiers" && (
+      {amountModel === "tiers" && !allowMultipleTiers && (
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-2 text-sm font-semibold text-[var(--color-text)]">What are you paying for?</legend>
           {tiers.map((tier) => (
@@ -232,6 +286,101 @@ export function ContributeForm({
                 )}
               </span>
             </label>
+          ))}
+        </fieldset>
+      )}
+
+      {/* Ticketing (§17/§18): several ticket types may be chosen, each with
+          its own quantity — "VIP × 2, Regular × 1" — rather than picking
+          exactly one. The server sums and enforces every limit; this only
+          collects the choice. */}
+      {amountModel === "tiers" && allowMultipleTiers && (
+        <fieldset className="flex flex-col gap-2">
+          <legend className="mb-2 text-sm font-semibold text-[var(--color-text)]">Which tickets?</legend>
+          {tiers.map((tier) => {
+            const selected = tier.id in tierQuantities;
+            const soldOut = tier.quantityLimit === 0;
+            return (
+              <div
+                key={tier.id}
+                className={
+                  selected
+                    ? "flex flex-col gap-2 rounded-[var(--radius-md)] border-2 border-[var(--color-primary)] p-3"
+                    : soldOut
+                      ? "flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 opacity-60"
+                      : "flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
+                }
+              >
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={selected}
+                    disabled={soldOut}
+                    onChange={(event) =>
+                      setTierQuantities((current) => {
+                        const next = { ...current };
+                        if (event.target.checked) next[tier.id] = "1";
+                        else delete next[tier.id];
+                        return next;
+                      })
+                    }
+                    className="mt-1 h-4 w-4"
+                  />
+                  <span className="flex flex-1 flex-col">
+                    <span className="flex items-center justify-between gap-3">
+                      <span className="font-medium text-[var(--color-text)]">{tier.name}</span>
+                      <span className="text-sm font-medium text-[var(--color-text)]">{tier.price}</span>
+                    </span>
+                    {tier.description && (
+                      <span className="text-sm text-[var(--color-text-muted)]">{tier.description}</span>
+                    )}
+                    {tier.quantityLimit !== null && (
+                      <span className="text-xs text-[var(--color-text-muted)]">
+                        {soldOut ? "Sold out" : `${tier.quantityLimit} left`}
+                      </span>
+                    )}
+                  </span>
+                </label>
+                {selected && (
+                  <TextField
+                    label={`How many ${tier.name}?`}
+                    inputMode="numeric"
+                    value={tierQuantities[tier.id] ?? "1"}
+                    required
+                    hint={tier.perOrderLimit ? `Up to ${tier.perOrderLimit} per order.` : "A whole number."}
+                    onChange={(event) =>
+                      setTierQuantities((current) => ({ ...current, [tier.id]: event.target.value }))
+                    }
+                  />
+                )}
+              </div>
+            );
+          })}
+        </fieldset>
+      )}
+
+      {amountModel === "tiers" && allowMultipleTiers && collectAttendeeDetails && ticketQuantityTotal > 0 && (
+        <fieldset className="flex flex-col gap-3">
+          <legend className="mb-1 text-sm font-semibold text-[var(--color-text)]">
+            Who is each ticket for?
+          </legend>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            One name per ticket — {ticketQuantityTotal} in this order.
+          </p>
+          {Array.from({ length: ticketQuantityTotal }, (_, index) => (
+            <TextField
+              key={index}
+              label={`Ticket ${index + 1} — name`}
+              value={attendeeNames[index] ?? ""}
+              required
+              onChange={(event) =>
+                setAttendeeNames((current) => {
+                  const next = [...current];
+                  next[index] = event.target.value;
+                  return next;
+                })
+              }
+            />
           ))}
         </fieldset>
       )}
@@ -325,6 +474,14 @@ export function ContributeForm({
                   onChange={() => setItemId(item.id)}
                   className="mt-1 h-4 w-4"
                 />
+                {item.imageUrl && (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={item.imageUrl}
+                    alt=""
+                    className="h-14 w-14 flex-shrink-0 rounded-[var(--radius-sm)] border border-[var(--color-border)] object-cover"
+                  />
+                )}
                 <span className="flex flex-1 flex-col">
                   <span className="flex items-center justify-between gap-3">
                     <span className="font-medium text-[var(--color-text)]">{item.name}</span>

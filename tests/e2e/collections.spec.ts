@@ -70,6 +70,12 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await page.getByLabel("Amount each person pays").fill("5000");
   await page.getByRole("button", { name: "Continue" }).click();
 
+  // Cover image — leaving Contribution is when the draft is actually created,
+  // so the uploader has a real collection to attach to. Upload itself is
+  // covered by collection-types.spec.ts's dedicated flyer test.
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click();
+
   // Who pays — the dues preset picks the whole roll, which is what makes the
   // collection managed. (Until M5 this step was a "Who can pay" select; it is
   // now the audience picker, and this assertion was left behind.)
@@ -181,6 +187,8 @@ test("a tiered collection prices a contribution from the option the contributor 
   await page.getByLabel("Price").nth(1).fill("20000");
   await page.getByRole("button", { name: "Continue" }).click();
 
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — open by default
   await page.getByRole("button", { name: "Continue" }).click(); // no extra questions
   await page.getByRole("button", { name: "Save as draft" }).click();
