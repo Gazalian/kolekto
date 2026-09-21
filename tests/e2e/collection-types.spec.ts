@@ -750,12 +750,15 @@ test("a ticketed event has a door, and it opens and closes", async ({ page }) =>
 
   // The door.
   await page.getByRole("button", { name: "Check-in" }).click();
-  await expect(page.getByText("Not arrived")).toBeVisible();
+  // Scoped to the guest’s own row: the counters above it use the same
+  // words, and an assertion that cannot say which one it found is not one.
+  const guest = page.getByRole("listitem").filter({ hasText: "Bola Attendee" });
+  await expect(guest.getByText("Not arrived", { exact: true })).toBeVisible();
 
   await page.getByLabel("Find someone").fill("Bola");
-  await page.getByRole("button", { name: "Check in" }).click();
-  await expect(page.getByText("Inside")).toBeVisible({ timeout: 30_000 });
+  await guest.getByRole("button", { name: "Check in" }).click();
+  await expect(guest.getByText("Inside", { exact: true })).toBeVisible({ timeout: 30_000 });
 
-  await page.getByRole("button", { name: "Check out" }).click();
-  await expect(page.getByText("Left")).toBeVisible({ timeout: 30_000 });
+  await guest.getByRole("button", { name: "Check out" }).click();
+  await expect(guest.getByText("Left", { exact: true })).toBeVisible({ timeout: 30_000 });
 });
