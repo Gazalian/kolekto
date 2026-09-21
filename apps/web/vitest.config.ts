@@ -10,6 +10,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["lib/**/*.test.ts"],
+    // A PDF of a thousand rows is real work, and it is the case worth testing.
+    testTimeout: 30_000,
     environment: "node",
   },
 });

@@ -31,8 +31,10 @@
     "db:marker": "node scripts/db/persistence-marker.mjs"
   },
   "devDependencies": {
-    "typescript": "^5.7.0",
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.6.0",
-    "@playwright/test": "^1.63.0"
+    "dejavu-fonts-ttf": "^2.37.3",
+    "fontkit": "^2.0.4",
+    "typescript": "^5.7.0"
   }
 }
