@@ -7,6 +7,7 @@ import type {
   CollectionField,
   CollectionItem,
   CollectionRecurrence,
+  CollectionCodeSettings,
   CollectionTier,
   MemberGroup,
   Obligation,
@@ -33,12 +34,17 @@ import { ObligationsPanel } from "./ObligationsPanel.tsx";
 import { CheckInPanel, type CheckInPerson } from "./CheckInPanel.tsx";
 import { ExportPanel } from "./ExportPanel.tsx";
 import type { ExportFieldChoice } from "./export-fields.ts";
+import { CodeSettingsPanel } from "./CodeSettingsPanel.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 
 export interface ObligationRow {
   obligation: Obligation;
   memberName: string;
   memberIdentifier: string | null;
+  /** "BIO26-0042", when this collection issues references (M7.6). */
+  reference: string | null;
+  /** Which option they were put down for, on a tiered collection. */
+  tierName: string | null;
 }
 
 export interface AssignableMember {
@@ -55,6 +61,7 @@ export interface CollectionPermissions {
   canShare: boolean;
   canExport: boolean;
   canCheckIn: boolean;
+  canConfigureCodes: boolean;
 }
 
 /** The transitions an officer can reach from here, in the order a person would want them. Mirrors app.transition_collection_status, which is what actually decides. */
@@ -117,9 +124,11 @@ export function CollectionDetailClient({
   audienceGroups,
   audienceCounts,
   activity,
-  exportFields,
+  exportCustomFields,
   exportGroups,
+  codeSettings,
   checkInPeople,
+  checkInTotals,
   permissions,
 }: {
   slug: string;
@@ -135,17 +144,36 @@ export function CollectionDetailClient({
   audienceGroups: string[];
   audienceCounts: { eligible: number; with_obligation: number; awaiting: number };
   activity: AuditLog[];
-  exportFields: { fixed: ExportFieldChoice[]; custom: ExportFieldChoice[] };
+  exportCustomFields: ExportFieldChoice[];
   exportGroups: MemberGroup[];
+  codeSettings: CollectionCodeSettings | null;
   checkInPeople: CheckInPerson[];
+  checkInTotals: { expected: number; inside: number; left: number; notArrived: number };
   permissions: CollectionPermissions;
 }) {
   const isManaged = collection.participation_mode === "managed";
+  const isEvent = collection.category === "event";
+  const isTiered = collection.amount_model === "tiers";
+  const isRecurring = collection.schedule === "recurring";
+
+  /**
+   * The sections this collection actually has (M7.6 part C).
+   *
+   * A ticketed event is worked from a door, an item collection from a
+   * catalogue, a fundraiser from a story — and none of them is worked from
+   * the same table. What differs is the vocabulary as much as the set: the
+   * same roll is "Members" on a dues collection, "Attendees" at an event and
+   * "Orders" on an item collection, because that is what the people in it
+   * are. A tab that says nothing about the collection it belongs to is a tab
+   * an organiser has to open to find out whether it is for them.
+   */
+  const rollLabel = isEvent ? "Attendees" : collection.amount_model === "items" ? "Orders" : "Members";
+
   const tabs = [
     { key: "overview", label: "Overview" },
-    ...(isManaged ? [{ key: "members", label: "Members" }] : []),
-    ...(collection.category === "event" ? [{ key: "checkin", label: "Check-in" }] : []),
-    { key: "export", label: "Export" },
+    ...(isManaged ? [{ key: "members", label: rollLabel }] : []),
+    ...(isEvent ? [{ key: "checkin", label: "Check-in" }] : []),
+    { key: "export", label: "Exports" },
     { key: "activity", label: "Activity" },
     { key: "settings", label: "Settings" },
   ] as const;
@@ -394,6 +422,7 @@ export function CollectionDetailClient({
           // The period being charged for: the most recent one still open. The
           // rows arrive newest first, so the first unclosed one is that period.
           openCycleKey={cycles.find((cycle) => cycle.closed_at === null)?.cycle_key ?? null}
+          tiers={tiers}
           canAssign={permissions.canAssign}
           canExempt={permissions.canExempt}
         />
@@ -404,6 +433,7 @@ export function CollectionDetailClient({
           slug={slug}
           collectionSlug={collection.slug}
           people={checkInPeople}
+          totals={checkInTotals}
           canCheckIn={permissions.canCheckIn}
         />
       )}
@@ -412,9 +442,13 @@ export function CollectionDetailClient({
         <ExportPanel
           slug={slug}
           collectionSlug={collection.slug}
-          fixedFields={exportFields.fixed}
-          customFields={exportFields.custom}
+          customFields={exportCustomFields}
           groups={exportGroups}
+          tiers={tiers}
+          cycles={cycles}
+          isEvent={isEvent}
+          isTiered={isTiered}
+          isRecurring={isRecurring}
           canExport={permissions.canExport}
         />
       )}
@@ -444,7 +478,20 @@ export function CollectionDetailClient({
       )}
 
       {tab === "settings" && (
-        <SettingsPanel
+        <div className="flex flex-col gap-4">
+          {isManaged && (
+            <CodeSettingsPanel
+              slug={slug}
+              collection={collection}
+              settings={codeSettings}
+              tiers={tiers}
+              issuedCount={obligations.filter((row) => row.reference !== null).length}
+              rollCount={obligations.filter((row) => row.obligation.status !== "cancelled").length}
+              canConfigure={permissions.canConfigureCodes}
+              canIssue={permissions.canAssign}
+            />
+          )}
+          <SettingsPanel
           slug={slug}
           collection={collection}
           tiers={tiers}
@@ -454,6 +501,7 @@ export function CollectionDetailClient({
           cycles={cycles}
           canEdit={permissions.canEdit}
         />
+        </div>
       )}
 
       {pendingTarget && (

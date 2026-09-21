@@ -294,6 +294,13 @@ export const assignObligationsSchema = z.object({
     .trim()
     .regex(/^[0-9A-Za-z-]{4,20}$/)
     .optional(),
+  /**
+   * Which option these members are being put down for, on a tiered
+   * collection (M7.6 part K). The tier supplies the amount — a figure sent
+   * alongside it is ignored by the database rather than trusted, because a
+   * tier is a row with a price and that price is the only one (ADR 0010).
+   */
+  tierId: z.string().uuid().optional(),
 });
 
 export type AssignObligationsInput = z.infer<typeof assignObligationsSchema>;

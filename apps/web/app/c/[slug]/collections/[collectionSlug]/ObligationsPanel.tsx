@@ -1,6 +1,6 @@
 "use client";
 
-import type { Collection } from "@kolekto/db";
+import type { Collection, CollectionTier } from "@kolekto/db";
 import {
   Badge,
   Banner,
@@ -9,6 +9,7 @@ import {
   CardBody,
   Dialog,
   EmptyState,
+  SelectField,
   Table,
   Tbody,
   Td,
@@ -47,6 +48,7 @@ export function ObligationsPanel({
   audienceGroups,
   audienceCounts,
   openCycleKey,
+  tiers,
   canAssign,
   canExempt,
 }: {
@@ -54,6 +56,7 @@ export function ObligationsPanel({
   collection: Collection;
   obligations: ObligationRow[];
   assignableMembers: AssignableMember[];
+  tiers: CollectionTier[];
   audienceGroups: string[];
   audienceCounts: { eligible: number; with_obligation: number; awaiting: number };
   /** The period being charged for, on a recurring collection. Null when none is open. */
@@ -71,8 +74,13 @@ export function ObligationsPanel({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return obligations;
+    // Somebody ringing up about their money says their reference, not their
+    // member ID, so all three are searched.
     return obligations.filter(
-      (row) => row.memberName.toLowerCase().includes(q) || (row.memberIdentifier ?? "").toLowerCase().includes(q),
+      (row) =>
+        row.memberName.toLowerCase().includes(q) ||
+        (row.memberIdentifier ?? "").toLowerCase().includes(q) ||
+        (row.reference ?? "").toLowerCase().includes(q),
     );
   }, [obligations, query]);
 
@@ -89,6 +97,11 @@ export function ObligationsPanel({
   // database refuse the click with CYCLE_REQUIRED.
   const isRecurring = collection.schedule === "recurring";
   const needsCycle = isRecurring && openCycleKey === null;
+  const isTiered = collection.amount_model === "tiers";
+  // Only shown once there is something to show. A column of dashes on a
+  // collection that does not issue references is a column that asks a
+  // question and answers it with nothing.
+  const showReference = obligations.some((row) => row.reference !== null);
 
   return (
     <div className="flex flex-col gap-4">
@@ -167,14 +180,16 @@ export function ObligationsPanel({
         <>
           <TextField
             label="Search"
-            placeholder="Search by name or member ID"
+            placeholder="Search by name, member ID or reference"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
           <Table data-responsive>
             <Thead>
               <Tr>
+                {showReference && <Th>Reference</Th>}
                 <Th>Member</Th>
+                {isTiered && <Th>Option</Th>}
                 {/* Which month this row is: the same member appears once per
                     period, and the rows are only distinguishable by it. */}
                 {isRecurring && <Th>Period</Th>}
@@ -187,12 +202,18 @@ export function ObligationsPanel({
             <Tbody>
               {filtered.map((row) => (
                 <Tr key={row.obligation.id}>
+                  {showReference && (
+                    <Td data-label="Reference">
+                      <span className="font-mono text-sm text-[var(--color-text)]">{row.reference ?? "—"}</span>
+                    </Td>
+                  )}
                   <Td data-label="Member">
                     {row.memberName}
                     {row.memberIdentifier && (
                       <span className="block text-xs text-[var(--color-text-muted)]">{row.memberIdentifier}</span>
                     )}
                   </Td>
+                  {isTiered && <Td data-label="Option">{row.tierName ?? "—"}</Td>}
                   {isRecurring && <Td data-label="Period">{row.obligation.cycle_key ?? "—"}</Td>}
                   <Td data-label="Expected">{naira(row.obligation.expected_amount_kobo)}</Td>
                   <Td data-label="Waived">
@@ -255,6 +276,7 @@ export function ObligationsPanel({
           collection={collection}
           members={assignableMembers}
           cycleKey={openCycleKey}
+          tiers={tiers}
           onClose={() => setAssigning(false)}
           onError={setError}
         />
@@ -360,6 +382,7 @@ function AssignDialog({
   collection,
   members,
   cycleKey,
+  tiers,
   onClose,
   onError,
 }: {
@@ -367,17 +390,25 @@ function AssignDialog({
   collection: Collection;
   members: AssignableMember[];
   cycleKey: string | null;
+  tiers: CollectionTier[];
   onClose: () => void;
   onError: (message: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [amount, setAmount] = useState("");
+  const [tierId, setTierId] = useState("");
   const [query, setQuery] = useState("");
   const [isPending, startTransition] = useTransition();
 
+  const isTiered = collection.amount_model === "tiers";
+  const chosenTier = tiers.find((tier) => tier.id === tierId);
+
   // Only a per-member collection reads this figure; everywhere else the
   // collection states the amount and the database uses it whatever is typed.
-  const needsAmount = collection.amount_model !== "fixed";
+  // A chosen option states it too — the tier IS the price (ADR 0010) — so
+  // asking for a figure as well would be asking which of two numbers to
+  // believe.
+  const needsAmount = collection.amount_model !== "fixed" && !chosenTier;
 
   const visible = members.filter((member) => {
     const q = query.trim().toLowerCase();
@@ -392,6 +423,29 @@ function AssignDialog({
       {...(cycleKey ? { description: `They will be expected to pay for ${cycleKey}.` } : {})}
     >
       <div className="flex flex-col gap-4">
+        {isTiered && tiers.length > 0 && (
+          <SelectField
+            label="Which option?"
+            value={tierId}
+            onChange={(event) => setTierId(event.target.value)}
+            hint={
+              chosenTier
+                ? `They will be expected to pay ${naira(chosenTier.price_kobo)} — the price of this option.`
+                : "Choosing an option sets the amount, and gives each person a reference in that option's own series."
+            }
+          >
+            <option value="">No particular option</option>
+            {tiers
+              .filter((tier) => !tier.hidden)
+              .map((tier) => (
+                <option key={tier.id} value={tier.id}>
+                  {tier.name} — {naira(tier.price_kobo)}
+                  {tier.code_prefix ? ` (${tier.code_prefix})` : ""}
+                </option>
+              ))}
+          </SelectField>
+        )}
+
         {needsAmount && (
           <TextField
             label="Amount expected from each member selected"
@@ -462,6 +516,7 @@ function AssignDialog({
                 memberIds: [...selected],
                 expectedAmount: needsAmount ? amount : "",
                 ...(cycleKey ? { cycleKey } : {}),
+                ...(tierId ? { tierId } : {}),
               });
               if (result.error) onError(result.error);
               else onClose();

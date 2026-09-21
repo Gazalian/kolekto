@@ -823,12 +823,14 @@ export async function assignObligations(
     memberIds: readonly string[];
     expectedAmountKobo?: bigint | undefined;
     dueAt?: string | undefined;
+    /** Which option, on a tiered collection. The tier supplies the amount; a caller-supplied figure is not a second source of truth for a price (ADR 0010). */
+    tierId?: string | undefined;
   },
 ): Promise<number> {
   const [row] = await call(caller, (tx) =>
     tx<{ count: number }[]>`select app.assign_obligations(
       ${input.collectionId}, ${[...input.memberIds]}, ${input.expectedAmountKobo?.toString() ?? null},
-      ${input.dueAt ?? null}, ${input.cycleKey ?? null}
+      ${input.dueAt ?? null}, ${input.cycleKey ?? null}, ${input.tierId ?? null}
     ) as count`,
   );
   return row!.count;
@@ -888,4 +890,75 @@ export async function checkInObligation(caller: CallerContext, obligationId: str
 /** Records that somebody admitted earlier has left. Does nothing if they are already outside. */
 export async function checkOutObligation(caller: CallerContext, obligationId: string): Promise<void> {
   await call(caller, (tx) => tx`select app.check_out_obligation(${obligationId})`);
+}
+
+// ── Contributor references (M7.6) ───────────────────────────────────────────
+//
+// "BIO26-0042". Every one of these is a call into a SECURITY DEFINER function
+// that re-checks the permission and derives tenancy from the row, because a
+// reference is an identifier people act on — it goes on a receipt, and it is
+// what somebody reads out when they ring up to ask about their money.
+
+/** The format an organiser chose. Refused by the database once references have been issued, because those are already on paper somewhere. */
+export async function setCollectionCodeSettings(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    enabled: boolean;
+    prefix: string | null;
+    separator: string;
+    digits: number;
+    startNumber: number;
+    style: "sequential" | "random";
+  },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.set_collection_code_settings(
+      ${input.collectionId}, ${input.enabled}, ${input.prefix}, ${input.separator},
+      ${input.digits}, ${input.startNumber}, ${input.style}
+    )`,
+  );
+}
+
+/** Issues (or returns) the reference for one participation. Idempotent. */
+export async function issueContributorReference(caller: CallerContext, obligationId: string): Promise<string> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ issue_contributor_reference: string }[]>`select app.issue_contributor_reference(${obligationId})`,
+  );
+  return row!.issue_contributor_reference;
+}
+
+/** Gives a reference to everyone on the roll who has not got one. Returns how many were issued. */
+export async function issueContributorReferencesForCollection(
+  caller: CallerContext,
+  collectionId: string,
+): Promise<number> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ count: number }[]>`select app.issue_contributor_references_for_collection(${collectionId}) as count`,
+  );
+  return row!.count;
+}
+
+/**
+ * Records that member data left the system (part Z).
+ *
+ * The column names are logged, never a value out of any row: an audit trail
+ * of an export must not become a second copy of the personal data it is
+ * auditing (SEC-26).
+ */
+export async function recordCollectionExport(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    subject: string;
+    format: string;
+    rowCount: number;
+    fields: readonly string[];
+  },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.record_collection_export(
+      ${input.collectionId}, ${input.subject}, ${input.format}, ${input.rowCount}, ${[...input.fields]}
+    )`,
+  );
 }

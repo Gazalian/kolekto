@@ -96,6 +96,7 @@ export function SettingsPanel({
       description: tier.description ?? "",
       price: nairaFromKobo(tier.price_kobo),
       quantityLimit: tier.quantity_limit === null ? "" : String(tier.quantity_limit),
+      codePrefix: tier.code_prefix ?? "",
     })),
   );
   const [questionDrafts, setQuestionDrafts] = useState<QuestionDraft[]>(
@@ -310,6 +311,7 @@ export function SettingsPanel({
                           ...(tier.description?.trim() ? { description: tier.description.trim() } : {}),
                           price: tier.price.trim(),
                           ...(tier.quantityLimit?.trim() ? { quantityLimit: Number(tier.quantityLimit.trim()) } : {}),
+                          ...(tier.codePrefix?.trim() ? { codePrefix: tier.codePrefix.trim() } : {}),
                           sortOrder: index,
                         })),
                       });

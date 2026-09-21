@@ -1,6 +1,7 @@
 "use client";
 
 import { Button, TextField } from "@kolekto/ui";
+import { normalisePrefix } from "@kolekto/domain";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 
 /**
@@ -16,10 +17,12 @@ export interface TierDraft {
   description?: string;
   price: string;
   quantityLimit?: string;
+  /** M7.6 part K: this option's own reference series. "VIP" makes VIP-0001, VIP-0002. */
+  codePrefix?: string;
 }
 
 export function emptyTier(): TierDraft {
-  return { name: "", description: "", price: "", quantityLimit: "" };
+  return { name: "", description: "", price: "", quantityLimit: "", codePrefix: "" };
 }
 
 export function TiersEditor({
@@ -52,6 +55,14 @@ export function TiersEditor({
     onChange(next);
   }
 
+  // Two options sharing a prefix would merge two series that exist precisely
+  // to be separate, so it is flagged here as well as refused by the database.
+  const duplicatePrefixes = new Set(
+    tiers
+      .map((tier) => (tier.codePrefix ?? "").trim().toUpperCase())
+      .filter((prefix, index, all) => prefix !== "" && all.indexOf(prefix) !== index),
+  );
+
   const duplicateNames = new Set(
     tiers
       .map((tier) => tier.name.trim().toLowerCase())
@@ -62,6 +73,7 @@ export function TiersEditor({
     <div className="flex flex-col gap-4">
       {tiers.map((tier, index) => {
         const isDuplicate = duplicateNames.has(tier.name.trim().toLowerCase());
+        const isDuplicatePrefix = duplicatePrefixes.has((tier.codePrefix ?? "").trim().toUpperCase());
         return (
           <div
             key={tier.id ?? index}
@@ -127,6 +139,18 @@ export function TiersEditor({
                 onChange={(event) => update(index, { quantityLimit: event.target.value })}
               />
             </div>
+            <TextField
+              label="Reference prefix"
+              hint={
+                tier.codePrefix
+                  ? `References for this option read ${tier.codePrefix.toUpperCase()}-0001, ${tier.codePrefix.toUpperCase()}-0002 — its own series.`
+                  : "Optional. Give this option its own series, e.g. VIP. Without one it shares the collection's."
+              }
+              value={tier.codePrefix ?? ""}
+              disabled={disabled}
+              {...(isDuplicatePrefix ? { error: "Two options cannot share a prefix" } : {})}
+              onChange={(event) => update(index, { codePrefix: normalisePrefix(event.target.value, { maxLength: 8 }) })}
+            />
             {tiers.length > 1 && !disabled && (
               <button
                 type="button"

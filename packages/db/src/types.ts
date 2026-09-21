@@ -364,9 +364,41 @@ export interface Obligation {
   status: ObligationStatus;
   version: number;
   assigned_by: string | null;
+  /** M7.6: which option this member was put down for, on a tiered collection. Null everywhere else. */
+  tier_id: string | null;
   created_at: string;
   updated_at: string;
   cancelled_at: string | null;
+}
+
+/** M7.6: the reference format an organiser chose for one collection. */
+export interface CollectionCodeSettings {
+  collection_id: string;
+  community_id: string;
+  prefix: string | null;
+  style: "sequential" | "random";
+  attribute_basis: string | null;
+  per_unit: boolean;
+  separator: string;
+  digits: number;
+  start_number: number;
+  /** A seed carried forward from an older system, not a live counter — see the column comment. */
+  next_number: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** M7.6: "BIO26-0042". One per participation, issued by the server, never reissued. */
+export interface ContributorReference {
+  id: string;
+  community_id: string;
+  collection_id: string;
+  obligation_id: string;
+  tier_id: string | null;
+  reference: string;
+  sequence_number: number | null;
+  issued_at: string;
+  issued_by: string | null;
 }
 
 export interface Permission {

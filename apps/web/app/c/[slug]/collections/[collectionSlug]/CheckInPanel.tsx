@@ -2,8 +2,8 @@
 
 import { Badge, Banner, Button, Card, CardBody, TextField } from "@kolekto/ui";
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
-import { checkInAction, checkOutAction } from "./check-in-actions.ts";
+import { useEffect, useState, useTransition } from "react";
+import { checkInAction, checkOutAction, searchAttendeesAction } from "./check-in-actions.ts";
 
 /**
  * The door (M7.5 part E).
@@ -22,6 +22,10 @@ export interface CheckInPerson {
   obligationId: string;
   name: string;
   identifier: string | null;
+  /** "VIP-0021", when this collection issues references. What somebody reads off their phone at the door. */
+  reference: string | null;
+  /** Which ticket they hold, on a tiered event. */
+  tierName: string | null;
   /** The most recent visit, if any. */
   checkedInAt: string | null;
   checkedOutAt: string | null;
@@ -35,11 +39,14 @@ export function CheckInPanel({
   slug,
   collectionSlug,
   people,
+  totals,
   canCheckIn,
 }: {
   slug: string;
   collectionSlug: string;
+  /** The first page of the guest list. Searching past it asks the server (part P). */
   people: CheckInPerson[];
+  totals: { expected: number; inside: number; left: number; notArrived: number };
   canCheckIn: boolean;
 }) {
   const router = useRouter();
@@ -48,17 +55,37 @@ export function CheckInPanel({
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  const inside = people.filter((person) => person.checkedInAt && !person.checkedOutAt);
-  const left = people.filter((person) => person.checkedOutAt);
-  const notYet = people.filter((person) => !person.checkedInAt);
+  const [matches, setMatches] = useState<CheckInPerson[] | null>(null);
 
-  const needle = query.trim().toLowerCase();
-  const shown = needle
-    ? people.filter(
-        (person) =>
-          person.name.toLowerCase().includes(needle) || (person.identifier ?? "").toLowerCase().includes(needle),
-      )
-    : people;
+  /**
+   * Every keystroke past the first page is a question for the server (part
+   * P). Debounced, because a person typing a name at a door should produce
+   * one query and not six, and the previous answer stays on screen while the
+   * next one is in flight — a list that blanks between keystrokes is a list
+   * somebody taps the wrong row in.
+   */
+  useEffect(() => {
+    const needle = query.trim();
+    // An empty box goes back to the first page, and that is decided where the
+    // box is typed in rather than here — an effect that calls setState on its
+    // own first run is a cascading render, and React says so.
+    if (needle === "") return;
+
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void searchAttendeesAction(slug, collectionSlug, needle).then((result) => {
+        if (cancelled) return;
+        if (result.error) setError(result.error);
+        else setMatches(result.matches ?? []);
+      });
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [collectionSlug, query, slug]);
+
+  const shown = matches ?? people;
 
   function run(person: CheckInPerson, direction: "in" | "out"): void {
     setError(null);
@@ -74,7 +101,7 @@ export function CheckInPanel({
     });
   }
 
-  if (people.length === 0) {
+  if (totals.expected === 0) {
     return (
       <Card>
         <CardBody className="flex flex-col gap-2">
@@ -98,30 +125,33 @@ export function CheckInPanel({
         <CardBody className="flex flex-col gap-3">
           <div className="grid grid-cols-3 gap-2 text-center">
             <div>
-              <p className="text-xl font-semibold text-[var(--color-text)]">{people.length}</p>
+              <p className="text-xl font-semibold text-[var(--color-text)]">{totals.expected}</p>
               <p className="text-xs text-[var(--color-text-muted)]">Expected</p>
             </div>
             <div>
-              <p className="text-xl font-semibold text-[var(--color-text)]">{inside.length}</p>
+              <p className="text-xl font-semibold text-[var(--color-text)]">{totals.inside}</p>
               <p className="text-xs text-[var(--color-text-muted)]">Inside now</p>
             </div>
             <div>
-              <p className="text-xl font-semibold text-[var(--color-text)]">{notYet.length}</p>
+              <p className="text-xl font-semibold text-[var(--color-text)]">{totals.notArrived}</p>
               <p className="text-xs text-[var(--color-text-muted)]">Not arrived</p>
             </div>
           </div>
-          {left.length > 0 && (
-            <p className="text-center text-xs text-[var(--color-text-muted)]">{left.length} have left</p>
+          {totals.left > 0 && (
+            <p className="text-center text-xs text-[var(--color-text-muted)]">{totals.left} have left</p>
           )}
         </CardBody>
       </Card>
 
       <TextField
         label="Find someone"
-        placeholder="Name or member ID"
+        placeholder="Name, member ID or reference"
         value={query}
         autoComplete="off"
-        onChange={(event) => setQuery(event.target.value)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          if (event.target.value.trim() === "") setMatches(null);
+        }}
       />
 
       {error && <Banner tone="danger">{error}</Banner>}
@@ -131,6 +161,12 @@ export function CheckInPanel({
           You can see who is expected, but checking people in needs the check-in permission. An owner, admin, treasurer
           or collector can do it.
         </Banner>
+      )}
+
+      {matches === null && totals.expected > people.length && (
+        <p className="text-xs text-[var(--color-text-muted)]">
+          Showing the first {people.length} of {totals.expected}. Search to find anybody else.
+        </p>
       )}
 
       {shown.length === 0 ? (
@@ -146,8 +182,12 @@ export function CheckInPanel({
               >
                 <div className="min-w-0">
                   <p className="font-medium text-[var(--color-text)]">{person.name}</p>
+                  {person.reference && (
+                    <p className="font-mono text-sm text-[var(--color-text)]">{person.reference}</p>
+                  )}
                   <p className="text-xs text-[var(--color-text-muted)]">
                     {person.identifier ?? "No member ID"}
+                    {person.tierName && ` · ${person.tierName}`}
                     {isInside && person.checkedInAt && ` · in at ${timeOf(person.checkedInAt)}`}
                     {person.checkedOutAt && ` · left at ${timeOf(person.checkedOutAt)}`}
                   </p>

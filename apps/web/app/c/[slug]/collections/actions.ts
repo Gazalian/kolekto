@@ -641,6 +641,7 @@ export async function assignObligationsAction(
       expectedAmountKobo: toKobo(parsed.data.expectedAmount),
       dueAt: parsed.data.dueAt,
       cycleKey: parsed.data.cycleKey,
+      tierId: parsed.data.tierId,
     });
     revalidateCollection(slug, collectionSlug);
     return { ok: true, created };

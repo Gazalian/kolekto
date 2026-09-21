@@ -1,6 +1,7 @@
 import type {
   AuditLog,
   Collection,
+  CollectionCodeSettings,
   CollectionCycleRow,
   CollectionField,
   CollectionItem,
@@ -17,7 +18,7 @@ import { requireCallerContext } from "../../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../../lib/permissions.ts";
 import { createClient } from "../../../../../lib/supabase/server.ts";
 import { CollectionDetailClient, type ObligationRow } from "./CollectionDetailClient.tsx";
-import { EXPORT_FIELDS } from "./export-fields.ts";
+import type { ExportFieldChoice } from "./export-fields.ts";
 
 export async function generateMetadata({ params }: { params: Promise<{ collectionSlug: string }> }) {
   const { collectionSlug } = await params;
@@ -63,6 +64,8 @@ export default async function CollectionDetailPage({
     { data: attributeDefinitions },
     { data: memberGroups },
     { data: checkIns },
+    { data: references },
+    { data: codeSettings },
   ] = await Promise.all([
       supabase.from("collection_tiers").select("*").eq("collection_id", collection.id).order("sort_order"),
       supabase.from("collection_fields").select("*").eq("collection_id", collection.id).order("sort_order"),
@@ -102,11 +105,22 @@ export default async function CollectionDetailPage({
         .select("obligation_id, checked_in_at, checked_out_at")
         .eq("collection_id", collection.id)
         .order("checked_in_at", { ascending: false }),
+      // M7.6: the reference each person on the roll was issued. Shown beside
+      // their name, searched at the door, and offered as an export column.
+      supabase
+        .from("contributor_references")
+        .select("obligation_id, reference")
+        .eq("collection_id", collection.id),
+      supabase.from("collection_code_settings").select("*").eq("collection_id", collection.id).maybeSingle(),
     ]);
 
-  const customExportFields = (attributeDefinitions ?? []).map((definition) => ({
+  // Offered as export columns under their own labels, so a file says "Matric
+  // number" rather than custom_field_1.
+  const customExportFields: ExportFieldChoice[] = (attributeDefinitions ?? []).map((definition) => ({
     key: `attr:${definition.key as string}`,
     label: definition.label as string,
+    group: "Custom fields",
+    weight: 2.4,
   }));
 
   // The latest visit per person — what "were they here?" means at a door.
@@ -123,14 +137,36 @@ export default async function CollectionDetailPage({
 
   const membersById = new Map((members ?? []).map((member) => [member.id as string, member as Member]));
 
+  /** How big a first page the door gets before it starts asking the server. */
+  const DOOR_PAGE = 100;
+
+  const referenceByObligation = new Map(
+    (references ?? []).map((row) => [row.obligation_id as string, row.reference as string]),
+  );
+  const tierNameById = new Map(((tiers ?? []) as CollectionTier[]).map((tier) => [tier.id, tier.name]));
+
   const obligationRows: ObligationRow[] = ((obligations ?? []) as Obligation[]).map((obligation) => {
     const member = membersById.get(obligation.member_id);
     return {
       obligation,
       memberName: member?.full_name ?? "Member",
       memberIdentifier: member?.member_code ?? null,
+      reference: referenceByObligation.get(obligation.id) ?? null,
+      tierName: obligation.tier_id ? tierNameById.get(obligation.tier_id) ?? null : null,
     };
   });
+
+  const doorRoll = obligationRows.filter((row) => row.obligation.status !== "cancelled");
+  const doorPeople = doorRoll.slice(0, DOOR_PAGE);
+  const doorTotals = {
+    expected: doorRoll.length,
+    inside: doorRoll.filter((row) => {
+      const visit = latestVisit.get(row.obligation.id);
+      return visit !== undefined && visit.checked_out_at === null;
+    }).length,
+    left: doorRoll.filter((row) => latestVisit.get(row.obligation.id)?.checked_out_at != null).length,
+    notArrived: doorRoll.filter((row) => !latestVisit.has(row.obligation.id)).length,
+  };
 
   // Who is already expected to pay, and therefore not offered again.
   //
@@ -178,18 +214,25 @@ export default async function CollectionDetailPage({
       })}
       audienceCounts={audience}
       activity={(activity ?? []) as AuditLog[]}
-      exportFields={{ fixed: [...EXPORT_FIELDS], custom: customExportFields }}
+      exportCustomFields={customExportFields}
       exportGroups={(memberGroups ?? []) as MemberGroup[]}
-      checkInPeople={obligationRows.map((row) => {
+      codeSettings={(codeSettings as CollectionCodeSettings | null) ?? null}
+      // The door ships a first page and searches the rest on the server
+      // (M7.6 part P), so a five-thousand-guest event does not send five
+      // thousand names to a phone at an entrance.
+      checkInPeople={doorPeople.map((row) => {
         const visit = latestVisit.get(row.obligation.id);
         return {
           obligationId: row.obligation.id,
           name: row.memberName,
           identifier: row.memberIdentifier,
+          reference: row.reference,
+          tierName: row.tierName,
           checkedInAt: visit?.checked_in_at ?? null,
           checkedOutAt: visit?.checked_out_at ?? null,
         };
       })}
+      checkInTotals={doorTotals}
       permissions={{
         canEdit: hasPermission(access, "collection.draft"),
         canPublish: hasPermission(access, "collection.publish"),
@@ -198,6 +241,7 @@ export default async function CollectionDetailPage({
         canShare: hasPermission(access, "collection.share"),
         canExport: hasPermission(access, "member.export"),
         canCheckIn: hasPermission(access, "attendance.check_in"),
+        canConfigureCodes: hasPermission(access, "collection.configure_codes"),
       }}
     />
   );

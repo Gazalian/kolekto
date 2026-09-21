@@ -344,6 +344,7 @@ export function NewCollectionForm({
             ...(tier.description?.trim() ? { description: tier.description.trim() } : {}),
             price: tier.price.trim(),
             ...(tier.quantityLimit?.trim() ? { quantityLimit: Number(tier.quantityLimit.trim()) } : {}),
+            ...(tier.codePrefix?.trim() ? { codePrefix: tier.codePrefix.trim() } : {}),
             sortOrder: index,
           })),
         });
