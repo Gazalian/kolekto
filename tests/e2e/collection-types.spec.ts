@@ -742,6 +742,9 @@ test("a ticketed event has a door, and it opens and closes", async ({ page }) =>
   await page.getByRole("button", { name: "Add members" }).click();
   const assign = page.getByRole("dialog");
   await assign.getByRole("checkbox").first().check();
+  // A ticketed collection has no single headline amount, so the roll records
+  // what this guest is expected to pay.
+  await assign.getByLabel("Amount expected from each member selected").fill("10000");
   await assign.getByRole("button", { name: /Add 1 member/ }).click();
   await expect(page.getByRole("cell", { name: "₦10,000" })).toBeVisible();
 

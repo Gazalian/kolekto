@@ -304,9 +304,6 @@ export function NewCollectionForm({
     // picker only decides which questions get asked.
     if (current < 1) return true;
 
-    const row = await saveCollectionRow();
-    if (!row) return false;
-
     const save = async (what: string, run: () => Promise<{ error?: string }>): Promise<boolean> => {
       const result = await run();
       if (result.error) {
@@ -315,6 +312,27 @@ export function NewCollectionForm({
       }
       return true;
     };
+
+    // The audience goes FIRST on the step that owns it, and for every mode —
+    // not only the narrow ones. `audience_mode` and `participation_mode` are
+    // paired by `collections_audience_matches_participation`, and
+    // `app.set_collection_audience` is the one place that writes both in a
+    // single statement. Updating the collection row first would try to make
+    // it managed while its audience still said public, which is exactly the
+    // half-changed state that constraint exists to refuse.
+    if (current === 4 && draftId && draftSlug) {
+      const ok = await save("who it is for", () =>
+        setCollectionAudienceAction(slug, draftSlug, {
+          collectionId: draftId,
+          audienceMode,
+          groupIds: audienceMode === "groups" ? audienceGroupIds : [],
+        }),
+      );
+      if (!ok) return false;
+    }
+
+    const row = await saveCollectionRow();
+    if (!row) return false;
 
     if (current === 2) {
       if (amountModel === "tiers") {
@@ -401,17 +419,6 @@ export function NewCollectionForm({
 
     // The cover image saves itself the moment it is uploaded, so the Cover
     // step has nothing of its own left to write.
-
-    if (current === 4 && (audienceMode === "groups" || audienceMode === "selected_members")) {
-      const ok = await save("who it is for", () =>
-        setCollectionAudienceAction(slug, row.slug, {
-          collectionId: row.id,
-          audienceMode,
-          groupIds: audienceGroupIds,
-        }),
-      );
-      if (!ok) return false;
-    }
 
     if (current === 5) {
       const fields = questionsToFields(questions);
