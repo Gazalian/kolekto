@@ -10,6 +10,7 @@ import {
   exemptObligation,
   openCollectionCycle,
   setCollectionAudience,
+  setCollectionDraftStep,
   setCollectionCover,
   setCollectionEvent,
   setCollectionFields,
@@ -727,4 +728,26 @@ export async function cancelObligationAction(
   }
   revalidateCollection(slug, collectionSlug);
   return { ok: true };
+}
+
+/**
+ * Remembers how far through the wizard a draft got (M7.6 part A4).
+ *
+ * Deliberately quiet. Nothing an organiser does depends on it succeeding, and
+ * an error banner about a remembered form position would be noise over
+ * whatever they were actually doing. The database refuses it on a published
+ * collection by returning, not by raising, for the same reason.
+ */
+export async function rememberStepAction(
+  slug: string,
+  collectionSlug: string,
+  collectionId: string,
+  step: number,
+): Promise<void> {
+  try {
+    await setCollectionDraftStep(await requireCallerContext(), { collectionId, step });
+    revalidateCollection(slug, collectionSlug);
+  } catch {
+    // See above.
+  }
 }

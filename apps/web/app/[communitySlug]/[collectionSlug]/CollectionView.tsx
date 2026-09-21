@@ -46,6 +46,10 @@ export interface CollectionViewData {
   thank_you_message: string | null;
   community_name: string;
   community_verified: string;
+  /** How often this repeats, on a recurring collection. Null everywhere else. */
+  recurrence_frequency?: "weekly" | "monthly" | "quarterly" | "yearly" | null;
+  recurrence_interval?: number | null;
+  recurrence_due_after_days?: number | null;
 }
 
 export interface CollectionViewTier {
@@ -73,6 +77,18 @@ export interface CollectionViewField {
   type: "text" | "number" | "single_select" | "date";
   options: string[] | null;
   required: boolean;
+}
+
+/**
+ * "every month", "every 2 weeks". Written out rather than shown as
+ * "monthly × 2", which is a database row read aloud.
+ */
+function everyHowOften(collection: CollectionViewData): string {
+  const interval = collection.recurrence_interval ?? 1;
+  const unit = { weekly: "week", monthly: "month", quarterly: "quarter", yearly: "year" }[
+    collection.recurrence_frequency ?? "monthly"
+  ];
+  return interval > 1 ? `every ${interval} ${unit}s` : `every ${unit}`;
 }
 
 export function CollectionView({
@@ -106,7 +122,7 @@ export function CollectionView({
   const leadLine = (() => {
     if (collection.category === "event" || collection.category === "fundraiser") return null;
     if (collection.schedule === "recurring") {
-      return "A recurring charge. Each period is asked for separately — paying one does not settle the next.";
+      return `A recurring charge, ${everyHowOften(collection)}. Each period is asked for separately — paying one does not settle the next.`;
     }
     if (collection.amount_model === "items") {
       return items.length === 1
@@ -216,6 +232,46 @@ export function CollectionView({
             </p>
           )}
           {collection.venue && <p className="text-[var(--color-text-muted)]">{collection.venue}</p>}
+        </div>
+      )}
+
+      {/* §V: a recurring collection has to answer "how often, how much, and
+          by when" before anybody agrees to it. "This repeats" does not. */}
+      {collection.schedule === "recurring" && (
+        <dl className="flex flex-col gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm">
+          <div className="flex justify-between gap-3">
+            <dt className="text-[var(--color-text-muted)]">How often</dt>
+            <dd className="font-medium text-[var(--color-text)]">{everyHowOften(collection)}</dd>
+          </div>
+          {collection.fixed_amount_kobo && (
+            <div className="flex justify-between gap-3">
+              <dt className="text-[var(--color-text-muted)]">Each period</dt>
+              <dd className="font-medium text-[var(--color-text)]">{naira(collection.fixed_amount_kobo)}</dd>
+            </div>
+          )}
+          {typeof collection.recurrence_due_after_days === "number" && (
+            <div className="flex justify-between gap-3">
+              <dt className="text-[var(--color-text-muted)]">Due</dt>
+              <dd className="font-medium text-[var(--color-text)]">
+                {collection.recurrence_due_after_days === 0
+                  ? "When the period opens"
+                  : `${collection.recurrence_due_after_days} days after the period opens`}
+              </dd>
+            </div>
+          )}
+        </dl>
+      )}
+
+      {/* §V: a fundraiser leads with what it is working toward. What has been
+          raised is deliberately not here — nothing is recorded yet, and a
+          progress bar at zero is a claim about how the appeal is going. */}
+      {collection.category === "fundraiser" && collection.target_amount_kobo && (
+        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
+          <p className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">Working toward</p>
+          <p className="text-2xl font-semibold text-[var(--color-text)]">{naira(collection.target_amount_kobo)}</p>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            {collection.community_name} will show what has been raised once online giving is switched on.
+          </p>
         </div>
       )}
 

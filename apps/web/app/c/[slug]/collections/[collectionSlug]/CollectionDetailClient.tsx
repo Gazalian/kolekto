@@ -263,7 +263,15 @@ export function CollectionDetailClient({
 
           {status === "draft" && (
             <Banner tone="info">
-              This is a draft. Its link does not work and nobody outside your officers can see it.
+              This is a draft. Its link does not work and nobody outside your officers can see it.{" "}
+              {permissions.canEdit && (
+                <Link
+                  href={`/c/${slug}/collections/${collection.slug}/continue`}
+                  className="font-medium underline"
+                >
+                  Carry on setting it up
+                </Link>
+              )}
             </Banner>
           )}
 

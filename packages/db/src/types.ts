@@ -253,6 +253,8 @@ export interface Collection {
   fee_mode: FeeMode;
   allow_non_members: boolean;
   codes_enabled: boolean;
+  /** M7.6: how far through the creation wizard this draft got. Meaningless once published. */
+  draft_step: number;
   allow_anonymous: boolean;
   thank_you_message: string | null;
   created_by: string;

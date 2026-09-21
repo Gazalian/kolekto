@@ -58,6 +58,12 @@ export interface PublicCollection {
   community_name: string;
   community_logo_url: string | null;
   community_verified: "unverified" | "pending" | "verified" | "rejected" | "expired";
+  /** How often a recurring collection repeats. Null on every collection that does not (M7.6 part V). */
+  recurrence_frequency: "weekly" | "monthly" | "quarterly" | "yearly" | null;
+  /** "every 2 months" is interval 2 on a monthly frequency. */
+  recurrence_interval: number | null;
+  /** How many days after a period opens the charge is due. */
+  recurrence_due_after_days: number | null;
 }
 
 export interface PublicCollectionTier {

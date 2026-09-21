@@ -143,6 +143,17 @@ export function CollectionsClient({
                   {collection.deadline_at && <span>Deadline: {formatDate(collection.deadline_at)}</span>}
                 </div>
               </Link>
+              {/* A draft is unfinished work, so the first thing offered is
+                  finishing it — not the management screens for a collection
+                  nobody can see yet (M7.6 part A4). */}
+              {collection.status === "draft" && canCreate && (
+                <Link
+                  href={`/c/${slug}/collections/${collection.slug}/continue`}
+                  className="mt-1 inline-block text-xs font-medium text-[var(--color-primary)] hover:underline"
+                >
+                  Continue setting this up →
+                </Link>
+              )}
             </li>
           ))}
         </ul>

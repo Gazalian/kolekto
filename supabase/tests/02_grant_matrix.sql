@@ -106,7 +106,13 @@ select bag_eq(
       ('obligations'), ('audit_logs'),
       -- M7.5: who has been admitted at a collection's door. Readable by
       -- whoever may work that door; written only through app functions.
-      ('event_check_ins')
+      ('event_check_ins'),
+      -- M7.6: "BIO26-0042" and the counter behind it. The references are
+      -- readable by whoever may see the roll they belong to; the counter is
+      -- readable so a settings screen can say where the numbering has got
+      -- to. Both are written only through app functions, and a reference is
+      -- immutable once issued.
+      ('contributor_references'), ('collection_code_sequences')
   $$,
   'authenticated can SELECT exactly the allowlisted tables and no others'
 );

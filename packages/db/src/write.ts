@@ -962,3 +962,11 @@ export async function recordCollectionExport(
     )`,
   );
 }
+
+/** M7.6 part A4: remembers how far through the wizard a draft got, so reopening it lands where the organiser left off. */
+export async function setCollectionDraftStep(
+  caller: CallerContext,
+  input: { collectionId: string; step: number },
+): Promise<void> {
+  await call(caller, (tx) => tx`select app.set_collection_draft_step(${input.collectionId}, ${input.step})`);
+}

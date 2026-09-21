@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
-import Link from "next/link";
 import { CollectionView } from "../../../../../[communitySlug]/[collectionSlug]/CollectionView.tsx";
+import { PreviewFrame } from "./PreviewFrame.tsx";
 import { getCommunityAccess, hasPermission } from "../../../../../../lib/permissions.ts";
 import { createClient } from "../../../../../../lib/supabase/server.ts";
 
@@ -52,33 +52,17 @@ export default async function CollectionPreviewPage({
   const access = await getCommunityAccess(community.id);
   if (!hasPermission(access, "collection.draft")) notFound();
 
-  const [{ data: tiers }, { data: items }, { data: fields }] = await Promise.all([
+const [{ data: tiers }, { data: items }, { data: fields }, { data: recurrence }] = await Promise.all([
     supabase.from("collection_tiers").select("*").eq("collection_id", collection.id).order("sort_order"),
     supabase.from("collection_items").select("*").eq("collection_id", collection.id).order("sort_order"),
     supabase.from("collection_fields").select("*").eq("collection_id", collection.id).order("sort_order"),
+    supabase.from("collection_recurrences").select("*").eq("collection_id", collection.id).maybeSingle(),
   ]);
 
   const kobo = (value: number | null): string | null => (value === null ? null : String(value));
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3">
-        <div>
-          <p className="text-sm font-semibold text-[var(--color-text)]">Preview as a contributor</p>
-          <p className="text-xs text-[var(--color-text-muted)]">
-            {collection.status === "draft"
-              ? "This is what people will see once you publish. Nothing here can be submitted."
-              : "This is what people see on the public page. Nothing here can be submitted."}
-          </p>
-        </div>
-        <Link
-          href={`/c/${slug}/collections/${collectionSlug}`}
-          className="text-sm font-medium text-[var(--color-primary)] hover:underline"
-        >
-          ← Back to the collection
-        </Link>
-      </div>
-
+    <PreviewFrame hostHref={`/c/${slug}/collections/${collectionSlug}`} isDraft={collection.status === "draft"}>
       <CollectionView
         mode="preview"
         communitySlug={slug}
@@ -110,6 +94,9 @@ export default async function CollectionPreviewPage({
           thank_you_message: collection.thank_you_message,
           community_name: community.name,
           community_verified: community.verification_status,
+          recurrence_frequency: recurrence?.frequency ?? null,
+          recurrence_interval: recurrence?.interval_count ?? null,
+          recurrence_due_after_days: recurrence?.due_after_days ?? null,
         }}
         tiers={(tiers ?? []).map((tier) => ({
           id: tier.id,
@@ -136,6 +123,6 @@ export default async function CollectionPreviewPage({
           required: field.required,
         }))}
       />
-    </div>
+    </PreviewFrame>
   );
 }

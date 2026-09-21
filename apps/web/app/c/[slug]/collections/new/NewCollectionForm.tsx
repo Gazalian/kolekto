@@ -11,6 +11,7 @@ import { AMOUNT_MODEL_LABEL } from "../../../../../lib/collection-display.ts";
 import { AudiencePicker, AUDIENCE_LABELS } from "../AudiencePicker.tsx";
 import {
   createCollectionAction,
+  rememberStepAction,
   setCollectionAudienceAction,
   setCollectionEventAction,
   setCollectionFieldsAction,
@@ -72,11 +73,23 @@ interface Intent {
   };
   /** Shown above the contribution step, in the organiser's own terms. */
   contributionHeading: string;
+  /**
+   * What the seven steps are called for THIS kind of collection (M7.6 part
+   * A1: "do not force every collection type into exactly the same wizard").
+   *
+   * The positions are shared because what they write is shared — the same
+   * row, the same audience rows, the same questions — but what they ASK
+   * differs, and so does what they should be called. Step three is "Tickets"
+   * when you are selling tickets and "Your story" when you are raising money,
+   * because that is what is on the screen.
+   */
+  steps?: readonly string[];
 }
 
 const INTENTS: Intent[] = [
   {
     key: "dues",
+    steps: ["Purpose", "Basics", "Amount", "Cover image", "Who pays", "Questions", "Review"],
     title: "Dues or a levy",
     description: "One set amount from a list of members you manage, so you can see who has not paid.",
     category: "dues",
@@ -87,6 +100,7 @@ const INTENTS: Intent[] = [
   },
   {
     key: "recurring",
+    steps: ["Purpose", "Basics", "Amount and schedule", "Cover image", "Who pays", "Questions", "Review"],
     title: "A charge that repeats",
     description: "A service charge or subscription billed every month, quarter or year, per period.",
     category: "dues",
@@ -98,6 +112,7 @@ const INTENTS: Intent[] = [
   },
   {
     key: "contribution",
+    steps: ["Purpose", "Basics", "What people may give", "Cover image", "Who can give", "Questions", "Review"],
     title: "An open contribution",
     description: "People give what they can, within limits you set.",
     category: "contribution",
@@ -109,6 +124,7 @@ const INTENTS: Intent[] = [
   },
   {
     key: "fundraiser",
+    steps: ["Purpose", "The cause", "Story and target", "Cover image", "Who can give", "Questions", "Review"],
     title: "Fundraiser",
     description: "Any amount, toward a target you are working to.",
     category: "fundraiser",
@@ -120,6 +136,7 @@ const INTENTS: Intent[] = [
   },
   {
     key: "tiers",
+    steps: ["Purpose", "Basics", "Options", "Cover image", "Who can choose", "Questions", "Review"],
     title: "Options at different prices",
     description: "A few named options — levels, packages, categories — and the contributor picks one.",
     category: "contribution",
@@ -130,6 +147,7 @@ const INTENTS: Intent[] = [
   },
   {
     key: "event",
+    steps: ["Purpose", "The event", "Tickets", "Flyer", "Who can buy", "Attendee details", "Review"],
     title: "Tickets for an event",
     description: "Ticket types at different prices, for something happening on a date, at a place.",
     category: "event",
@@ -141,6 +159,7 @@ const INTENTS: Intent[] = [
   },
   {
     key: "items",
+    steps: ["Purpose", "Basics", "Items", "Cover image", "Who can order", "Questions", "Review"],
     title: "Items or packages",
     description: "Things people order and pay for — aso-ebi, a kit, a package — each with its own stock.",
     category: "items",
@@ -151,6 +170,7 @@ const INTENTS: Intent[] = [
   },
   {
     key: "custom",
+    steps: ["Purpose", "Basics", "Contribution", "Cover image", "Who pays", "Questions", "Review"],
     title: "Something else",
     description: "Set how people contribute yourself.",
     category: "other",
@@ -161,58 +181,113 @@ const INTENTS: Intent[] = [
   },
 ];
 
-const STEPS = ["Purpose", "Details", "Contribution", "Cover image", "Who pays", "Questions", "Review"] as const;
+const DEFAULT_STEPS = ["Purpose", "Details", "Contribution", "Cover image", "Who pays", "Questions", "Review"] as const;
+
+/** Seven positions, whatever the collection. Only the names change. */
+const STEP_COUNT = DEFAULT_STEPS.length;
 /** The step index at which the draft is created, so the cover-image step has a real collection to upload against. */
 const COVER_STEP = 3;
+
+/**
+ * Everything needed to reopen a draft where it was left (M7.6 part A4).
+ *
+ * Assembled on the server by the /continue route from the draft's own rows —
+ * there is no separate "wizard state" anywhere, because the draft IS the
+ * state. What could not be derived from those rows is `step`, which is why
+ * collections.draft_step exists.
+ */
+export interface ExistingDraft {
+  collectionId: string;
+  collectionSlug: string;
+  intentKey: string;
+  step: number;
+  name: string;
+  description: string;
+  deadlineAt: string;
+  amountModel: AmountModelKey;
+  participationMode: "open" | "managed";
+  fixedAmount: string;
+  minAmount: string;
+  maxAmount: string;
+  targetAmount: string;
+  visibility: "public" | "unlisted";
+  coverImageUrl: string | null;
+  suggestedAmounts: string[];
+  story: StoryDraft;
+  tiers: TierDraft[];
+  items: ItemDraft[];
+  event: EventDraft;
+  recurrence: RecurrenceDraft;
+  questions: QuestionDraft[];
+  audienceMode: CollectionAudienceMode;
+  audienceGroupIds: string[];
+}
 
 export function NewCollectionForm({
   slug,
   communityId,
   memberCount,
   groups,
+  existing,
 }: {
   slug: string;
   communityId: string;
   memberCount: number;
   groups: MemberGroup[];
+  /** A draft being continued. Absent when this is a new collection. */
+  existing?: ExistingDraft | undefined;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
-  const [step, setStep] = useState(0);
+  const initialIntent = existing ? INTENTS.find((option) => option.key === existing.intentKey) ?? INTENTS[0]! : INTENTS[0]!;
+
+  // A resumed draft starts where it stopped, never on the Purpose step: the
+  // kind of collection is decided by rows that already exist, and offering to
+  // change it would offer to contradict them.
+  const [step, setStep] = useState(existing ? Math.min(Math.max(existing.step, 1), STEP_COUNT - 1) : 0);
   const [error, setError] = useState<string | null>(null);
-  const [draftHref, setDraftHref] = useState<string | null>(null);
+  const [draftHref, setDraftHref] = useState<string | null>(
+    existing ? `/c/${slug}/collections/${existing.collectionSlug}` : null,
+  );
   // Set once the draft is created, at the Contribution → Cover image
   // transition (§1/§33: the flyer belongs in the creation flow, not hidden in
   // settings — which means a real collection has to exist by the time this
   // step renders, so its uploader has something to attach the image to).
-  const [draftId, setDraftId] = useState<string | null>(null);
-  const [draftSlug, setDraftSlug] = useState<string | null>(null);
-  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(null);
+  const [draftId, setDraftId] = useState<string | null>(existing?.collectionId ?? null);
+  const [draftSlug, setDraftSlug] = useState<string | null>(existing?.collectionSlug ?? null);
+  const [coverImageUrl, setCoverImageUrl] = useState<string | null>(existing?.coverImageUrl ?? null);
 
-  const [intent, setIntent] = useState<Intent>(INTENTS[0]!);
-  const [name, setName] = useState("");
-  const [description, setDescription] = useState("");
-  const [deadlineAt, setDeadlineAt] = useState("");
-  const [amountModel, setAmountModel] = useState<AmountModelKey>(INTENTS[0]!.amountModel);
+  const [intent, setIntent] = useState<Intent>(initialIntent);
+  const [name, setName] = useState(existing?.name ?? "");
+  const [description, setDescription] = useState(existing?.description ?? "");
+  const [deadlineAt, setDeadlineAt] = useState(existing?.deadlineAt ?? "");
+  const [amountModel, setAmountModel] = useState<AmountModelKey>(existing?.amountModel ?? initialIntent.amountModel);
   const [participationMode, setParticipationMode] = useState<Intent["participationMode"]>(
-    INTENTS[0]!.participationMode,
+    existing?.participationMode ?? initialIntent.participationMode,
   );
-  const [fixedAmount, setFixedAmount] = useState("");
-  const [minAmount, setMinAmount] = useState("");
-  const [maxAmount, setMaxAmount] = useState("");
-  const [targetAmount, setTargetAmount] = useState("");
-  const [suggestedAmounts, setSuggestedAmounts] = useState<string[]>([]);
-  const [story, setStory] = useState<StoryDraft>(emptyStory());
-  const [tiers, setTiers] = useState<TierDraft[]>([emptyTier()]);
-  const [items, setItems] = useState<ItemDraft[]>([emptyItem()]);
-  const [eventDraft, setEventDraft] = useState<EventDraft>(emptyEvent());
-  const [recurrence, setRecurrence] = useState<RecurrenceDraft>(emptyRecurrence());
-  const [questions, setQuestions] = useState<QuestionDraft[]>([]);
-  const [visibility, setVisibility] = useState<"public" | "unlisted">("unlisted");
+  const [fixedAmount, setFixedAmount] = useState(existing?.fixedAmount ?? "");
+  const [minAmount, setMinAmount] = useState(existing?.minAmount ?? "");
+  const [maxAmount, setMaxAmount] = useState(existing?.maxAmount ?? "");
+  const [targetAmount, setTargetAmount] = useState(existing?.targetAmount ?? "");
+  const [suggestedAmounts, setSuggestedAmounts] = useState<string[]>(existing?.suggestedAmounts ?? []);
+  const [story, setStory] = useState<StoryDraft>(existing?.story ?? emptyStory());
+  const [tiers, setTiers] = useState<TierDraft[]>(
+    existing && existing.tiers.length > 0 ? existing.tiers : [emptyTier()],
+  );
+  const [items, setItems] = useState<ItemDraft[]>(
+    existing && existing.items.length > 0 ? existing.items : [emptyItem()],
+  );
+  const [eventDraft, setEventDraft] = useState<EventDraft>(existing?.event ?? emptyEvent());
+  const [recurrence, setRecurrence] = useState<RecurrenceDraft>(existing?.recurrence ?? emptyRecurrence());
+  const [questions, setQuestions] = useState<QuestionDraft[]>(existing?.questions ?? []);
+  const [visibility, setVisibility] = useState<"public" | "unlisted">(existing?.visibility ?? "unlisted");
   const [audienceMode, setAudienceMode] = useState<CollectionAudienceMode>(
-    INTENTS[0]!.participationMode === "open" ? "public" : "all_members",
+    existing?.audienceMode ?? (initialIntent.participationMode === "open" ? "public" : "all_members"),
   );
-  const [audienceGroupIds, setAudienceGroupIds] = useState<string[]>([]);
+  const [audienceGroupIds, setAudienceGroupIds] = useState<string[]>(existing?.audienceGroupIds ?? []);
+
+  /** The step names this kind of collection uses (part A1). */
+  const steps = intent.steps ?? DEFAULT_STEPS;
 
   const collects = intent.collects ?? {};
 
@@ -439,7 +514,13 @@ export function NewCollectionForm({
     setError(null);
     startTransition(async () => {
       const ok = await persistStep(step);
-      if (ok) setStep((current) => Math.min(STEPS.length - 1, current + 1));
+      if (!ok) return;
+      const next = Math.min(steps.length - 1, step + 1);
+      setStep(next);
+      // Where to come back to (part A4). Best-effort: a draft that remembers
+      // the wrong step is an inconvenience, and a save refused because of one
+      // would be a lost collection.
+      if (draftId && draftSlug) void rememberStepAction(slug, draftSlug, draftId, next);
     });
   }
 
@@ -463,9 +544,11 @@ export function NewCollectionForm({
         <Link href={`/c/${slug}/collections`} className="text-xs font-medium text-[var(--color-text-muted)] hover:underline">
           ← Collections
         </Link>
-        <h1 className="text-xl font-semibold text-[var(--color-text)]">New collection</h1>
+        <h1 className="text-xl font-semibold text-[var(--color-text)]">
+          {existing ? name || "Continue this draft" : "New collection"}
+        </h1>
         <p className="text-sm text-[var(--color-text-muted)]">
-          Step {step + 1} of {STEPS.length} · {STEPS[step]}
+          Step {step + 1} of {steps.length} · {steps[step]}
         </p>
         {draftId && (
           <p className="text-xs text-[var(--color-text-muted)]">
@@ -480,7 +563,7 @@ export function NewCollectionForm({
       </div>
 
       <ol className="flex gap-1" aria-label="Progress">
-        {STEPS.map((label, index) => (
+        {steps.map((label, index) => (
           <li
             key={label}
             aria-current={index === step ? "step" : undefined}
@@ -776,7 +859,7 @@ export function NewCollectionForm({
           <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
         </Button>
 
-        {step === STEPS.length - 1 ? (
+        {step === steps.length - 1 ? (
           <Button type="button" loading={isPending} onClick={finish}>
             <Check className="h-4 w-4" aria-hidden="true" /> Open this draft
           </Button>
