@@ -49,9 +49,13 @@ describe("createCollectionSchema", () => {
     assert.equal(createCollectionSchema.safeParse(fixedCollection()).success, true);
   });
 
-  it("requires an amount when everyone pays the same", () => {
+  it("accepts a fixed collection with no amount yet — a draft is allowed to be unfinished", () => {
+    // M7.5 saves each wizard step as it completes, so the row exists before
+    // the amount is typed (20260921160000). What stops a priceless collection
+    // reaching a contributor is the publish gate in
+    // app.transition_collection_status, not this schema.
     const result = createCollectionSchema.safeParse(fixedCollection({ fixedAmount: undefined }));
-    assert.equal(result.success, false);
+    assert.equal(result.success, true);
   });
 
   it("refuses a single amount on a collection that is not fixed", () => {

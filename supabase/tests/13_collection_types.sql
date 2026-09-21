@@ -17,7 +17,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(44);
+select plan(48);
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
 insert into auth.users (id, instance_id, aud, role, email) values
@@ -472,6 +472,45 @@ select throws_ok(
 select lives_ok(
   format($$ select app.set_collection_cover(%L, null) $$, (select id from tmp_fund)),
   'a flyer can be removed'
+);
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- A draft may be unfinished; a published collection may not (20260921160000)
+--
+-- M7.5 saves each wizard step as it completes, so a fixed collection becomes a
+-- row before anyone has typed its amount. What that must never do is let a
+-- contributor reach a collection with no price.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+create temporary table tmp_unpriced as
+  select app.create_collection(
+    '92000000-0000-4000-8000-00000000000a', 'Unpriced Dues', 'dues', 'managed', 'fixed'
+  ) as id;
+
+select ok(
+  (select fixed_amount_kobo is null from public.collections where id = (select id from tmp_unpriced)),
+  'a fixed collection can be drafted before anyone has typed the amount'
+);
+
+select throws_ok(
+  format($$ select app.transition_collection_status(%L, 'draft', 'active') $$, (select id from tmp_unpriced)),
+  'P0001', null,
+  'publishing a fixed collection with no amount is refused'
+);
+
+select lives_ok(
+  format(
+    $$ select app.update_collection(%L, 'Unpriced Dues', 'dues', null, 'fixed', 'managed', 'full_only', 500000) $$,
+    (select id from tmp_unpriced)
+  ),
+  'the amount can be filled in afterwards'
+);
+
+select is(
+  app.transition_collection_status((select id from tmp_unpriced), 'draft', 'active')::text,
+  'active',
+  'and then the same collection publishes'
 );
 
 reset role;

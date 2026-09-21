@@ -130,8 +130,15 @@ function checkCollectionConfig(
   },
   ctx: z.RefinementCtx,
 ): void {
-  if (value.amountModel === "fixed" && !value.fixedAmount) {
-    ctx.addIssue({ code: "custom", path: ["fixedAmount"], message: "Set the amount everyone pays" });
+  // Deliberately NOT "a fixed collection must have an amount". A draft is the
+  // unfinished state, and M7.5 saves each wizard step as it is completed —
+  // which means a fixed collection exists as a row before the amount has been
+  // typed (20260921160000). The rule that matters is enforced where a
+  // contributor could actually be affected by it:
+  // `app.transition_collection_status` refuses to publish a fixed collection
+  // with no amount. Repeating it here would only block saving the draft.
+  if (value.amountModel !== "fixed" && value.fixedAmount) {
+    ctx.addIssue({ code: "custom", path: ["fixedAmount"], message: "Only a fixed collection has a single amount" });
   }
   if (value.amountModel !== "fixed" && value.fixedAmount) {
     ctx.addIssue({ code: "custom", path: ["fixedAmount"], message: "Only a fixed collection has a single amount" });
