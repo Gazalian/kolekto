@@ -93,3 +93,78 @@ test("invite with preset group and required field, then join as a stranger", asy
   await expect(row).toContainText("21/SCI/456");
   await expect(row).toContainText("300 Level");
 });
+
+test("a joiner chooses their own group, and only the groups the link offers", async ({ page, browser }) => {
+  await signInAsNewUser(page, "e2e-invite-groups");
+
+  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.waitForLoadState("networkidle");
+  const communityName = `E2E Group Choice ${Date.now()}`;
+  await page.getByLabel("Community name").fill(communityName);
+  await page.getByLabel("Type").selectOption("university_association");
+  await page.getByRole("button", { name: "Create community" }).click();
+  await expect(page).toHaveURL(/\/c\//);
+
+  await page.getByRole("link", { name: "Members" }).click();
+  await page.waitForLoadState("networkidle");
+
+  // Three levels a joiner may pick from, and one group they may not: the
+  // difference is "People joining by invite link can put themselves in this
+  // group", which is the officer's decision, not the joiner's (§9).
+  await page.getByRole("button", { name: "Groups" }).click();
+  for (const [name, pickable] of [
+    ["100 Level", true],
+    ["200 Level", true],
+    ["Executive", false],
+  ] as const) {
+    await page.getByRole("button", { name: "New group" }).click();
+    const groupDialog = page.getByRole("dialog");
+    await groupDialog.getByLabel("Name").fill(name);
+    if (pickable) {
+      await groupDialog.getByLabel("People joining by invite link can put themselves in this group").check();
+    }
+    await groupDialog.getByRole("button", { name: "Create group" }).click();
+    await expect(page.getByText("Group saved.")).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Close" }).click();
+  await page.waitForLoadState("networkidle");
+
+  // A link that lets joiners choose, one group only.
+  await page.getByRole("button", { name: "Invite link" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.getByLabel("Label").fill("Choose your level");
+  await dialog.getByRole("checkbox", { name: "Let joiners pick a group themselves" }).check();
+  await dialog.getByRole("button", { name: "Create link" }).click();
+
+  await expect(page.getByText("shown only once")).toBeVisible();
+  const inviteUrl = await page.getByRole("textbox", { name: "Invite link" }).inputValue();
+  await page.getByRole("button", { name: "Close" }).click();
+
+  // ── The joiner: a different person, a different device, no session ───────
+  const stranger = await browser.newContext();
+  const joinPage = await stranger.newPage();
+  await joinPage.goto(inviteUrl);
+  await joinPage.waitForLoadState("networkidle");
+
+  await expect(joinPage.getByText("Which group suits you?")).toBeVisible();
+  await expect(joinPage.getByRole("radio", { name: "100 Level" })).toBeVisible();
+  await expect(joinPage.getByRole("radio", { name: "200 Level" })).toBeVisible();
+  // The group the officer did not open to joiners is not offered at all — the
+  // page never learns it exists.
+  await expect(joinPage.getByText("Executive")).toHaveCount(0);
+
+  await joinPage.getByRole("radio", { name: "200 Level" }).check();
+  await joinPage.getByLabel("Full name").fill("Tunde Chooser");
+  await joinPage.getByLabel("Phone number").fill("+2348062220099");
+  await joinPage.getByRole("button", { name: "Join" }).click();
+
+  await expect(joinPage.getByText(`Welcome to ${communityName}`)).toBeVisible();
+  await stranger.close();
+
+  // ── The officer sees them in the group they chose, and no other ──────────
+  await page.reload();
+  await page.waitForLoadState("networkidle");
+  const row = page.getByRole("row", { name: /Tunde Chooser/ });
+  await expect(row).toContainText("200 Level");
+  await expect(row).not.toContainText("100 Level");
+});

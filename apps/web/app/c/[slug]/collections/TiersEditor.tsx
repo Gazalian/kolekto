@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, TextField } from "@kolekto/ui";
-import { Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
 
 /**
  * The options a tiered collection offers.
@@ -35,6 +35,23 @@ export function TiersEditor({
     onChange(tiers.map((tier, i) => (i === index ? { ...tier, ...patch } : tier)));
   }
 
+  /**
+   * Moves one option up or down the list. Order is what the contributor sees
+   * on the public page, and it is saved as `sortOrder` from this array's own
+   * positions — so swapping two entries here is the whole change. The rows
+   * carry their ids with them, so reordering renames nothing and re-creates
+   * nothing (ADR 0010).
+   */
+  function move(index: number, direction: -1 | 1): void {
+    const target = index + direction;
+    if (target < 0 || target >= tiers.length) return;
+    const next = [...tiers];
+    const moved = next[index]!;
+    next[index] = next[target]!;
+    next[target] = moved;
+    onChange(next);
+  }
+
   const duplicateNames = new Set(
     tiers
       .map((tier) => tier.name.trim().toLowerCase())
@@ -50,6 +67,31 @@ export function TiersEditor({
             key={tier.id ?? index}
             className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
           >
+            {tiers.length > 1 && !disabled && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-[var(--color-text-muted)]">Option {index + 1}</span>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Move ${tier.name || `option ${index + 1}`} up`}
+                    disabled={index === 0}
+                    className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40"
+                    onClick={() => move(index, -1)}
+                  >
+                    <ChevronUp className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${tier.name || `option ${index + 1}`} down`}
+                    disabled={index === tiers.length - 1}
+                    className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40"
+                    onClick={() => move(index, 1)}
+                  >
+                    <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            )}
             <div className="grid gap-3 sm:grid-cols-2">
               <TextField
                 label="Option name"

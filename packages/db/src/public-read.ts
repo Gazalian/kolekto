@@ -29,6 +29,8 @@ export interface PublicCollection {
   category: string;
   participation_mode: "open" | "managed";
   amount_model: "fixed" | "open_amount" | "tiers" | "per_member" | "items";
+  /** Whether this collection repeats. A recurring charge reads differently from a one-off on the public page (§10). */
+  schedule: "one_time" | "recurring";
   /** Whether this collection is for anyone with the link, or for a named list of members. Who those members are never travels. */
   audience_mode: "all_members" | "groups" | "selected_members" | "public";
   payment_plan: "full_only" | "installments_allowed";

@@ -101,6 +101,12 @@ export interface TierSelectionLine {
   readonly quantity: number;
 }
 
+/** One line of a multi-item order: this item, this many — the aso-ebi case, "2 yards blue, 4 yards gold". */
+export interface ItemSelectionLine {
+  readonly itemId: string;
+  readonly quantity: number;
+}
+
 /** What the contributor's browser sent. Every field is untrusted. */
 export interface ContributionSelection {
   /** A single option, quantity always one — the plain "choose one" shape most tiered collections still use. */
@@ -113,13 +119,28 @@ export interface ContributionSelection {
    */
   readonly tierSelections?: readonly TierSelectionLine[] | undefined;
   readonly amountKobo?: Kobo | undefined;
+  /** A single item, quantity given separately — the original "choose one thing" shape. */
   readonly itemId?: string | undefined;
   readonly quantity?: number | undefined;
+  /**
+   * Several items, each with its own quantity — an order with more than one
+   * line, the same relationship `tierSelections` has to `tierId`. Takes
+   * priority over `itemId` when both are present.
+   */
+  readonly itemSelections?: readonly ItemSelectionLine[] | undefined;
 }
 
 /** One resolved line of a multi-option order, for a receipt or a confirmation screen. */
 export interface ResolvedTierLine {
   readonly tierId: string;
+  readonly name: string;
+  readonly quantity: number;
+  readonly amountKobo: Kobo;
+}
+
+/** One resolved line of a multi-item order. */
+export interface ResolvedItemLine {
+  readonly itemId: string;
   readonly name: string;
   readonly quantity: number;
   readonly amountKobo: Kobo;
@@ -134,6 +155,8 @@ export interface ResolvedContribution {
   readonly quantity?: number | null;
   /** Present only when `tierSelections` resolved more than one line — the per-tier breakdown `amountKobo` is the sum of. */
   readonly lines?: readonly ResolvedTierLine[] | undefined;
+  /** Present only when `itemSelections` resolved the order — the per-item breakdown `amountKobo` is the sum of. */
+  readonly itemLines?: readonly ResolvedItemLine[] | undefined;
 }
 
 export type ContributionErrorCode =
@@ -249,6 +272,71 @@ function resolveTierBasket(
   return { amountKobo: total, tierId: resolved.length === 1 ? resolved[0]!.tierId : null, lines: resolved };
 }
 
+/**
+ * Several item lines, each with its own quantity, summed into one order — an
+ * aso-ebi order with both the blue and the gold, or a food order with jollof
+ * and a drink. Same shape and same checks as `resolveTierBasket`: a quantity
+ * multiplies a price, so it is bounded against the item's own row (stock,
+ * per-order limit) rather than trusted from the browser, whichever kind of
+ * option it is attached to.
+ */
+function resolveItemBasket(
+  items: readonly ContributionItem[],
+  lines: readonly ItemSelectionLine[],
+): ResolvedContribution {
+  const seen = new Set<string>();
+  const resolved: ResolvedItemLine[] = [];
+  let total = ZERO;
+
+  for (const line of lines) {
+    const item = items.find((candidate) => candidate.id === line.itemId);
+    if (!item) {
+      throw new ContributionError("UNKNOWN_ITEM", "One of the items chosen is no longer available.");
+    }
+    if (seen.has(item.id)) {
+      throw new ContributionError("UNKNOWN_ITEM", `"${item.name}" was chosen more than once. Combine it into one line.`);
+    }
+    seen.add(item.id);
+
+    if (item.priceKobo <= ZERO) {
+      throw new ContributionError("MISCONFIGURED", `"${item.name}" has no price set.`);
+    }
+    if (!Number.isSafeInteger(line.quantity) || line.quantity < 1) {
+      throw new ContributionError("INVALID_QUANTITY", `Enter how many of "${item.name}" you want, as a whole number.`);
+    }
+    if (item.maxPerOrder !== null && line.quantity > item.maxPerOrder) {
+      throw new ContributionError(
+        "QUANTITY_ABOVE_LIMIT",
+        `You can take at most ${item.maxPerOrder} of "${item.name}" in one order.`,
+      );
+    }
+    if (item.quantityAvailable !== null && line.quantity > item.quantityAvailable) {
+      throw new ContributionError(
+        "QUANTITY_ABOVE_LIMIT",
+        item.quantityAvailable === 0
+          ? `"${item.name}" is sold out.`
+          : `Only ${item.quantityAvailable} of "${item.name}" are left.`,
+      );
+    }
+
+    const amountKobo = (item.priceKobo * BigInt(line.quantity)) as Kobo;
+    total = (total + amountKobo) as Kobo;
+    resolved.push({ itemId: item.id, name: item.name, quantity: line.quantity, amountKobo });
+  }
+
+  if (resolved.length === 0) {
+    throw new ContributionError("ITEM_REQUIRED", "Choose at least one item before continuing.");
+  }
+
+  return {
+    amountKobo: total,
+    tierId: null,
+    itemId: resolved.length === 1 ? resolved[0]!.itemId : null,
+    quantity: resolved.length === 1 ? resolved[0]!.quantity : null,
+    itemLines: resolved,
+  };
+}
+
 export function resolveContributionAmount(
   config: ContributionConfig,
   selection: ContributionSelection,
@@ -308,6 +396,13 @@ export function resolveContributionAmount(
     }
 
     case "items": {
+      // The basket shape — several items, each with a quantity — is a catalog
+      // order with more than one line ("2 yards blue, 4 yards gold"). It takes
+      // priority when present; a single-item order never sends it.
+      if (selection.itemSelections && selection.itemSelections.length > 0) {
+        return resolveItemBasket(config.items ?? [], selection.itemSelections);
+      }
+
       if (!selection.itemId) {
         throw new ContributionError("ITEM_REQUIRED", "Choose what you are paying for before continuing.");
       }

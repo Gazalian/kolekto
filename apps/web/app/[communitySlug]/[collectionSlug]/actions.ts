@@ -55,9 +55,11 @@ export interface ContributionResult {
     tierLines: { name: string; quantity: number; amount: string }[] | null;
     /** One name per ticket unit, when the event asked for them (§18). Never persisted — shown on this confirmation and nowhere else. */
     attendees: string[] | null;
-    /** What was ordered, and how many, when the collection sells items. */
+    /** What was ordered, and how many, when the collection sells items and the order is a single line. */
     itemName: string | null;
     quantity: number | null;
+    /** Every line of a multi-item order, with its own quantity and subtotal. */
+    itemLines: { name: string; quantity: number; amount: string }[] | null;
     contributorName: string;
     /** On a managed collection: the member this contribution is for, as the server resolved them. */
     memberName: string | null;
@@ -247,6 +249,8 @@ export async function submitContributionAction(
     amount: string;
     itemId?: string;
     quantity?: string;
+    /** Several items with quantities — a catalog order with more than one line. Takes priority over `itemId`. */
+    itemSelections?: { itemId: string; quantity: string }[];
     answers: Record<string, string>;
   },
 ): Promise<ContributionResult> {
@@ -350,6 +354,14 @@ export async function submitContributionAction(
         ...(input.amount ? { amountKobo: fromNaira(input.amount) } : {}),
         ...(input.itemId ? { itemId: input.itemId } : {}),
         ...(input.quantity ? { quantity: Number(input.quantity) } : {}),
+        ...(input.itemSelections && input.itemSelections.length > 0
+          ? {
+              itemSelections: input.itemSelections.map((line) => ({
+                itemId: line.itemId,
+                quantity: Number(line.quantity),
+              })),
+            }
+          : {}),
       },
     );
   } catch (error) {
@@ -387,8 +399,18 @@ export async function submitContributionAction(
               amount: formatNaira(line.amountKobo, { decimals: false }),
             }))
           : null,
-      itemName: items.find((item) => item.id === resolved.itemId)?.name ?? null,
+      itemName: resolved.itemLines && resolved.itemLines.length > 1
+        ? null
+        : items.find((item) => item.id === resolved.itemId)?.name ?? null,
       quantity: resolved.quantity ?? null,
+      itemLines:
+        resolved.itemLines && resolved.itemLines.length > 1
+          ? resolved.itemLines.map((line) => ({
+              name: line.name,
+              quantity: line.quantity,
+              amount: formatNaira(line.amountKobo, { decimals: false }),
+            }))
+          : null,
       contributorName: contact.data.fullName,
       memberName: memberContext?.full_name ?? null,
       memberCode: memberContext?.member_code ?? null,

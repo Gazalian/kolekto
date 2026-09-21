@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   type ContributionConfig,
   ContributionError,
+  type ItemSelectionLine,
   resolveContributionAmount,
   type TierSelectionLine,
 } from "../src/contribution.ts";
@@ -269,6 +270,93 @@ describe("item collections", () => {
     assert.throws(
       () => resolveContributionAmount(scarce, { itemId: ITEM_BLUE, quantity: 2 }),
       (error: unknown) => error instanceof ContributionError && error.code === "QUANTITY_ABOVE_LIMIT",
+    );
+  });
+});
+
+describe("an item order with more than one line", () => {
+  const BLUE = "01930000-0000-7000-8000-000000000041";
+  const GOLD = "01930000-0000-7000-8000-000000000042";
+
+  const catalog = config({
+    amountModel: "items",
+    items: [
+      { id: BLUE, name: "Blue", priceKobo: kobo(3_500_000), quantityAvailable: 40, maxPerOrder: 4 },
+      { id: GOLD, name: "Gold", priceKobo: kobo(5_000_000), quantityAvailable: null, maxPerOrder: null },
+    ],
+  });
+
+  function order(lines: ItemSelectionLine[]) {
+    return resolveContributionAmount(catalog, { itemSelections: lines });
+  }
+
+  it("sums two different items into one authoritative total", () => {
+    const resolved = order([
+      { itemId: BLUE, quantity: 2 },
+      { itemId: GOLD, quantity: 4 },
+    ]);
+
+    // 2 × ₦35,000 + 4 × ₦50,000
+    assert.equal(resolved.amountKobo, 27_000_000n);
+    assert.equal(resolved.itemLines?.length, 2);
+    assert.equal(resolved.itemLines?.find((line) => line.itemId === BLUE)?.amountKobo, 7_000_000n);
+    assert.equal(resolved.itemLines?.find((line) => line.itemId === GOLD)?.amountKobo, 20_000_000n);
+    // More than one line — there is no single item this order "is for".
+    assert.equal(resolved.itemId, null);
+  });
+
+  it("still names the item when the basket holds exactly one line", () => {
+    const resolved = order([{ itemId: GOLD, quantity: 3 }]);
+    assert.equal(resolved.amountKobo, 15_000_000n);
+    assert.equal(resolved.itemId, GOLD);
+    assert.equal(resolved.quantity, 3);
+  });
+
+  it("enforces each line's own per-order limit", () => {
+    assert.throws(
+      () => order([{ itemId: BLUE, quantity: 5 }]),
+      (error: unknown) => error instanceof ContributionError && error.code === "QUANTITY_ABOVE_LIMIT",
+    );
+  });
+
+  it("enforces each line's own remaining stock", () => {
+    const scarce = config({
+      amountModel: "items",
+      items: [{ id: BLUE, name: "Blue", priceKobo: kobo(100), quantityAvailable: 1, maxPerOrder: null }],
+    });
+    assert.throws(
+      () => resolveContributionAmount(scarce, { itemSelections: [{ itemId: BLUE, quantity: 2 }] }),
+      (error: unknown) => error instanceof ContributionError && error.code === "QUANTITY_ABOVE_LIMIT",
+    );
+  });
+
+  it("refuses a non-whole or non-positive quantity on any line", () => {
+    for (const quantity of [0, -1, 1.5, Number.NaN]) {
+      assert.throws(
+        () => order([{ itemId: GOLD, quantity }]),
+        (error: unknown) => error instanceof ContributionError && error.code === "INVALID_QUANTITY",
+      );
+    }
+  });
+
+  it("refuses an item chosen twice rather than silently combining it", () => {
+    assert.throws(
+      () => order([{ itemId: GOLD, quantity: 1 }, { itemId: GOLD, quantity: 2 }]),
+      (error: unknown) => error instanceof ContributionError && error.code === "UNKNOWN_ITEM",
+    );
+  });
+
+  it("refuses an item that does not belong to this collection", () => {
+    assert.throws(
+      () => order([{ itemId: "01930000-0000-7000-8000-00000000ffff", quantity: 1 }]),
+      (error: unknown) => error instanceof ContributionError && error.code === "UNKNOWN_ITEM",
+    );
+  });
+
+  it("refuses an empty basket", () => {
+    assert.throws(
+      () => order([]),
+      (error: unknown) => error instanceof ContributionError && error.code === "ITEM_REQUIRED",
     );
   });
 });

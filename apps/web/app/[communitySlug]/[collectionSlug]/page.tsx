@@ -54,6 +54,34 @@ export default async function PublicCollectionPage({
     getPublicCollectionFields(collection.collection_id),
   ]);
 
+  /**
+   * One sentence naming what this collection is, in the vocabulary of its own
+   * type. Deliberately not a badge or a colour — a contributor reads words.
+   * A ticketed event and a fundraiser are left out: both already lead with
+   * something better than a sentence (the event block, the story block).
+   */
+  const leadLine = (() => {
+    if (collection.category === "event" || collection.category === "fundraiser") return null;
+    if (collection.schedule === "recurring") {
+      return "A recurring charge. Each period is asked for separately — paying one does not settle the next.";
+    }
+    if (collection.amount_model === "items") {
+      return items.length === 1
+        ? "An order. Choose how many you want."
+        : `An order. ${items.length} items to choose from, each with its own quantity.`;
+    }
+    if (collection.amount_model === "tiers") {
+      return tiers.length === 1 ? "One package to choose." : `${tiers.length} packages — choose the one that suits you.`;
+    }
+    if (collection.amount_model === "open_amount") {
+      return "Give what you can. You choose the amount.";
+    }
+    if (collection.amount_model === "fixed") {
+      return "One set amount, the same for everyone.";
+    }
+    return null;
+  })();
+
   const deadline = collection.deadline_at ? new Date(collection.deadline_at) : null;
   // When the event is, which is a different date from when the collection stops
   // selling tickets for it.
@@ -101,6 +129,18 @@ export default async function PublicCollectionPage({
           {collection.target_amount_kobo && <span>Target: {naira(collection.target_amount_kobo)}</span>}
         </div>
       </header>
+
+      {/* §10/§25: what kind of thing this is, in its own terms, before the
+          contributor reads anything else. A ticketed event leads with its
+          date and venue (the block below), a fundraiser with its story (the
+          block after that); everything else says plainly what it is asking
+          for, because "Alumni Dinner 2026" alone does not tell a contributor
+          whether they are buying, ordering, joining or giving. */}
+      {leadLine && (
+        <p className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 text-sm font-medium text-[var(--color-text)]">
+          {leadLine}
+        </p>
+      )}
 
       {/* §5/§19/§25: a fundraiser reads cause/story first, ahead of the event
           block (which is empty here — fundraisers have no event) and the

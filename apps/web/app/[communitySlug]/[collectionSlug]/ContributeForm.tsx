@@ -94,8 +94,12 @@ export function ContributeForm({
   // One name per ticket unit, when the event asks for it — index-aligned to
   // "however many tickets are in the basket right now", not to any one tier.
   const [attendeeNames, setAttendeeNames] = useState<string[]>([]);
-  const [itemId, setItemId] = useState("");
-  const [quantity, setQuantity] = useState("1");
+  // An item order is a basket: item id → quantity, for as many items as the
+  // contributor wants. `itemId`/`quantity` remain for nothing but the legacy
+  // single-line shape the resolver still accepts.
+  const [itemQuantities, setItemQuantities] = useState<Record<string, string>>({});
+  const [itemId] = useState("");
+  const [quantity] = useState("1");
   const [amount, setAmount] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
@@ -107,10 +111,30 @@ export function ContributeForm({
 
   // How many ticket units are in the basket right now — the number of
   // attendee-name fields to show, when the event asks for them.
+  // Floored, so this always agrees with `attendeeSlots.length` below. A
+  // fractional quantity is refused by the server either way; it just must not
+  // make the form ask for half an attendee.
   const ticketQuantityTotal = Object.values(tierQuantities).reduce((sum, qty) => {
     const parsed = Number(qty);
-    return sum + (Number.isFinite(parsed) && parsed > 0 ? parsed : 0);
+    return sum + (Number.isFinite(parsed) && parsed >= 1 ? Math.floor(parsed) : 0);
   }, 0);
+
+  /** How many distinct items are in the basket — not how many units. */
+  const orderedItemCount = Object.keys(itemQuantities).length;
+
+  /**
+   * One label per ticket unit, named after the ticket type it belongs to —
+   * "VIP — attendee 1", "VIP — attendee 2", "Regular — attendee 1" — rather
+   * than an undifferentiated "Ticket 3". Built in the same order the basket
+   * is submitted in, so the nth name belongs to the nth ticket the server
+   * resolves.
+   */
+  const attendeeSlots = Object.entries(tierQuantities).flatMap(([id, qty]) => {
+    const parsed = Number(qty);
+    if (!Number.isFinite(parsed) || parsed < 1) return [];
+    const name = tiers.find((tier) => tier.id === id)?.name ?? "Ticket";
+    return Array.from({ length: Math.floor(parsed) }, (_, index) => `${name} — attendee ${index + 1}`);
+  });
 
   // A managed collection asks named people, so it asks who is here first.
   // Nothing about amounts, questions or contact details appears until the
@@ -185,6 +209,19 @@ export function ContributeForm({
               </dd>
             </div>
           )}
+          {done.itemLines && (
+            <div className="flex flex-col gap-1 py-2 text-sm">
+              <dt className="text-[var(--color-text-muted)]">You ordered</dt>
+              {done.itemLines.map((line) => (
+                <dd key={line.name} className="flex justify-between gap-3 font-medium text-[var(--color-text)]">
+                  <span>
+                    {line.quantity} × {line.name}
+                  </span>
+                  <span>{line.amount}</span>
+                </dd>
+              ))}
+            </div>
+          )}
           <div className="flex justify-between gap-3 py-2 text-sm">
             <dt className="text-[var(--color-text-muted)]">Amount</dt>
             <dd className="font-medium text-[var(--color-text)]">{done.amount}</dd>
@@ -241,6 +278,13 @@ export function ContributeForm({
         amount,
         itemId,
         quantity,
+        ...(orderedItemCount > 0
+          ? {
+              itemSelections: Object.entries(itemQuantities)
+                .filter(([, qty]) => qty.trim() !== "")
+                .map(([id, qty]) => ({ itemId: id, quantity: qty })),
+            }
+          : {}),
         answers,
       });
       if (result.error) setError(result.error);
@@ -367,10 +411,10 @@ export function ContributeForm({
           <p className="text-xs text-[var(--color-text-muted)]">
             One name per ticket — {ticketQuantityTotal} in this order.
           </p>
-          {Array.from({ length: ticketQuantityTotal }, (_, index) => (
+          {attendeeSlots.map((slot, index) => (
             <TextField
               key={index}
-              label={`Ticket ${index + 1} — name`}
+              label={slot}
               value={attendeeNames[index] ?? ""}
               required
               onChange={(event) =>
@@ -449,70 +493,86 @@ export function ContributeForm({
         </section>
       )}
 
+      {/* A catalog, not a single choice (§6): an order may hold several items,
+          each with its own quantity. The subtotals shown here are a
+          convenience — the server re-derives every one of them from the
+          collection's own prices before anything is owed. */}
       {amountModel === "items" && (
         <fieldset className="flex flex-col gap-2">
           <legend className="mb-2 text-sm font-semibold text-[var(--color-text)]">What are you ordering?</legend>
           {items.map((item) => {
             const soldOut = item.quantityAvailable === 0;
+            const chosen = item.id in itemQuantities;
             return (
-              <label
+              <div
                 key={item.id}
                 className={
-                  itemId === item.id
-                    ? "flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border-2 border-[var(--color-primary)] p-3"
+                  chosen
+                    ? "flex flex-col gap-2 rounded-[var(--radius-md)] border-2 border-[var(--color-primary)] p-3"
                     : soldOut
-                      ? "flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 opacity-60"
-                      : "flex cursor-pointer items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
+                      ? "flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3 opacity-60"
+                      : "flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
                 }
               >
-                <input
-                  type="radio"
-                  name="item"
-                  value={item.id}
-                  checked={itemId === item.id}
-                  disabled={soldOut}
-                  onChange={() => setItemId(item.id)}
-                  className="mt-1 h-4 w-4"
-                />
-                {item.imageUrl && (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={item.imageUrl}
-                    alt=""
-                    className="h-14 w-14 flex-shrink-0 rounded-[var(--radius-sm)] border border-[var(--color-border)] object-cover"
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input
+                    type="checkbox"
+                    checked={chosen}
+                    disabled={soldOut}
+                    onChange={(event) =>
+                      setItemQuantities((current) => {
+                        const next = { ...current };
+                        if (event.target.checked) next[item.id] = "1";
+                        else delete next[item.id];
+                        return next;
+                      })
+                    }
+                    className="mt-1 h-4 w-4"
+                  />
+                  {item.imageUrl && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={item.imageUrl}
+                      alt=""
+                      className="h-14 w-14 flex-shrink-0 rounded-[var(--radius-sm)] border border-[var(--color-border)] object-cover"
+                    />
+                  )}
+                  <span className="flex flex-1 flex-col">
+                    <span className="flex items-center justify-between gap-3">
+                      <span className="font-medium text-[var(--color-text)]">{item.name}</span>
+                      <span className="text-sm font-medium text-[var(--color-text)]">{item.price}</span>
+                    </span>
+                    {item.description && (
+                      <span className="text-sm text-[var(--color-text-muted)]">{item.description}</span>
+                    )}
+                    {item.quantityAvailable !== null && (
+                      <span className="text-xs text-[var(--color-text-muted)]">
+                        {soldOut ? "Sold out" : `${item.quantityAvailable} left`}
+                      </span>
+                    )}
+                  </span>
+                </label>
+                {chosen && (
+                  <TextField
+                    label={`How many ${item.name}?`}
+                    inputMode="numeric"
+                    value={itemQuantities[item.id] ?? "1"}
+                    required
+                    hint={item.maxPerOrder ? `Up to ${item.maxPerOrder} per person.` : "A whole number."}
+                    onChange={(event) =>
+                      setItemQuantities((current) => ({ ...current, [item.id]: event.target.value }))
+                    }
                   />
                 )}
-                <span className="flex flex-1 flex-col">
-                  <span className="flex items-center justify-between gap-3">
-                    <span className="font-medium text-[var(--color-text)]">{item.name}</span>
-                    <span className="text-sm font-medium text-[var(--color-text)]">{item.price}</span>
-                  </span>
-                  {item.description && (
-                    <span className="text-sm text-[var(--color-text-muted)]">{item.description}</span>
-                  )}
-                  {item.quantityAvailable !== null && (
-                    <span className="text-xs text-[var(--color-text-muted)]">
-                      {soldOut ? "Sold out" : `${item.quantityAvailable} left`}
-                    </span>
-                  )}
-                </span>
-              </label>
+              </div>
             );
           })}
 
-          {itemId && (
-            <TextField
-              label="How many?"
-              inputMode="numeric"
-              value={quantity}
-              required
-              hint={(() => {
-                const chosen = items.find((item) => item.id === itemId);
-                if (chosen?.maxPerOrder) return `Up to ${chosen.maxPerOrder} per person.`;
-                return "A whole number.";
-              })()}
-              onChange={(event) => setQuantity(event.target.value)}
-            />
+          {orderedItemCount > 0 && (
+            <p className="text-sm text-[var(--color-text-muted)]">
+              {orderedItemCount} item{orderedItemCount === 1 ? "" : "s"} in this order. {organiser} confirms the
+              total when you continue.
+            </p>
           )}
         </fieldset>
       )}

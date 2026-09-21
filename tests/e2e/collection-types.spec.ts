@@ -156,8 +156,9 @@ test("an item collection prices an order by the item chosen and how many", async
   await contributor.goto(`/${communitySlug}/aso-ebi-order-2026`);
   await contributor.waitForLoadState("networkidle");
 
-  await contributor.getByRole("radio").nth(1).check(); // Gold, ₦50,000
-  await contributor.getByLabel("How many?").fill("3");
+  // An order is a basket: one line here, several in the next assertion.
+  await contributor.getByRole("checkbox").nth(1).check(); // Gold, ₦50,000
+  await contributor.getByLabel("How many Gold?").fill("3");
   await contributor.getByLabel("Full name").fill("Ada Obi");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
@@ -165,13 +166,23 @@ test("an item collection prices an order by the item chosen and how many", async
   await expect(contributor.getByText("3 × Gold")).toBeVisible();
   await expect(contributor.getByText("₦150,000").first()).toBeVisible();
 
+  // §6: several different items in one order, totalled by the server from its
+  // own prices — 2 × ₦35,000 + 3 × ₦50,000.
+  await contributor.getByRole("button", { name: "Back to the form" }).click();
+  await contributor.getByRole("checkbox").first().check(); // Blue, ₦35,000, at most 2
+  await contributor.getByLabel("How many Blue?").fill("2");
+  await contributor.getByRole("button", { name: "Continue" }).click();
+
+  await expect(contributor.getByText("2 × Blue")).toBeVisible();
+  await expect(contributor.getByText("3 × Gold")).toBeVisible();
+  await expect(contributor.getByText("₦220,000").first()).toBeVisible();
+
   // The per-order limit is the database's, and it is enforced whatever the
   // browser shows.
   await contributor.getByRole("button", { name: "Back to the form" }).click();
-  await contributor.getByRole("radio").first().check(); // Blue, at most 2
-  await contributor.getByLabel("How many?").fill("5");
+  await contributor.getByLabel("How many Blue?").fill("5");
   await contributor.getByRole("button", { name: "Continue" }).click();
-  await expect(contributor.getByText(/at most 2 of that in one order/i)).toBeVisible();
+  await expect(contributor.getByText(/at most 2 of "Blue" in one order/i)).toBeVisible();
 
   await anonymous.close();
 });
@@ -470,4 +481,134 @@ test("a ticket buyer can take more than one type, and name an attendee per ticke
   await expect(contributor.getByText("Ada Obi, Bola Ade, Chidi Eze")).toBeVisible();
 
   await anonymous.close();
+});
+
+test("ticket types can be reordered, and the public page follows that order", async ({ page, browser }) => {
+  await signInAsNewUser(page, "e2e-types");
+  const communitySlug = await createCommunity(page, `E2E Reorder ${Date.now()}`);
+
+  await startCollection(page, /Options at different prices/, "Sponsor Packages 2026");
+  await page.getByLabel("Option name").first().fill("Bronze");
+  await page.getByLabel("Price").first().fill("5000");
+  await page.getByRole("button", { name: "Add another option" }).click();
+  await page.getByLabel("Option name").nth(1).fill("Gold");
+  await page.getByLabel("Price").nth(1).fill("25000");
+
+  // Gold moves above Bronze. The ids travel with the rows, so this is a
+  // reorder and not a rename — the price that was typed against Gold stays
+  // against Gold.
+  await page.getByRole("button", { name: "Move Gold up" }).click();
+  await expect(page.getByLabel("Option name").first()).toHaveValue("Gold");
+  await expect(page.getByLabel("Price").first()).toHaveValue("25000");
+
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await page.getByRole("button", { name: "Save as draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/sponsor-packages-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+  await publish(page);
+
+  const anonymous = await browser.newContext();
+  const contributor = await anonymous.newPage();
+  await contributor.goto(`/${communitySlug}/sponsor-packages-2026`);
+  await contributor.waitForLoadState("networkidle");
+
+  // The order the organiser chose is the order the contributor reads.
+  const options = contributor.locator("fieldset").filter({ hasText: "What are you paying for?" });
+  await expect(options.getByText("Gold")).toBeVisible();
+  const firstRadio = contributor.getByRole("radio").first();
+  await firstRadio.check();
+  await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Phone number").fill("+2348011112222");
+  await contributor.getByRole("button", { name: "Continue" }).click();
+
+  // Gold is first, so the first option resolves to Gold's price.
+  await expect(contributor.getByText("₦25,000").first()).toBeVisible();
+
+  await anonymous.close();
+});
+
+test("an oversized item image is refused before it reaches storage", async ({ page }) => {
+  await signInAsNewUser(page, "e2e-types");
+  await createCommunity(page, `E2E Big Image ${Date.now()}`);
+
+  await startCollection(page, /Items or packages/, "Bake Sale 2026");
+  await page.getByLabel("Item").first().fill("Cake");
+  await page.getByLabel("Price").first().fill("4000");
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await page.getByRole("button", { name: "Save as draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/bake-sale-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: "Settings" }).click();
+
+  // 6 MB of PNG-shaped bytes: over the 5 MB ceiling, refused in the browser
+  // before any of it is posted, and the page keeps working.
+  await page.getByLabel("Item image").setInputFiles({
+    name: "huge.png",
+    mimeType: "image/png",
+    buffer: Buffer.alloc(6 * 1024 * 1024, 1),
+  });
+  await expect(page.getByText("That image is larger than 5 MB.")).toBeVisible();
+
+  // And a file that is not an image at all.
+  await page.getByLabel("Item image").setInputFiles({
+    name: "notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("not an image"),
+  });
+  await expect(page.getByText("Upload a JPG, PNG or WebP image.")).toBeVisible();
+
+  // Neither attempt left the editor broken: the item can still be saved.
+  await page.getByRole("button", { name: "Save items" }).click();
+  await expect(page.getByText("Items saved.")).toBeVisible();
+});
+
+test("the public page works at phone width", async ({ page, browser }) => {
+  await signInAsNewUser(page, "e2e-types");
+  const communitySlug = await createCommunity(page, `E2E Mobile ${Date.now()}`);
+
+  await startCollection(page, /An open contribution/, "Mobile Offering 2026");
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
+  await page.getByRole("button", { name: "Continue" }).click(); // who pays
+  await page.getByRole("button", { name: "Continue" }).click(); // no questions
+  await page.getByRole("button", { name: "Save as draft" }).click();
+
+  await expect(page).toHaveURL(/\/collections\/mobile-offering-2026/, { timeout: 45_000 });
+  await page.waitForLoadState("networkidle");
+  await publish(page);
+
+  // A phone-sized viewport, which is what most contributors actually open.
+  const phone = await browser.newContext({ viewport: { width: 390, height: 844 } });
+  const contributor = await phone.newPage();
+  await contributor.goto(`/${communitySlug}/mobile-offering-2026`);
+  await contributor.waitForLoadState("networkidle");
+
+  await expect(contributor.getByRole("heading", { name: "Mobile Offering 2026" })).toBeVisible();
+  await expect(contributor.getByLabel("How much would you like to contribute?")).toBeVisible();
+
+  // Nothing overflows the viewport sideways — a horizontal scrollbar on a
+  // contribution page is the difference between paying and giving up.
+  const overflow = await contributor.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+
+  await contributor.getByLabel("How much would you like to contribute?").fill("2500");
+  await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Phone number").fill("+2348011112222");
+  await contributor.getByRole("button", { name: "Continue" }).click();
+  await expect(contributor.getByText("₦2,500").first()).toBeVisible();
+
+  await phone.close();
 });

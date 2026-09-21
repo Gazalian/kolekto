@@ -1,7 +1,7 @@
 "use client";
 
 import { Button, TextField } from "@kolekto/ui";
-import { ImagePlus, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronUp, ImagePlus, Plus, Trash2 } from "lucide-react";
 import { useRef, useState, useTransition } from "react";
 import { removeItemImageAction, uploadItemImageAction } from "./actions.ts";
 
@@ -60,6 +60,17 @@ export function ItemsEditor({
     onChange(items.map((item, i) => (i === index ? { ...item, ...patch } : item)));
   }
 
+  /** Same contract as TiersEditor's: position in this array becomes `sortOrder`, and ids travel with their rows. */
+  function move(index: number, direction: -1 | 1): void {
+    const target = index + direction;
+    if (target < 0 || target >= items.length) return;
+    const next = [...items];
+    const moved = next[index]!;
+    next[index] = next[target]!;
+    next[target] = moved;
+    onChange(next);
+  }
+
   const duplicateNames = new Set(
     items
       .map((item) => item.name.trim().toLowerCase())
@@ -77,6 +88,31 @@ export function ItemsEditor({
             key={item.id ?? index}
             className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3"
           >
+            {items.length > 1 && !disabled && (
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-medium text-[var(--color-text-muted)]">Item {index + 1}</span>
+                <div className="flex gap-1">
+                  <button
+                    type="button"
+                    aria-label={`Move ${item.name || `item ${index + 1}`} up`}
+                    disabled={index === 0}
+                    className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40"
+                    onClick={() => move(index, -1)}
+                  >
+                    <ChevronUp className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label={`Move ${item.name || `item ${index + 1}`} down`}
+                    disabled={index === items.length - 1}
+                    className="rounded-[var(--radius-sm)] border border-[var(--color-border)] p-1 text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] disabled:opacity-40"
+                    onClick={() => move(index, 1)}
+                  >
+                    <ChevronDown className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              </div>
+            )}
             {canUploadImages && (
               <ItemImage
                 slug={slug!}
