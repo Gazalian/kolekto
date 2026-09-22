@@ -100,7 +100,11 @@ test("aim a collection at a group, then add obligations for newly eligible membe
   await page.getByRole("button", { name: "Close" }).click();
 
   await page.getByRole("link", { name: "Collections" }).click();
-  await page.waitForLoadState("networkidle");
+  // waitForLoadState("networkidle") can resolve while a client-side
+  // navigation is still swapping the page, which under load left this
+  // looking for a collection on the members list. Wait for the destination
+  // to actually be the destination.
+  await expect(page.getByRole("heading", { name: "Collections" })).toBeVisible({ timeout: 45_000 });
   await page.getByRole("link", { name: "Level Dues 2026" }).click();
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Members" }).click();
