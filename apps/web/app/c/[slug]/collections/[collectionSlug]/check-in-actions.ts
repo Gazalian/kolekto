@@ -55,10 +55,12 @@ export async function checkOutAction(
  * filter them: the page ships a first page, and every keystroke after that
  * asks the server.
  *
- * Four things are searched, because four things get said at a door: the
- * name on the list, the member ID, the contributor reference somebody reads
- * off their phone, and the option they bought. Results are capped — an
- * operator scrolling past fifty matches has mistyped, not found their guest.
+ * Three things are searched, because three things get said at a door: the
+ * name on the list, the member ID, and the contributor reference somebody
+ * reads off their phone. The option they hold is shown on each result but is
+ * not searched — "VIP" would match every VIP guest, which is a list to scroll
+ * rather than an answer. Results are capped at fifty; an operator past that
+ * has mistyped rather than found their guest.
  *
  * SCOPING. The collection is resolved from the community slug through RLS,
  * and every row is filtered by its id. A collection slug is only unique
@@ -107,7 +109,11 @@ export async function searchAttendeesAction(
       .from("contributor_references")
       .select("obligation_id")
       .eq("collection_id", collection.id)
-      .ilike("reference", pattern)
+      // LIKE on an upper-cased needle rather than ILIKE, so
+      // contributor_references_lookup_idx can be used. Not a behaviour
+      // change: the reference format constraint already restricts a
+      // reference to upper-case letters, digits and . / -.
+      .like("reference", pattern.toUpperCase())
       .limit(MATCH_LIMIT),
     supabase
       .from("members")

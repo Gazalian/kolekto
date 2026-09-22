@@ -66,23 +66,43 @@ export function ObligationsPanel({
 }) {
   const [assigning, setAssigning] = useState(false);
   const [query, setQuery] = useState("");
+  /**
+   * "Outstanding" is the question an organiser opens this screen to ask, and
+   * part C lists it as a section of its own. It is a filter rather than a tab
+   * because it is the same people, the same columns and the same actions —
+   * a second tab would be a second place to learn.
+   */
+  const [shown, setShown] = useState<"all" | "outstanding" | "exempt">("all");
   const [exempting, setExempting] = useState<ObligationRow | null>(null);
   const [waiving, setWaiving] = useState<ObligationRow | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const filtered = useMemo(() => {
+    const byState = obligations.filter((row) => {
+      if (shown === "outstanding") {
+        return !row.obligation.exempt && row.obligation.status !== "cancelled" && row.obligation.status !== "paid";
+      }
+      if (shown === "exempt") return row.obligation.exempt;
+      return true;
+    });
+
     const q = query.trim().toLowerCase();
-    if (!q) return obligations;
+    if (!q) return byState;
     // Somebody ringing up about their money says their reference, not their
     // member ID, so all three are searched.
-    return obligations.filter(
+    return byState.filter(
       (row) =>
         row.memberName.toLowerCase().includes(q) ||
         (row.memberIdentifier ?? "").toLowerCase().includes(q) ||
         (row.reference ?? "").toLowerCase().includes(q),
     );
-  }, [obligations, query]);
+  }, [obligations, query, shown]);
+
+  const outstandingCount = obligations.filter(
+    (row) => !row.obligation.exempt && row.obligation.status !== "cancelled" && row.obligation.status !== "paid",
+  ).length;
+  const exemptCount = obligations.filter((row) => row.obligation.exempt).length;
 
   const counts = useMemo(() => {
     const byStatus = new Map<string, number>();
@@ -178,6 +198,30 @@ export function ObligationsPanel({
         />
       ) : (
         <>
+          <div className="flex flex-wrap gap-2">
+            {(
+              [
+                ["all", `Everyone (${obligations.length})`],
+                ["outstanding", `Outstanding (${outstandingCount})`],
+                ["exempt", `Exempt (${exemptCount})`],
+              ] as const
+            ).map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={shown === key}
+                onClick={() => setShown(key)}
+                className={
+                  shown === key
+                    ? "rounded-[var(--radius-md)] border border-transparent bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary-fg)]"
+                    : "rounded-[var(--radius-md)] border border-[var(--color-border)] px-3 py-1 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                }
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
           <TextField
             label="Search"
             placeholder="Search by name, member ID or reference"

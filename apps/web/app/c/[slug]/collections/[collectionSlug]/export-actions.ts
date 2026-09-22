@@ -102,6 +102,16 @@ export async function exportCollectionAction(
     return { error: "You do not have permission to export member data" };
   }
 
+  // RPT-06: contact details are a separate disclosure from the rest of a
+  // member record, with a permission of their own. Every role that currently
+  // holds member.export also holds member.view_contact, so today this refuses
+  // nobody — it is here so that the day the matrix changes, the columns
+  // follow it instead of quietly outliving it.
+  const wantsContact = request.fieldKeys.some((key) => key === "phone" || key === "email");
+  if (wantsContact && !hasPermission(access, "member.view_contact")) {
+    return { error: "You do not have permission to export phone numbers or email addresses" };
+  }
+
   const { data: collection } = await supabase
     .from("collections")
     .select("id, name, category, amount_model, schedule")
