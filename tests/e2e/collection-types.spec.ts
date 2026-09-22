@@ -699,12 +699,18 @@ test("an event's door: find a guest, check them in, check them out", async ({ pa
   await expect(page.getByRole("button", { name: "Check-in" })).toHaveCount(0);
 
   // Export is where the roll leaves the system, and it is here for every type.
-  await page.getByRole("button", { name: "Export" }).click();
-  await expect(page.getByRole("heading", { name: "Export" })).toBeVisible();
+  await page.getByRole("button", { name: "Exports" }).click();
+  await expect(page.getByRole("heading", { name: "What do you want to export?" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Download CSV" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Download PDF" })).toBeEnabled();
 
   await expect(page.getByLabel("Full name")).toBeChecked();
   await expect(page.getByLabel("Expected amount")).toBeChecked();
+
+  // A dues collection has no options and no door, so it is not offered a
+  // column for either (M7.6 part F: only what this collection can answer).
+  await expect(page.getByLabel("Option")).toHaveCount(0);
+  await expect(page.getByLabel("At the door")).toHaveCount(0);
 });
 
 test("a ticketed event has a door, and it opens and closes", async ({ page }) => {
@@ -738,7 +744,8 @@ test("a ticketed event has a door, and it opens and closes", async ({ page }) =>
   await expect(page).toHaveURL(/\/collections\/founders-night-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
 
-  await page.getByRole("button", { name: "Members" }).click();
+  // On an event the roll is a guest list, and the tab says so (M7.6 part C).
+  await page.getByRole("button", { name: "Attendees" }).click();
   await page.getByRole("button", { name: "Add members" }).click();
   const assign = page.getByRole("dialog");
   await assign.getByRole("checkbox").first().check();

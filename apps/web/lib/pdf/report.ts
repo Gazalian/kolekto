@@ -1,8 +1,9 @@
 import "server-only";
 
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import fontkit from "@pdf-lib/fontkit";
-import { PDFDocument, rgb, StandardFonts, type PDFFont, type PDFPage } from "pdf-lib";
+import { PDFDocument, rgb, type PDFFont, type PDFPage } from "pdf-lib";
 import {
   chooseOrientation,
   distributeWidths,
@@ -30,15 +31,24 @@ import { REPORT_FONT_CODE_POINTS } from "./font-data.ts";
  * has no naira sign, so a report of Nigerian money drawn with Helvetica reads
  * "N10,000" — and WinAnsi cannot write ẹ, ọ, ṣ, ị or ụ either, which is to
  * say it cannot write a great many Nigerian names. So DejaVu Sans is
- * embedded, from ./fonts, and pdf-lib subsets it per document so the file
- * that comes out stays small. Helvetica is still loaded as a last resort, for
- * the case where the font file cannot be read: a report that prints with the
- * wrong currency symbol is bad, and a report that does not print at all is
- * worse.
+ * embedded, and pdf-lib subsets it per document so the file that comes out
+ * stays small. There is no fallback to a standard font: falling back would
+ * mean a report that either prints the wrong currency symbol or throws deep
+ * inside an encoder, and a missing font is a deployment fault that should say
+ * so by name.
  *
- * The font is read with `new URL(…, import.meta.url)`, which is the form
- * Next's file tracing recognises statically — a path assembled at runtime is
- * copied into the server bundle by luck rather than by rule.
+ * WHERE THE FONT LIVES, and why it moved. It was first read with
+ * `new URL("./fonts/…", import.meta.url)`, on the reasoning that Next traces
+ * that form statically. It does not survive a production build: the server
+ * code is bundled into .next/server/chunks, `import.meta.url` resolves
+ * against the chunk, and the .ttf beside the source file is not there. The
+ * browser journey caught it — the CSV downloaded and the PDF returned an
+ * error page — which is exactly the difference between a typecheck passing
+ * and a feature working.
+ *
+ * So the font is a public asset. `public/` is the one directory Next
+ * guarantees is copied into the build, and a redistributable font being
+ * publicly fetchable costs nothing.
  */
 
 export interface PdfReportFilter {
@@ -128,23 +138,44 @@ function drawable(text: string): string {
   return safe;
 }
 
+const fontCache = new Map<string, Buffer>();
+
 /**
  * The font bytes, read once and kept.
  *
- * `new URL("./fonts/…", import.meta.url)` rather than a joined path: it is
- * the form Next's file tracer recognises statically, so the .ttf is copied
- * into the server bundle because the code says so, not because a glob
- * happened to catch it.
+ * Where `next start` is run from is not the same everywhere: from apps/web
+ * the font is under ./public, and from the monorepo root it is under
+ * apps/web/public. Both are tried, and a failure names the file rather than
+ * being swallowed — a report is a document somebody is about to print, and
+ * one that quietly prints the wrong currency symbol is worse than one that
+ * refuses.
+ *
+ * Written as two statically-scoped reads rather than a loop over an array of
+ * paths, which is not a style choice. Turbopack's static analysis warns that a
+ * filesystem read it cannot scope to a subfolder "causes the whole project to
+ * be traced and included in the output" — every source file shipped as part of
+ * the server bundle. `join(process.cwd(), "public", "fonts", …)` is scoped;
+ * `readFileSync(candidate)` is not.
  */
-const fontCache = new Map<string, Buffer>();
 function loadFont(file: "DejaVuSans.ttf" | "DejaVuSans-Bold.ttf"): Buffer {
   const cached = fontCache.get(file);
   if (cached) return cached;
-  const bytes = readFileSync(
-    file === "DejaVuSans.ttf"
-      ? new URL("./fonts/DejaVuSans.ttf", import.meta.url)
-      : new URL("./fonts/DejaVuSans-Bold.ttf", import.meta.url),
-  );
+
+  let bytes: Buffer;
+  try {
+    bytes = readFileSync(join(process.cwd(), "public", "fonts", file));
+  } catch {
+    try {
+      bytes = readFileSync(join(process.cwd(), "apps", "web", "public", "fonts", file));
+    } catch {
+      throw new Error(
+        `REPORT_FONT_MISSING: could not read ${file} under public/fonts, from ${process.cwd()}. ` +
+          "It is a public asset (apps/web/public/fonts) and ships with the build; regenerate it with " +
+          "node scripts/pdf/build-report-font.mjs.",
+      );
+    }
+  }
+
   fontCache.set(file, bytes);
   return bytes;
 }
@@ -168,18 +199,12 @@ export async function renderReportPdf(spec: PdfReportSpec): Promise<Uint8Array> 
   const pdf = await PDFDocument.create();
   pdf.registerFontkit(fontkit);
 
-  let regular: PDFFont;
-  let bold: PDFFont;
-  try {
-    regular = await pdf.embedFont(loadFont("DejaVuSans.ttf"), { subset: true });
-    bold = await pdf.embedFont(loadFont("DejaVuSans-Bold.ttf"), { subset: true });
-  } catch {
-    // The font file could not be read or parsed. Print with the standard one
-    // rather than failing — `drawable` has already replaced anything outside
-    // the supported set, so what lands on the page is legible, if not ideal.
-    regular = await pdf.embedFont(StandardFonts.Helvetica);
-    bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  }
+  // No fallback to Helvetica. It was there, and it was wrong: WinAnsi cannot
+  // encode ₦, so falling back turns "the report has the wrong symbol" into
+  // "the report throws four frames deeper with a message about character
+  // encoding". If the font is missing, loadFont says so by name.
+  const regular = await pdf.embedFont(loadFont("DejaVuSans.ttf"), { subset: true });
+  const bold = await pdf.embedFont(loadFont("DejaVuSans-Bold.ttf"), { subset: true });
 
   const orientation = chooseOrientation(spec.columns.length);
   const pageWidth = orientation === "landscape" ? A4_LONG : A4_SHORT;

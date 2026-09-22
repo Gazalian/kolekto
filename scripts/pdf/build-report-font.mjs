@@ -20,14 +20,17 @@
  * PDFs that come out are small either way — the only cost of shipping the
  * whole file is 1.5 MB in the repository.
  *
- * WHY THE FILE IS COPIED HERE RATHER THAN READ FROM node_modules. The
- * renderer loads it with `new URL("./fonts/…", import.meta.url)`, which
- * Next's file tracing recognises statically and copies into the server
- * bundle. A path computed out of node_modules at runtime is traced by luck.
+ * WHY THE FILE IS COPIED INTO public/. It has to be readable by the server
+ * at request time, and `public/` is the one directory Next guarantees ends
+ * up in the build. The first attempt read it from beside the source file with
+ * `new URL(…, import.meta.url)`; that works in development and not in a
+ * production build, where the server code is bundled into .next/server/chunks
+ * and the .ttf beside the source is nowhere near it. A redistributable font
+ * being publicly fetchable costs nothing.
  *
  * Run `node scripts/pdf/build-report-font.mjs` after changing the character
  * set below. It rewrites apps/web/lib/pdf/font-data.ts and refreshes the
- * fonts in apps/web/lib/pdf/fonts/.
+ * fonts in apps/web/public/fonts/.
  *
  * Licence: DejaVu Sans is free to use, embed and redistribute — see
  * node_modules/dejavu-fonts-ttf/LICENSE, copied next to the fonts so the
@@ -71,10 +74,10 @@ const SOURCES = {
   bold: "node_modules/dejavu-fonts-ttf/ttf/DejaVuSans-Bold.ttf",
 };
 
-mkdirSync("apps/web/lib/pdf/fonts", { recursive: true });
-copyFileSync(SOURCES.regular, "apps/web/lib/pdf/fonts/DejaVuSans.ttf");
-copyFileSync(SOURCES.bold, "apps/web/lib/pdf/fonts/DejaVuSans-Bold.ttf");
-copyFileSync("node_modules/dejavu-fonts-ttf/LICENSE", "apps/web/lib/pdf/fonts/LICENSE");
+mkdirSync("apps/web/public/fonts", { recursive: true });
+copyFileSync(SOURCES.regular, "apps/web/public/fonts/DejaVuSans.ttf");
+copyFileSync(SOURCES.bold, "apps/web/public/fonts/DejaVuSans-Bold.ttf");
+copyFileSync("node_modules/dejavu-fonts-ttf/LICENSE", "apps/web/public/fonts/LICENSE");
 
 function coverage(path) {
   const font = fontkit.openSync(path);
@@ -115,5 +118,5 @@ ${usable.map((c) => `  0x${c.toString(16)},`).join("\n")}
 );
 
 console.log(
-  `copied DejaVu Sans (regular + bold) into apps/web/lib/pdf/fonts/, ${usable.length} printable code points`,
+  `copied DejaVu Sans (regular + bold) into apps/web/public/fonts/, ${usable.length} printable code points`,
 );

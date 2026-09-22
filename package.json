@@ -28,7 +28,8 @@
     "db:migrate": "supabase migration up --local",
     "db:backup": "node scripts/db/backup.mjs",
     "db:restore": "node scripts/db/restore.mjs",
-    "db:marker": "node scripts/db/persistence-marker.mjs"
+    "db:marker": "node scripts/db/persistence-marker.mjs",
+    "test:concurrency": "node scripts/verify/reference-concurrency.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
