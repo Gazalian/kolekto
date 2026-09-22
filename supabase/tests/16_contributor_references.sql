@@ -23,7 +23,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(33);
+select plan(36);
 
 -- ── Fixtures: two communities, so "somebody else's collection" has an owner ─
 insert into auth.users (id, instance_id, aud, role, email) values
@@ -416,6 +416,46 @@ select lives_ok(
          (select id from tmp_dues)),
   'but references CAN still be switched off, which only stops new ones being issued'
 );
+
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- The person holding the reference can see it (part N)
+-- ─────────────────────────────────────────────────────────────────────────────
+--
+-- A reference nobody has been told is an internal number. This is the path
+-- that tells them: the same function behind "find yourself on the list",
+-- returning one row for one member who has already identified themselves.
+
+select lives_ok(
+  format($f$ select app.transition_collection_status(%L, 'draft', 'active') $f$, (select id from tmp_dues)),
+  'the dues collection is published, so a member can identify themselves on it'
+);
+
+reset role;
+-- The anonymous role reads the temporary fixture tables too, and a temp table
+-- is owned by whoever created it.
+grant select on tmp_dues to anon;
+set local role anon;
+
+select is(
+  (select contributor_reference
+   from app.get_collection_member_context(
+     (select id from tmp_dues), 'c3000000-0000-4000-8000-000000000001'
+   )),
+  'BIO26-0001',
+  'an identified member is shown their own reference — the thing they read out when they ring up about their money'
+);
+
+select is(
+  (select count(*)::integer
+   from app.get_collection_member_context(
+     (select id from tmp_dues), 'c3000000-0000-4000-8000-000000000004'
+   )),
+  0,
+  'and a member of another community gets no row at all, reference or otherwise (SEC-18)'
+);
+
+reset role;
 
 select * from finish();
 rollback;

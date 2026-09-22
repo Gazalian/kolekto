@@ -111,6 +111,8 @@ export interface MemberContextResult {
     /** `unpaid`, `exempt`… never invented. Only a verified payment will ever make this `paid`. */
     obligationStatus: string | null;
     dueAt: string | null;
+    /** "BIO26-0042" — this person's reference for this collection, when it issues them (M7.6 part N). */
+    reference: string | null;
   };
 }
 
@@ -220,6 +222,7 @@ function describeMember(context: CollectionMemberContext): NonNullable<MemberCon
         : formatNaira(kobo(context.waived_amount_kobo), { decimals: false }),
     obligationStatus: context.obligation_status,
     dueAt: context.due_at === null ? null : new Date(context.due_at).toISOString(),
+    reference: context.contributor_reference,
   };
 }
 

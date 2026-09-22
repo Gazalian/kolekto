@@ -459,6 +459,23 @@ export function ContributeForm({
             <p className="text-sm text-[var(--color-text-muted)]">For the period {member.cycleLabel}</p>
           )}
 
+          {/* M7.6 part N. A reference only does its job if the person holding
+              it knows it: this is what they read out when they ring up about
+              their money, and what the organiser searches for at the door.
+              It is not their member ID, which follows them across every
+              collection this community ever runs. */}
+          {member.reference && (
+            <div className="rounded-[var(--radius-md)] border border-dashed border-[var(--color-border-strong)] px-3 py-2">
+              <p className="text-xs uppercase tracking-wide text-[var(--color-text-muted)]">
+                Your reference for this collection
+              </p>
+              <p className="font-mono text-lg font-semibold text-[var(--color-text)]">{member.reference}</p>
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Quote this if you need to ask {organiser} about your contribution.
+              </p>
+            </div>
+          )}
+
           {/* What the community expects of this member, read from their own
               obligation. `paid` is not a state anything here can produce: only
               a verified payment will ever set it. */}

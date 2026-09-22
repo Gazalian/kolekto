@@ -516,11 +516,19 @@ export function NewCollectionForm({
       const ok = await persistStep(step);
       if (!ok) return;
       const next = Math.min(steps.length - 1, step + 1);
+
+      // Awaited, not fired and forgotten. A server action dispatched inside a
+      // transition and left floating keeps React's pending state true after
+      // the transition's own work is done — which left the Review step
+      // showing "Saving…" with its button disabled, for ever. Two browser
+      // journeys caught it; nothing else would have.
+      //
+      // The failure is still not allowed to matter: a draft that remembers
+      // the wrong step is an inconvenience, and a step that could not be
+      // recorded must not stop the organiser moving on.
+      if (draftId && draftSlug) await rememberStepAction(slug, draftSlug, draftId, next);
+
       setStep(next);
-      // Where to come back to (part A4). Best-effort: a draft that remembers
-      // the wrong step is an inconvenience, and a save refused because of one
-      // would be a lost collection.
-      if (draftId && draftSlug) void rememberStepAction(slug, draftSlug, draftId, next);
     });
   }
 

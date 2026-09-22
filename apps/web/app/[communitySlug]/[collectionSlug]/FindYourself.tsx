@@ -43,6 +43,8 @@ export interface IdentifiedMember {
   waivedAmount: string | null;
   obligationStatus: string | null;
   dueAt: string | null;
+  /** "BIO26-0042" — this person's reference for this collection. Null when it does not issue them. */
+  reference: string | null;
 }
 
 export function FindYourself({

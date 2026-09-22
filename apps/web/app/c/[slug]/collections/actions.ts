@@ -737,16 +737,19 @@ export async function cancelObligationAction(
  * an error banner about a remembered form position would be noise over
  * whatever they were actually doing. The database refuses it on a published
  * collection by returning, not by raising, for the same reason.
+ *
+ * It does NOT revalidate anything. A remembered form position changes nothing
+ * on any screen, and throwing away the collection page's cache on every click
+ * of Continue is work nobody asked for.
  */
 export async function rememberStepAction(
-  slug: string,
-  collectionSlug: string,
+  _slug: string,
+  _collectionSlug: string,
   collectionId: string,
   step: number,
 ): Promise<void> {
   try {
     await setCollectionDraftStep(await requireCallerContext(), { collectionId, step });
-    revalidateCollection(slug, collectionSlug);
   } catch {
     // See above.
   }

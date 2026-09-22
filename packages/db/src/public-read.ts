@@ -186,6 +186,8 @@ export interface CollectionMemberContext {
   waived_amount_kobo: string | null;
   obligation_status: "unpaid" | "in_installments" | "overdue" | "paid" | "exempt" | "cancelled" | null;
   due_at: Date | null;
+  /** "BIO26-0042" — this participation's reference, when the collection issues them (M7.6 part N). */
+  contributor_reference: string | null;
 }
 
 /**
