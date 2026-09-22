@@ -59,7 +59,15 @@ test("aim a collection at a group, then add obligations for newly eligible membe
   await page.getByLabel("What is this collection called?").fill("Level Dues 2026");
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Amount each person pays").fill("5000");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+
+  // The flyer step sits between the amount and the audience, and this test
+  // walked straight past it — so it had been waiting for the audience radios
+  // while looking at "Add a flyer" ever since that step was added, and timing
+  // out. Nothing to do with what M7.6 changed; found by chasing a failure
+  // rather than retrying it.
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
 
   // Who it is for: specific groups, and the collection must not charge anyone yet.
   await page.getByRole("radio", { name: /Specific groups/ }).check();
