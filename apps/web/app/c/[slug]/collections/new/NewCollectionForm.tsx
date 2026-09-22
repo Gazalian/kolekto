@@ -533,16 +533,31 @@ export function NewCollectionForm({
   }
 
   /**
-   * The last step. Everything before it is already saved, so this saves
-   * what the Review step itself can still change (nothing but a late edit
-   * on an earlier step) and opens the draft.
+   * The last step: open the draft.
+   *
+   * It used to re-save steps 2, 4 and 5 here first. That was three server
+   * round trips, each re-writing rows that were already written — because
+   * every step saves itself when it is completed, and the only way to reach
+   * Review is to complete them. Going Back to edit one and forward again
+   * runs `advance()`, which saves it. So the re-save protected against
+   * nothing, and it ran at the single moment an organiser is least willing
+   * to wait, with the button disabled while it did.
+   *
+   * The one case that is not already saved is a draft that was never
+   * created, which can only happen if every earlier save failed. That is
+   * handled rather than assumed away.
    */
   function finish(): void {
     setError(null);
     startTransition(async () => {
-      const ok = await persistStep(2) && await persistStep(4) && await persistStep(5);
+      if (draftSlug) {
+        router.push(`/c/${slug}/collections/${draftSlug}`);
+        return;
+      }
+
+      const ok = await persistStep(1);
       if (!ok) return;
-      if (draftSlug) router.push(`/c/${slug}/collections/${draftSlug}`);
+      setError("Your collection was saved. Open it from the collections list.");
     });
   }
 
