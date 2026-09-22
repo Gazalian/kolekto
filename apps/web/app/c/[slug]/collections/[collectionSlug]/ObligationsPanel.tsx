@@ -19,7 +19,7 @@ import {
   Tr,
 } from "@kolekto/ui";
 import { UserPlus } from "lucide-react";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { naira, OBLIGATION_LABEL, OBLIGATION_TONE, type ObligationStatus } from "../../../../../lib/collection-display.ts";
 import {
   assignObligationsAction,
@@ -28,7 +28,9 @@ import {
   syncObligationsAction,
   waiveObligationAction,
 } from "../actions.ts";
-import type { AssignableMember, ObligationRow } from "./CollectionDetailClient.tsx";
+import type { ObligationRow } from "./CollectionDetailClient.tsx";
+import { loadRollAction, searchAssignableMembersAction } from "./roll-actions.ts";
+import { ROLL_PAGE_SIZE, type RollCounts, type RollFilter } from "./roll.ts";
 
 /**
  * Who is expected to pay, and what has been decided about them.
@@ -43,8 +45,8 @@ import type { AssignableMember, ObligationRow } from "./CollectionDetailClient.t
 export function ObligationsPanel({
   slug,
   collection,
-  obligations,
-  assignableMembers,
+  firstPage,
+  initialCounts,
   audienceGroups,
   audienceCounts,
   openCycleKey,
@@ -54,8 +56,9 @@ export function ObligationsPanel({
 }: {
   slug: string;
   collection: Collection;
-  obligations: ObligationRow[];
-  assignableMembers: AssignableMember[];
+  /** The first page of the roll, rendered on the server. Everything after it is fetched. */
+  firstPage: ObligationRow[];
+  initialCounts: RollCounts;
   tiers: CollectionTier[];
   audienceGroups: string[];
   audienceCounts: { eligible: number; with_obligation: number; awaiting: number };
@@ -72,45 +75,65 @@ export function ObligationsPanel({
    * because it is the same people, the same columns and the same actions —
    * a second tab would be a second place to learn.
    */
-  const [shown, setShown] = useState<"all" | "outstanding" | "exempt">("all");
+  const [shown, setShown] = useState<RollFilter>("all");
   const [exempting, setExempting] = useState<ObligationRow | null>(null);
   const [waiving, setWaiving] = useState<ObligationRow | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const filtered = useMemo(() => {
-    const byState = obligations.filter((row) => {
-      if (shown === "outstanding") {
-        return !row.obligation.exempt && row.obligation.status !== "cancelled" && row.obligation.status !== "paid";
-      }
-      if (shown === "exempt") return row.obligation.exempt;
-      return true;
-    });
+  /**
+   * The roll is paged and searched by the server (M7.6 hardening).
+   *
+   * The first page arrives with the page, so the screen is never empty while
+   * it waits. Everything after it — another page, a different filter, a
+   * search — is a request, because a five-thousand-member association is not
+   * something to send to a phone so that JavaScript can filter it. PostgREST
+   * would also have stopped at a thousand rows, silently.
+   */
+  const [rows, setRows] = useState<ObligationRow[]>(firstPage);
+  const [counts, setCounts] = useState<RollCounts>(initialCounts);
+  const [total, setTotal] = useState<number>(initialCounts.all);
+  const [page, setPage] = useState(0);
+  const [searched, setSearched] = useState(false);
+  const [loading, setLoading] = useState(false);
+  /** Bumped by anything that changes the roll, to ask for it again. */
+  const [reloadToken, setReloadToken] = useState(0);
 
-    const q = query.trim().toLowerCase();
-    if (!q) return byState;
-    // Somebody ringing up about their money says their reference, not their
-    // member ID, so all three are searched.
-    return byState.filter(
-      (row) =>
-        row.memberName.toLowerCase().includes(q) ||
-        (row.memberIdentifier ?? "").toLowerCase().includes(q) ||
-        (row.reference ?? "").toLowerCase().includes(q),
-    );
-  }, [obligations, query, shown]);
+  useEffect(() => {
+    let cancelled = false;
+    // Debounced only because of typing; a filter or a page change is a click
+    // and deserves to feel immediate.
+    const delay = query.trim() === "" ? 0 : 200;
 
-  const outstandingCount = obligations.filter(
-    (row) => !row.obligation.exempt && row.obligation.status !== "cancelled" && row.obligation.status !== "paid",
-  ).length;
-  const exemptCount = obligations.filter((row) => row.obligation.exempt).length;
+    const timer = setTimeout(() => {
+      setLoading(true);
+      void loadRollAction(slug, collection.slug, { filter: shown, query, page }).then((result) => {
+        if (cancelled) return;
+        setLoading(false);
+        if (result.error) {
+          setError(result.error);
+          return;
+        }
+        setRows(result.rows ?? []);
+        setCounts(result.counts ?? initialCounts);
+        setSearched(result.searched ?? false);
+        setTotal(result.total ?? result.rows?.length ?? 0);
+      });
+    }, delay);
 
-  const counts = useMemo(() => {
-    const byStatus = new Map<string, number>();
-    for (const row of obligations) {
-      byStatus.set(row.obligation.status, (byStatus.get(row.obligation.status) ?? 0) + 1);
-    }
-    return byStatus;
-  }, [obligations]);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [collection.slug, initialCounts, page, query, reloadToken, shown, slug]);
+
+  /** After a change to somebody's row: re-read the page being looked at, and the counts. */
+  function refreshRoll(): void {
+    setReloadToken((current) => current + 1);
+  }
+
+  const filtered = rows;
+  const pageCount = searched ? 1 : Math.max(Math.ceil(total / ROLL_PAGE_SIZE), 1);
 
   // A recurring collection charges per period, so there has to be one open
   // before anybody can be expected to pay. Saying so is better than letting the
@@ -121,7 +144,7 @@ export function ObligationsPanel({
   // Only shown once there is something to show. A column of dashes on a
   // collection that does not issue references is a column that asks a
   // question and answers it with nothing.
-  const showReference = obligations.some((row) => row.reference !== null);
+  const showReference = rows.some((row) => row.reference !== null) || collection.codes_enabled;
 
   return (
     <div className="flex flex-col gap-4">
@@ -174,12 +197,11 @@ export function ObligationsPanel({
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-[var(--color-text-muted)]">
-          {obligations.length} expected
-          {counts.get("exempt") ? ` · ${counts.get("exempt")} exempt` : ""}
-          {counts.get("cancelled") ? ` · ${counts.get("cancelled")} cancelled` : ""}
+          {counts.all} expected
+          {counts.exempt > 0 ? ` · ${counts.exempt} exempt` : ""}
         </p>
         {canAssign && (
-          <Button onClick={() => setAssigning(true)} disabled={assignableMembers.length === 0 || needsCycle}>
+          <Button onClick={() => setAssigning(true)} disabled={needsCycle}>
             <UserPlus className="h-4 w-4" aria-hidden="true" /> Add members
           </Button>
         )}
@@ -187,30 +209,29 @@ export function ObligationsPanel({
 
       {error && <Banner tone="danger">{error}</Banner>}
 
-      {obligations.length === 0 ? (
+      {counts.all === 0 ? (
         <EmptyState
           title="No members have been added to this collection yet"
-          description={
-            assignableMembers.length === 0
-              ? "Add members to the community first, then choose who is expected to contribute."
-              : "Choose who is expected to contribute, and Kolekto will keep track of who still owes."
-          }
+          description="Choose who is expected to contribute, and Kolekto will keep track of who still owes."
         />
       ) : (
         <>
           <div className="flex flex-wrap gap-2">
             {(
               [
-                ["all", `Everyone (${obligations.length})`],
-                ["outstanding", `Outstanding (${outstandingCount})`],
-                ["exempt", `Exempt (${exemptCount})`],
+                ["all", `Everyone (${counts.all})`],
+                ["outstanding", `Outstanding (${counts.outstanding})`],
+                ["exempt", `Exempt (${counts.exempt})`],
               ] as const
             ).map(([key, label]) => (
               <button
                 key={key}
                 type="button"
                 aria-pressed={shown === key}
-                onClick={() => setShown(key)}
+                onClick={() => {
+                  setShown(key);
+                  setPage(0);
+                }}
                 className={
                   shown === key
                     ? "rounded-[var(--radius-md)] border border-transparent bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary-fg)]"
@@ -226,7 +247,10 @@ export function ObligationsPanel({
             label="Search"
             placeholder="Search by name, member ID or reference"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(0);
+            }}
           />
           <Table data-responsive>
             <Thead>
@@ -299,6 +323,7 @@ export function ObligationsPanel({
                                 obligationId: row.obligation.id,
                               });
                               if (result.error) setError(result.error);
+                              else refreshRoll();
                             })
                           }
                         >
@@ -311,6 +336,44 @@ export function ObligationsPanel({
               ))}
             </Tbody>
           </Table>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-[var(--color-text-muted)]">
+              {loading
+                ? "Loading…"
+                : searched
+                  ? `${filtered.length} match${filtered.length === 1 ? "" : "es"}${
+                      filtered.length === 50 ? " — the first 50. Narrow the search to see the rest." : ""
+                    }`
+                  : `Showing ${filtered.length === 0 ? 0 : page * ROLL_PAGE_SIZE + 1}–${
+                      page * ROLL_PAGE_SIZE + filtered.length
+                    } of ${total}`}
+            </p>
+
+            {!searched && pageCount > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={page === 0 || loading}
+                  onClick={() => setPage((current) => Math.max(current - 1, 0))}
+                >
+                  Previous
+                </Button>
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  Page {page + 1} of {pageCount}
+                </span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={page >= pageCount - 1 || loading}
+                  onClick={() => setPage((current) => Math.min(current + 1, pageCount - 1))}
+                >
+                  Next
+                </Button>
+              </div>
+            )}
+          </div>
         </>
       )}
 
@@ -318,10 +381,11 @@ export function ObligationsPanel({
         <AssignDialog
           slug={slug}
           collection={collection}
-          members={assignableMembers}
           cycleKey={openCycleKey}
           tiers={tiers}
+          collectionSlug={collection.slug}
           onClose={() => setAssigning(false)}
+          onAssigned={refreshRoll}
           onError={setError}
         />
       )}
@@ -335,6 +399,7 @@ export function ObligationsPanel({
           onSubmit={(reason) =>
             exemptObligationAction(slug, collection.slug, { obligationId: exempting.obligation.id, reason })
           }
+          onDone={refreshRoll}
           onError={setError}
         />
       )}
@@ -353,6 +418,7 @@ export function ObligationsPanel({
               reason,
             })
           }
+          onDone={refreshRoll}
           onError={setError}
         />
       )}
@@ -424,18 +490,20 @@ function SyncPrompt({
 function AssignDialog({
   slug,
   collection,
-  members,
+  collectionSlug,
   cycleKey,
   tiers,
   onClose,
+  onAssigned,
   onError,
 }: {
   slug: string;
   collection: Collection;
-  members: AssignableMember[];
+  collectionSlug: string;
   cycleKey: string | null;
   tiers: CollectionTier[];
   onClose: () => void;
+  onAssigned: () => void;
   onError: (message: string) => void;
 }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -443,6 +511,39 @@ function AssignDialog({
   const [tierId, setTierId] = useState("");
   const [query, setQuery] = useState("");
   const [isPending, startTransition] = useTransition();
+
+  /**
+   * Who is still assignable, asked of the server.
+   *
+   * This dialog used to be handed every member of the community so it could
+   * filter them in the browser. Same objection as the roll itself: a big
+   * association is not something to ship to a phone, and PostgREST would have
+   * stopped at a thousand of them anyway. It asks for a name and gets at most
+   * fifty answers, already filtered to people who are not on this collection
+   * for this period.
+   */
+  const [visible, setVisible] = useState<{ id: string; fullName: string; identifier: string | null }[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const timer = setTimeout(
+      () => {
+        setLoading(true);
+        void searchAssignableMembersAction(slug, collectionSlug, query, cycleKey).then((result) => {
+          if (cancelled) return;
+          setLoading(false);
+          if (result.error) onError(result.error);
+          else setVisible(result.members ?? []);
+        });
+      },
+      query.trim() === "" ? 0 : 200,
+    );
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [collectionSlug, cycleKey, onError, query, slug]);
 
   const isTiered = collection.amount_model === "tiers";
   const chosenTier = tiers.find((tier) => tier.id === tierId);
@@ -453,11 +554,6 @@ function AssignDialog({
   // asking for a figure as well would be asking which of two numbers to
   // believe.
   const needsAmount = collection.amount_model !== "fixed" && !chosenTier;
-
-  const visible = members.filter((member) => {
-    const q = query.trim().toLowerCase();
-    return !q || member.fullName.toLowerCase().includes(q) || (member.identifier ?? "").toLowerCase().includes(q);
-  });
 
   return (
     <Dialog
@@ -508,7 +604,10 @@ function AssignDialog({
         />
 
         <div className="flex items-center justify-between text-xs text-[var(--color-text-muted)]">
-          <span>{selected.size} selected</span>
+          <span>
+            {selected.size} selected
+            {loading ? " · looking…" : visible.length === 50 ? " · showing the first 50" : ""}
+          </span>
           <button
             type="button"
             className="font-medium text-[var(--color-primary)] hover:underline"
@@ -523,6 +622,13 @@ function AssignDialog({
         </div>
 
         <ul className="max-h-64 overflow-y-auto rounded-[var(--radius-md)] border border-[var(--color-border)]">
+          {!loading && visible.length === 0 && (
+            <li className="px-3 py-2 text-sm text-[var(--color-text-muted)]">
+              {query.trim() === ""
+                ? "Everybody in this community is already on this collection."
+                : `Nobody available matches “${query.trim()}”.`}
+            </li>
+          )}
           {visible.map((member) => (
             <li key={member.id} className="border-b border-[var(--color-border)] last:border-b-0">
               <label className="flex items-center gap-2 px-3 py-2 text-sm text-[var(--color-text)]">
@@ -562,8 +668,12 @@ function AssignDialog({
                 ...(cycleKey ? { cycleKey } : {}),
                 ...(tierId ? { tierId } : {}),
               });
-              if (result.error) onError(result.error);
-              else onClose();
+              if (result.error) {
+                onError(result.error);
+                return;
+              }
+              onAssigned();
+              onClose();
             })
           }
         >
@@ -581,6 +691,7 @@ function ReasonDialog({
   amountLabel,
   onClose,
   onSubmit,
+  onDone,
   onError,
 }: {
   title: string;
@@ -589,6 +700,8 @@ function ReasonDialog({
   amountLabel?: string;
   onClose: () => void;
   onSubmit: (reason: string, amount?: string) => Promise<{ error?: string; ok?: boolean }>;
+  /** The roll is paged now, so a changed row has to be re-read rather than assumed. */
+  onDone: () => void;
   onError: (message: string) => void;
 }) {
   const [reason, setReason] = useState("");
@@ -614,8 +727,12 @@ function ReasonDialog({
           onClick={() =>
             startTransition(async () => {
               const result = await onSubmit(reason, amountLabel ? amount : undefined);
-              if (result.error) onError(result.error);
-              else onClose();
+              if (result.error) {
+                onError(result.error);
+                return;
+              }
+              onDone();
+              onClose();
             })
           }
         >

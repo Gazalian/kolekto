@@ -34,6 +34,7 @@ import { ObligationsPanel } from "./ObligationsPanel.tsx";
 import { CheckInPanel, type CheckInPerson } from "./CheckInPanel.tsx";
 import { ExportPanel } from "./ExportPanel.tsx";
 import type { ExportFieldChoice } from "./export-fields.ts";
+import type { RollCounts } from "./roll.ts";
 import { CodeSettingsPanel } from "./CodeSettingsPanel.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 
@@ -45,12 +46,6 @@ export interface ObligationRow {
   reference: string | null;
   /** Which option they were put down for, on a tiered collection. */
   tierName: string | null;
-}
-
-export interface AssignableMember {
-  id: string;
-  fullName: string;
-  identifier: string | null;
 }
 
 export interface CollectionPermissions {
@@ -119,8 +114,9 @@ export function CollectionDetailClient({
   items,
   recurrence,
   cycles,
-  obligations,
-  assignableMembers,
+  roll,
+  rollCounts,
+  referenceCount,
   audienceGroups,
   audienceCounts,
   activity,
@@ -139,8 +135,11 @@ export function CollectionDetailClient({
   items: CollectionItem[];
   recurrence: CollectionRecurrence | null;
   cycles: CollectionCycleRow[];
-  obligations: ObligationRow[];
-  assignableMembers: AssignableMember[];
+  /** The first page of the roll. The rest is fetched by the panel (M7.6 hardening). */
+  roll: ObligationRow[];
+  rollCounts: RollCounts;
+  /** How many references this collection has issued, counted by the database. */
+  referenceCount: number;
   audienceGroups: string[];
   audienceCounts: { eligible: number; with_obligation: number; awaiting: number };
   activity: AuditLog[];
@@ -335,7 +334,7 @@ export function CollectionDetailClient({
                   />
                 )}
                 <Row label="Visibility" value={collection.visibility === "public" ? "Listed publicly" : "Link only"} />
-                {isManaged && <Row label="Members expected" value={String(obligations.length)} />}
+                {isManaged && <Row label="Members expected" value={String(rollCounts.all)} />}
               </dl>
             </CardBody>
           </Card>
@@ -423,8 +422,8 @@ export function CollectionDetailClient({
         <ObligationsPanel
           slug={slug}
           collection={collection}
-          obligations={obligations}
-          assignableMembers={assignableMembers}
+          firstPage={roll}
+          initialCounts={rollCounts}
           audienceGroups={audienceGroups}
           audienceCounts={audienceCounts}
           // The period being charged for: the most recent one still open. The
@@ -493,8 +492,8 @@ export function CollectionDetailClient({
               collection={collection}
               settings={codeSettings}
               tiers={tiers}
-              issuedCount={obligations.filter((row) => row.reference !== null).length}
-              rollCount={obligations.filter((row) => row.obligation.status !== "cancelled").length}
+              issuedCount={referenceCount}
+              rollCount={rollCounts.all}
               canConfigure={permissions.canConfigureCodes}
               canIssue={permissions.canAssign}
             />

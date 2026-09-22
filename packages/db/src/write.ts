@@ -970,3 +970,25 @@ export async function setCollectionDraftStep(
 ): Promise<void> {
   await call(caller, (tx) => tx`select app.set_collection_draft_step(${input.collectionId}, ${input.step})`);
 }
+
+/**
+ * The door's three numbers, counted in the database (M7.6 hardening).
+ *
+ * "Not arrived" needs DISTINCT over a visit history — somebody may leave and
+ * come back — which is why this is a function rather than three counts.
+ */
+export async function collectionDoorTotals(
+  caller: CallerContext,
+  collectionId: string,
+): Promise<{ expected: number; inside: number; left: number; notArrived: number }> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ expected: number; inside: number; has_left: number; not_arrived: number }[]>`
+      select * from app.collection_door_totals(${collectionId})`,
+  );
+  return {
+    expected: row?.expected ?? 0,
+    inside: row?.inside ?? 0,
+    left: row?.has_left ?? 0,
+    notArrived: row?.not_arrived ?? 0,
+  };
+}
