@@ -110,7 +110,11 @@ async function createDuesCollection(page: Page, name: string, amount: string): P
   await page.getByLabel("What is this collection called?").fill(name);
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Amount each person pays").fill(amount);
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  // The flyer step. Every walk in this file was written before it existed and
+  // was one Continue short of where it thought it was.
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — everyone
 }
 
@@ -148,7 +152,13 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
   await page.getByLabel("What is this collection called?").fill("Departmental Dues M7");
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByLabel("Amount each person pays").fill("5000");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+
+  // The flyer step sits between the amount and the audience. This walk had
+  // one Continue too few and had been waiting for the Questions step while
+  // looking at "Who pays" ever since the flyer step was added.
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — everyone on the roll
 
   // One required question, so the field rules get exercised on the public page.
@@ -367,7 +377,9 @@ test("a recurring charge shows the period it is asking about", async ({ page, br
   await page.getByLabel("Amount each person pays").fill("20000");
   await page.getByLabel("How often").selectOption("monthly");
   await page.getByLabel("First period starts").fill("2026-10-01");
-  await page.getByRole("button", { name: "Continue" }).click();
+  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
   await page.getByRole("button", { name: "Continue" }).click(); // who pays
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
   await page.getByRole("button", { name: "Open this draft" }).click();
@@ -415,6 +427,8 @@ test("an open collection asks nobody to identify, and a closed one takes nothing
   await page.getByLabel("What is this collection called?").fill("Building Fund M7");
   await page.getByRole("button", { name: "Continue" }).click();
   await page.getByRole("button", { name: "Continue" }).click(); // no range
+  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
+  await page.getByRole("button", { name: "Continue" }).click(); // cover image
   await page.getByRole("button", { name: "Continue" }).click(); // who pays — anyone
   await page.getByRole("button", { name: "Continue" }).click(); // no questions
   await page.getByRole("button", { name: "Open this draft" }).click();
