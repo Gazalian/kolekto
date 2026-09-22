@@ -406,7 +406,11 @@ test("an item's own image uploads, shows on the public page, and can be replaced
 
   await page.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Photo").setInputFiles({ name: "jollof.png", mimeType: "image/png", buffer: TINY_PNG });
-  await expect(page.getByRole("button", { name: "Replace image" })).toBeVisible({ timeout: 45_000 });
+  // Wait for the upload to finish, not for a preview to appear: the preview
+  // is a local object URL set the instant the file is chosen, so saving on
+  // sight of it saved an item that had no uploaded image yet.
+  await expect(page.getByRole("button", { name: "Uploading…" })).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByRole("button", { name: "Replace image" })).toBeEnabled({ timeout: 45_000 });
   await page.getByRole("button", { name: "Save items" }).click();
   await expect(page.getByText("Items saved.")).toBeVisible();
 
@@ -456,7 +460,10 @@ test("a ticket buyer can take more than one type, and name an attendee per ticke
   await contributor.goto(`/${communitySlug}/founders-gala-2026`);
   await contributor.waitForLoadState("networkidle");
 
-  await expect(contributor.getByRole("heading", { name: "Which tickets?" })).toBeVisible();
+  // A fieldset legend names a group, not a heading — this asked for a role
+  // the page has never rendered, and had been timing out since it was
+  // written.
+  await expect(contributor.getByRole("group", { name: "Which tickets?" })).toBeVisible();
 
   // VIP × 2
   await contributor.getByRole("checkbox").nth(1).check();
@@ -464,11 +471,14 @@ test("a ticket buyer can take more than one type, and name an attendee per ticke
   // Regular × 1
   await contributor.getByRole("checkbox").nth(0).check();
 
-  // The server asks for exactly three names — two VIP tickets and one Regular.
-  await expect(contributor.getByLabel("Ticket 3 — name")).toBeVisible();
-  await contributor.getByLabel("Ticket 1 — name").fill("Ada Obi");
-  await contributor.getByLabel("Ticket 2 — name").fill("Bola Ade");
-  await contributor.getByLabel("Ticket 3 — name").fill("Chidi Eze");
+  // The form asks for exactly three names, each labelled by the ticket it
+  // belongs to rather than by its position in an undifferentiated list —
+  // "VIP — attendee 2", not "Ticket 3". This test still asked for the old
+  // labels, which is why it had been failing.
+  await expect(contributor.getByLabel("Regular — attendee 1")).toBeVisible();
+  await contributor.getByLabel("VIP — attendee 1").fill("Ada Obi");
+  await contributor.getByLabel("VIP — attendee 2").fill("Bola Ade");
+  await contributor.getByLabel("Regular — attendee 1").fill("Chidi Eze");
 
   await contributor.getByLabel("Full name").fill("Ada Obi");
   await contributor.getByLabel("Phone number").fill("+2348011112222");

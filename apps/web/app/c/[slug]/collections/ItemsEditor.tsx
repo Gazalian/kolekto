@@ -308,7 +308,11 @@ function ItemImage({
             disabled={disabled || isPending}
             onClick={() => inputRef.current?.click()}
           >
-            {preview ? "Replace image" : "Add image"}
+            {/* The preview is a local object URL, set the instant a file is
+                chosen — so "Replace image" would otherwise appear while the
+                upload is still in flight, and an organiser who saved at that
+                moment would lose the image without being told. */}
+            {isPending ? "Uploading…" : preview ? "Replace image" : "Add image"}
           </Button>
           {preview && (
             <Button type="button" variant="ghost" size="sm" disabled={disabled || isPending} onClick={remove}>

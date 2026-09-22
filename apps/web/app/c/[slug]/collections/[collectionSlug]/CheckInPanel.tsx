@@ -96,8 +96,21 @@ export function CheckInPanel({
           ? await checkInAction(slug, collectionSlug, person.obligationId)
           : await checkOutAction(slug, collectionSlug, person.obligationId);
       setBusyId(null);
-      if (result.error) setError(result.error);
-      else router.refresh();
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+
+      // router.refresh() updates the first page, which is the props. It does
+      // NOT update search results, which are this component's own state — so
+      // admitting somebody found by searching left their badge reading "Not
+      // arrived" until the box was cleared. At a door that is the whole
+      // screen being wrong.
+      if (matches !== null) {
+        const again = await searchAttendeesAction(slug, collectionSlug, query.trim());
+        if (!again.error) setMatches(again.matches ?? []);
+      }
+      router.refresh();
     });
   }
 
