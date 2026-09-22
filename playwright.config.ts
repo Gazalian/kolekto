@@ -10,6 +10,23 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./tests/e2e",
   fullyParallel: false,
+  /**
+   * One worker, and this is measured rather than cautious.
+   *
+   * `fullyParallel: false` only stops tests inside ONE file running together.
+   * Across files Playwright still defaults to half the cores — two here — so
+   * a full run put two browsers and two Next request streams on the same four
+   * cores as the Supabase stack they were testing. The result was four
+   * failures in a 33-test run: a members page whose body never rendered, an
+   * add-member dialog that never closed, a sign-in the local stack would not
+   * accept, and a journey that ran out of its budget.
+   *
+   * Every one of those four passed when run on its own, on the same code, on
+   * the same machine. The cause was the suite competing with itself, not the
+   * product and not the tests — so the fix is the honest one, and not a
+   * larger timeout.
+   */
+  workers: 1,
   retries: 1,
   // Same reasoning as `expect.timeout` below: the 8-step golden path
   // comfortably clears the default 30s per-test budget on a normally
