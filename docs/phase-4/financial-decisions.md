@@ -207,6 +207,16 @@ available or merely overdue for release.
 **D-09d. M8.1 builds the calculation and its tests. It does not build the
 worker.** No job, no scheduler, no release journal posting.
 
+**D-09e (added 2026-09-24). The boundary stands as a decision, but it must stop
+being a constant.** `SETTLEMENT_HOUR = 5` and `SETTLEMENT_TIMEZONE` are
+hardcoded in `packages/domain/src/settlement.ts`. The hour is not a guess — it
+is this decision — but a hardcoded financial boundary cannot be varied per
+environment, cannot be changed without a deploy, and leaves no record of what it
+was when a historical payment was released. It should move into a versioned,
+effective-dated settlement schedule, the same pattern `fee_schedules` uses, so a
+release journal can record which boundary applied to it. Tracked as **E2**; an
+engineering change with no behaviour change.
+
 ## 5 · Fees — **CLOSED**
 
 **D-10. The rates.** Closes DEC-11 for the platform rate.
@@ -293,6 +303,31 @@ DEC-08; records that it is deliberately not being answered.
 Explicitly **not** invented here: the refund fee bearer, the approval policy,
 the refund-after-withdrawal rule, the accounting treatment, any UI, any
 workflow.
+
+**D-18a (added 2026-09-24). A refund incurs a further 3% charge. Who bears it,
+and what it is charged on, are OPEN.**
+
+The founder has stated the charge. Two things about it are not stated, and
+neither may be guessed:
+
+- **The bearer** — contributor, organiser, Kolekto, or split. Tracked as
+  **F1**. The architecture must make this configuration resolved at refund time
+  and then frozen onto the refund, the same way `fee_mode` is frozen onto a
+  payment (D-16).
+- **The base** — 3% of the original contribution, of the amount actually being
+  refunded, or of the original total including fees. Tracked as **F2**. For a
+  ₦10,000 contribution refunded ₦4,000 the three readings give ₦300, ₦120 and
+  ₦309, so this is not a rounding detail.
+
+**The refund charge is its own fee component**, never folded into the platform
+fee, the provider fee or the withdrawal fee. It needs its own account code and
+its own line in the fee model, and it is versioned with a refund fee schedule so
+a refund is explicable by the schedule in force when it happened.
+
+Note that this charge sits on top of [PA-13](provider-assumptions.md), which is
+**UNKNOWN**: Paystack's own refund fee treatment is not established. A 3%
+Kolekto charge stacked on an unknown provider cost is not yet a model anybody can
+reason about, so refunds are blocked on both F1/F2 and PA-13.
 
 **What the architecture must nevertheless preserve:** a refund must be addable
 later without corrupting the ledger. That means (a) nothing is ever deleted, so
