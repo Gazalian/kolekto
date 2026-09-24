@@ -26,10 +26,18 @@ export function EventEditor({
   event,
   onChange,
   disabled = false,
+  showAttendeeToggle = true,
 }: {
   event: EventDraft;
   onChange: (event: EventDraft) => void;
   disabled?: boolean;
+  /**
+   * M7.7: the ticketing flow asks this on its own step, beside the rest of the
+   * buying rules, where it belongs — "how many names do you need?" is a
+   * question about selling tickets, not about when the dinner is. Everywhere
+   * else this editor is the only place it could be asked, so it stays.
+   */
+  showAttendeeToggle?: boolean;
 }) {
   return (
     <div className="flex flex-col gap-4">
@@ -62,22 +70,24 @@ export function EventEditor({
         a ticket costs cannot.
       </p>
 
-      <label className="flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3">
-        <input
-          type="checkbox"
-          className="mt-1 h-4 w-4"
-          checked={event.collectAttendeeDetails}
-          disabled={disabled}
-          onChange={(e) => onChange({ ...event, collectAttendeeDetails: e.target.checked })}
-        />
-        <span>
-          <span className="block text-sm font-medium text-[var(--color-text)]">Collect attendee details</span>
-          <span className="block text-xs text-[var(--color-text-muted)]">
-            Ask for one name per ticket bought, not just the buyer&apos;s — so &quot;VIP × 3&quot; means three named
-            people. Off by default: only the buyer&apos;s own details are asked.
+      {showAttendeeToggle && (
+        <label className="flex items-start gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4"
+            checked={event.collectAttendeeDetails}
+            disabled={disabled}
+            onChange={(e) => onChange({ ...event, collectAttendeeDetails: e.target.checked })}
+          />
+          <span>
+            <span className="block text-sm font-medium text-[var(--color-text)]">Collect attendee details</span>
+            <span className="block text-xs text-[var(--color-text-muted)]">
+              Ask for one name per ticket bought, not just the buyer&apos;s — so &quot;VIP × 3&quot; means three named
+              people. Off by default: only the buyer&apos;s own details are asked.
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      )}
     </div>
   );
 }

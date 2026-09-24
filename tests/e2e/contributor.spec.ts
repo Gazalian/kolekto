@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { openWizard, walkWizard, type StepFiller } from "./helpers/wizard.ts";
+import type { StepKind } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
 
 /**
  * The public contributor experience (M7), in a real browser against the real
@@ -99,23 +101,34 @@ async function addMember(
   await expect(open).toHaveCount(0);
 }
 
-/** Walks the creation wizard for a fixed managed collection aimed at everyone on the roll. */
-async function createDuesCollection(page: Page, name: string, amount: string): Promise<void> {
-  await page.getByRole("link", { name: "Collections" }).click();
-  await page.waitForLoadState("networkidle");
-  await page.getByRole("link", { name: "New collection" }).click();
-  await page.waitForLoadState("networkidle");
-
-  await page.getByRole("button", { name: /Dues or a levy/ }).click();
-  await page.getByLabel("What is this collection called?").fill(name);
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByLabel("Amount each person pays").fill(amount);
-  await page.getByRole("button", { name: "Continue" }).click(); // contribution
-  // The flyer step. Every walk in this file was written before it existed and
-  // was one Continue short of where it thought it was.
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover image
-  await page.getByRole("button", { name: "Continue" }).click(); // who pays — everyone
+/**
+ * Walks the creation wizard for a fixed managed collection and leaves the
+ * browser on the finished draft.
+ *
+ * Driven by the flow's own step list rather than by counting Continue clicks.
+ * Counting is what put every walk in this file one step behind the wizard for
+ * a whole milestone once the flyer step was added.
+ */
+async function createDuesCollection(
+  page: Page,
+  name: string,
+  amount: string,
+  fill: Partial<Record<StepKind, StepFiller>> = {},
+): Promise<void> {
+  await openWizard(page);
+  await walkWizard(page, {
+    flowKey: "fixed",
+    intent: /Fixed contribution/,
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this collection called?").fill(name);
+      },
+      amount: async (p) => {
+        await p.getByLabel("Amount each person pays").fill(amount);
+      },
+      ...fill,
+    },
+  });
 }
 
 async function publish(page: Page): Promise<void> {
@@ -143,30 +156,14 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
   await page.locator("dialog[open]").getByRole("button", { name: "Archive member" }).click();
   await expect(page.locator("tr").filter({ hasText: "Tunde Bakare" })).toHaveCount(0);
 
-  await page.getByRole("link", { name: "Collections" }).click();
-  await page.waitForLoadState("networkidle");
-  await page.getByRole("link", { name: "New collection" }).click();
-  await page.waitForLoadState("networkidle");
-
-  await page.getByRole("button", { name: /Dues or a levy/ }).click();
-  await page.getByLabel("What is this collection called?").fill("Departmental Dues M7");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByLabel("Amount each person pays").fill("5000");
-  await page.getByRole("button", { name: "Continue" }).click(); // contribution
-
-  // The flyer step sits between the amount and the audience. This walk had
-  // one Continue too few and had been waiting for the Questions step while
-  // looking at "Who pays" ever since the flyer step was added.
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover image
-  await page.getByRole("button", { name: "Continue" }).click(); // who pays — everyone on the roll
-
-  // One required question, so the field rules get exercised on the public page.
-  await page.getByRole("button", { name: "Add a question" }).click();
-  await page.getByLabel("Question").fill("Hall of residence");
-  await page.getByLabel("Required").check();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Open this draft" }).click();
+  await createDuesCollection(page, "Departmental Dues M7", "5000", {
+    // One required question, so the field rules get exercised on the public page.
+    questions: async (p) => {
+      await p.getByRole("button", { name: "Add a question" }).click();
+      await p.getByLabel("Question").fill("House number");
+      await p.getByLabel("Required").check();
+    },
+  });
 
   await expect(page).toHaveURL(/\/collections\/departmental-dues-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -226,9 +223,9 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
   await contributor.getByLabel("Full name").fill("Grace Adeyemi");
   await contributor.getByLabel("Phone number").fill("+2348011110102");
   await contributor.getByRole("button", { name: "Continue" }).click();
-  await expect(contributor.getByText(/Hall of residence/)).toBeVisible();
+  await expect(contributor.getByText(/House number/)).toBeVisible();
 
-  await contributor.getByLabel("Hall of residence").fill("Block C");
+  await contributor.getByLabel("House number").fill("14B Sobi Close");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
   // The payment boundary: the amount is resolved, and nothing has been charged.
@@ -250,8 +247,6 @@ test("identification cannot be forged: the server refuses a contribution with no
   await addMember(page, { name: "Bola Ahmed", phone: "+2348011110201" });
 
   await createDuesCollection(page, "Levy M7", "2000");
-  await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Open this draft" }).click();
   await expect(page).toHaveURL(/\/collections\/levy-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
   await publish(page);
@@ -323,14 +318,13 @@ test("a group collection only knows the members of that group, and never another
   }
   await expect(page.locator("dialog[open]")).toHaveCount(0);
 
-  await createDuesCollection(page, "Level Dues M7", "1500");
-  // Back a step: this one is for the group, not the whole roll.
-  await page.getByRole("button", { name: "Back" }).click();
-  await page.getByRole("radio", { name: /Specific groups/ }).check();
-  await page.getByRole("checkbox", { name: "300 Level" }).check();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Open this draft" }).click();
+  // This one is for the group, not the whole roll.
+  await createDuesCollection(page, "Level Dues M7", "1500", {
+    audience: async (p) => {
+      await p.getByRole("radio", { name: /Specific groups/ }).check();
+      await p.getByRole("checkbox", { name: "300 Level" }).check();
+    },
+  });
 
   await expect(page).toHaveURL(/\/collections\/level-dues-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -371,18 +365,28 @@ test("a recurring charge shows the period it is asking about", async ({ page, br
   await page.getByRole("link", { name: "New collection" }).click();
   await page.waitForLoadState("networkidle");
 
-  await page.getByRole("button", { name: /A charge that repeats/ }).click();
-  await page.getByLabel("What is this collection called?").fill("Service Charge M7");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByLabel("Amount each person pays").fill("20000");
-  await page.getByLabel("How often").selectOption("monthly");
-  await page.getByLabel("First period starts").fill("2026-10-01");
-  await page.getByRole("button", { name: "Continue" }).click(); // contribution
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover image
-  await page.getByRole("button", { name: "Continue" }).click(); // who pays
-  await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Open this draft" }).click();
+  // §20: a recurring plan asks its amount and its frequency on separate
+  // steps, and is never asked when it closes — a plan that repeats does not.
+  await walkWizard(page, {
+    flowKey: "recurring",
+    intent: /^Recurring/,
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this collection called?").fill("Service Charge M7");
+      },
+      amount: async (p) => {
+        await p.getByLabel("Amount per period").fill("20000");
+      },
+      schedule: async (p) => {
+        await p.getByLabel("How often").selectOption("monthly");
+        await p.getByLabel("First period starts").fill("2026-10-01");
+      },
+      review: async (p) => {
+        await expect(p.getByText("Every month")).toBeVisible();
+        await expect(p.getByText(/does not close/i)).toBeVisible();
+      },
+    },
+  });
 
   await expect(page).toHaveURL(/\/collections\/service-charge-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
@@ -423,15 +427,16 @@ test("an open collection asks nobody to identify, and a closed one takes nothing
   await page.getByRole("link", { name: "New collection" }).click();
   await page.waitForLoadState("networkidle");
 
-  await page.getByRole("button", { name: /Fundraiser/ }).click();
-  await page.getByLabel("What is this collection called?").fill("Building Fund M7");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click(); // no range
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover image
-  await page.getByRole("button", { name: "Continue" }).click(); // who pays — anyone
-  await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Open this draft" }).click();
+  // §15: a campaign opens on its story, not on a name-and-description form.
+  await walkWizard(page, {
+    flowKey: "fundraiser",
+    intent: /^Fundraising/,
+    fill: {
+      story: async (p) => {
+        await p.getByLabel("What are you raising money for?").fill("Building Fund M7");
+      },
+    },
+  });
 
   await expect(page).toHaveURL(/\/collections\/building-fund-m7/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");

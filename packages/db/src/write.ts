@@ -992,3 +992,17 @@ export async function collectionDoorTotals(
     notArrived: row?.not_arrived ?? 0,
   };
 }
+
+/**
+ * Who bears the fees on one collection (M7.7).
+ *
+ * Configuration, not a charge. Nothing in this phase records or moves money;
+ * this is the statement of intent an organiser makes before publishing, and
+ * the number the preview is computed from.
+ */
+export async function setCollectionFeeMode(
+  caller: CallerContext,
+  input: { collectionId: string; feeMode: "community_absorbs" | "contributor_pays" },
+): Promise<void> {
+  await call(caller, (tx) => tx`select app.set_collection_fee_mode(${input.collectionId}, ${input.feeMode})`);
+}

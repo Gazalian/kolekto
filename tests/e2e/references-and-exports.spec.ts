@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { configureReferences, fillTier, stepCount, walkWizard } from "./helpers/wizard.ts";
 
 /**
  * M7.6 in a real browser: references, exports and picking a draft back up.
@@ -66,12 +67,10 @@ async function addMemberField(page: Page, slug: string, label: string): Promise<
   await expect(page.locator("dialog[open]")).toHaveCount(0);
 }
 
-async function startCollection(page: Page, slug: string, intent: RegExp, name: string): Promise<void> {
+/** Opens the wizard directly, without walking there through the collections list. */
+async function openWizardAt(page: Page, slug: string): Promise<void> {
   await page.goto(`/c/${slug}/collections/new`);
   await page.waitForLoadState("networkidle");
-  await page.getByRole("button", { name: intent }).click();
-  await page.getByLabel("What is this collection called?").fill(name);
-  await page.getByRole("button", { name: "Continue" }).click();
 }
 
 test("options with their own prefixes give REG-0001 and VIP-0001, and both land in the files", async ({ page }) => {
@@ -95,51 +94,50 @@ test("options with their own prefixes give REG-0001 and VIP-0001, and both land 
     value: "Independence",
   });
 
-  await startCollection(page, slug, /Options at different prices/, "Department Dinner 2026");
+  await openWizardAt(page, slug);
 
-  // Two options, each with its own reference series (part K).
-  await page.getByLabel("Option name").first().fill("Regular");
-  await page.getByLabel("Price").first().fill("10000");
-  await page.getByLabel("Reference prefix").first().fill("REG");
+  // M7.7 §9: the reference format is set DURING creation, on the flow's own
+  // step, rather than being discovered in Settings afterwards. It is the same
+  // architecture underneath — `app.set_collection_code_settings`, the same
+  // permission, the same freeze once a reference is out — reached from the
+  // place an organiser is actually standing.
+  await walkWizard(page, {
+    flowKey: "tiered",
+    intent: /^Packages/,
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this collection called?").fill("Department Dinner 2026");
+      },
+      packages: async (p) => {
+        // Two packages, each with its own reference series (M7.6 part K).
+        await fillTier(0, { name: "Regular", price: "10000", prefix: "REG" }, "Package")(p);
+        await fillTier(1, { name: "VIP", price: "25000", prefix: "VIP" }, "Package")(p);
+        // A third with NO prefix of its own, which must fall back to the
+        // collection's series rather than inventing one.
+        await fillTier(2, { name: "Table", price: "90000" }, "Package")(p);
+      },
+      // A roll is what a reference attaches to, so the collection has to be
+      // for named members rather than for anyone with the link.
+      audience: async (p) => {
+        await p.getByRole("radio", { name: /Everyone on the roll/ }).check();
+      },
+      reference: async (p) => {
+        await configureReferences({ prefix: "DIN26" })(p);
 
-  await page.getByRole("button", { name: "Add another option" }).click();
-  await page.getByLabel("Option name").nth(1).fill("VIP");
-  await page.getByLabel("Price").nth(1).fill("25000");
-  await page.getByLabel("Reference prefix").nth(1).fill("VIP");
-
-  // A third option with NO prefix of its own, which must fall back to the
-  // collection's series rather than inventing one (part K).
-  await page.getByRole("button", { name: "Add another option" }).click();
-  await page.getByLabel("Option name").nth(2).fill("Table");
-  await page.getByLabel("Price").nth(2).fill("90000");
-
-  await page.getByRole("button", { name: "Continue" }).click(); // options
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover
-
-  // A roll is what a reference attaches to, so the collection has to be for
-  // named members rather than for anyone with the link.
-  await page.getByRole("radio", { name: /Everyone on the roll/ }).check();
-  await page.getByRole("button", { name: "Continue" }).click(); // who
-  await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Open this draft" }).click();
+        // The live example is the point of this screen (M7.6 part I).
+        await expect(p.getByText("DIN26-0001", { exact: true })).toBeVisible();
+        // And each prefixed package shows where its own series starts.
+        await expect(p.getByText("REG-0001", { exact: true })).toBeVisible();
+        await expect(p.getByText("VIP-0001", { exact: true })).toBeVisible();
+      },
+      review: async (p) => {
+        await expect(p.getByText("On — DIN26")).toBeVisible();
+      },
+    },
+  });
 
   await expect(page).toHaveURL(/\/collections\/department-dinner-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
-
-  // ── Switch references on ────────────────────────────────────────────────
-  await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel(/Give everyone on this collection a reference/).check();
-  await page.getByLabel("Prefix", { exact: true }).fill("DIN26");
-
-  // The live example is the point of this screen (part I).
-  await expect(page.getByText("DIN26-0001", { exact: true })).toBeVisible();
-  // And each prefixed option shows where its own series starts.
-  await expect(page.getByText("REG-0001", { exact: true })).toBeVisible();
-  await expect(page.getByText("VIP-0001", { exact: true })).toBeVisible();
-
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText("Saved.")).toBeVisible({ timeout: 30_000 });
 
   // ── Put one person on each option ───────────────────────────────────────
   await page.getByRole("button", { name: "Members" }).click();
@@ -219,22 +217,22 @@ test("a reference format is fixed once references are out", async ({ page }) => 
   const slug = await createCommunity(page, `E2E Lock ${Date.now()}`);
   await addMember(page, slug, "Chidi Locked", "+2348097772001");
 
-  await startCollection(page, slug, /Dues or a levy/, "Locked Levy 2026");
-  await page.getByLabel("Amount each person pays").fill("5000");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Open this draft" }).click();
+  await openWizardAt(page, slug);
+  await walkWizard(page, {
+    flowKey: "fixed",
+    intent: /Fixed contribution/,
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this collection called?").fill("Locked Levy 2026");
+      },
+      amount: async (p) => {
+        await p.getByLabel("Amount each person pays").fill("5000");
+      },
+      reference: configureReferences({ prefix: "LOCK" }),
+    },
+  });
   await expect(page).toHaveURL(/\/collections\/locked-levy-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
-
-  await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel(/Give everyone on this collection a reference/).check();
-  await page.getByLabel("Prefix", { exact: true }).fill("LOCK");
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText("Saved.")).toBeVisible({ timeout: 30_000 });
 
   // Issue one by putting somebody on the roll.
   await page.getByRole("button", { name: "Members" }).click();
@@ -254,18 +252,26 @@ test("a draft survives closing the browser, and continues where it stopped", asy
   await signInAsNewUser(page, "e2e-resume");
   const slug = await createCommunity(page, `E2E Resume ${Date.now()}`);
 
-  // Get several steps in, including the parts that are rows of their own.
-  await startCollection(page, slug, /Items or packages/, "Aso Ebi Order 2026");
-  await page.getByLabel("Item").first().fill("Lace wrapper");
-  await page.getByLabel("Price").first().fill("15000");
-  await page.getByRole("button", { name: "Add another item" }).click();
-  await page.getByLabel("Item").nth(1).fill("Gele");
-  await page.getByLabel("Price").nth(1).fill("6000");
-  await page.getByRole("button", { name: "Continue" }).click(); // items
-
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover
-  await page.getByRole("button", { name: "Continue" }).click(); // who can order
+  // Get several steps in, including the parts that are rows of their own, then
+  // stop at the audience step.
+  await openWizardAt(page, slug);
+  await walkWizard(page, {
+    flowKey: "items",
+    intent: /^Items/,
+    stopBefore: "audience",
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this catalogue called?").fill("Aso Ebi Order 2026");
+      },
+      items: async (p) => {
+        await p.getByLabel("Item").first().fill("Lace wrapper");
+        await p.getByLabel("Price").first().fill("15000");
+        await p.getByRole("button", { name: "Add another item" }).click();
+        await p.getByLabel("Item").nth(1).fill("Gele");
+        await p.getByLabel("Price").nth(1).fill("6000");
+      },
+    },
+  });
 
   // And then the organiser walks away. A new context is a new browser: no
   // page state, no memory, only what the server kept.
@@ -277,20 +283,25 @@ test("a draft survives closing the browser, and continues where it stopped", asy
   await resumed.getByRole("link", { name: /Continue setting this up/ }).first().click();
   await resumed.waitForLoadState("networkidle");
 
-  // It came back at the step it was left on, not at the beginning.
-  await expect(resumed.getByText(/Step 6 of 7 · Questions/)).toBeVisible({ timeout: 45_000 });
+  // It came back at the step it was left on, not at the beginning — and in the
+  // CATALOGUE's flow, not a generic one. The step count is the items flow's
+  // own ten (§25: the flow is recovered from the rows, never stored).
+  await expect(resumed.getByText(`Step 7 of ${stepCount("items")} · Who can order`)).toBeVisible({
+    timeout: 45_000,
+  });
 
   // And the work is all still there. Walk back to the Items step and look.
-  await resumed.getByRole("button", { name: "Back" }).click();
-  await resumed.getByRole("button", { name: "Back" }).click();
-  await resumed.getByRole("button", { name: "Back" }).click();
+  await resumed.getByRole("button", { name: "Back" }).click(); // cover
+  await resumed.getByRole("button", { name: "Back" }).click(); // fees
+  await resumed.getByRole("button", { name: "Back" }).click(); // order rules
+  await resumed.getByRole("button", { name: "Back" }).click(); // items
 
   await expect(resumed.getByLabel("Item").first()).toHaveValue("Lace wrapper");
   await expect(resumed.getByLabel("Item").nth(1)).toHaveValue("Gele");
   await expect(resumed.getByLabel("Price").first()).toHaveValue("15000");
 
   await resumed.getByRole("button", { name: "Back" }).click();
-  await expect(resumed.getByLabel("What is this collection called?")).toHaveValue("Aso Ebi Order 2026");
+  await expect(resumed.getByLabel("What is this catalogue called?")).toHaveValue("Aso Ebi Order 2026");
 
   await second.close();
 });
@@ -303,31 +314,32 @@ test("a random reference style issues unguessable codes that persist and export"
   await addMember(page, slug, "Bola Random", "+2348097773002");
   await addMember(page, slug, "Chidi Random", "+2348097773003");
 
-  await startCollection(page, slug, /Dues or a levy/, "Raffle Levy 2026");
-  await page.getByLabel("Amount each person pays").fill("2500");
-  await page.getByRole("button", { name: "Continue" }).click(); // contribution
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover
-  await page.getByRole("button", { name: "Continue" }).click(); // who pays
-  await page.getByRole("button", { name: "Continue" }).click(); // no questions
-  await page.getByRole("button", { name: "Open this draft" }).click();
+  await openWizardAt(page, slug);
+  await walkWizard(page, {
+    flowKey: "fixed",
+    intent: /Fixed contribution/,
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this collection called?").fill("Raffle Levy 2026");
+      },
+      amount: async (p) => {
+        await p.getByLabel("Amount each person pays").fill("2500");
+      },
+      // ── Random, not counting up ─────────────────────────────────────────
+      reference: async (p) => {
+        await configureReferences({ prefix: "RAF", style: "random" })(p);
+
+        // The digits and starting-number fields belong to a counting series
+        // and are not asked for here — a random reference has no position in
+        // one.
+        await expect(p.getByLabel("Number of digits")).toHaveCount(0);
+        await expect(p.getByLabel("Starting number")).toHaveCount(0);
+      },
+    },
+  });
 
   await expect(page).toHaveURL(/\/collections\/raffle-levy-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
-
-  // ── Random, not counting up ─────────────────────────────────────────────
-  await page.getByRole("button", { name: "Settings" }).click();
-  await page.getByLabel(/Give everyone on this collection a reference/).check();
-  await page.getByLabel("Prefix", { exact: true }).fill("RAF");
-  await page.getByLabel("Style").selectOption("random");
-
-  // The digits and starting-number fields belong to a counting series and are
-  // not asked for here — a random reference has no position in one.
-  await expect(page.getByLabel("Number of digits")).toHaveCount(0);
-  await expect(page.getByLabel("Starting number")).toHaveCount(0);
-
-  await page.getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.getByText("Saved.")).toBeVisible({ timeout: 30_000 });
 
   // ── Three people, three references ──────────────────────────────────────
   await page.getByRole("button", { name: "Members" }).click();

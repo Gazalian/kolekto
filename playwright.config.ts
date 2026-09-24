@@ -56,10 +56,16 @@ export default defineConfig({
     // did nothing) — a dev-tooling problem specific to that environment, not
     // this application; `next build && next start` sidesteps it and is also
     // closer to what a CI run should exercise anyway.
+    //
+    // `NEXT_DIST_DIR=.next-e2e` (read by apps/web/next.config.ts) keeps this
+    // build's output out of `.next`, the directory a `next dev` server run
+    // alongside this suite is using — otherwise this build overwrites that
+    // dev server's manifests out from under it.
     command: "npm run build --workspace apps/web && npm run start --workspace apps/web -- -p 3010",
     url: "http://127.0.0.1:3010",
     reuseExistingServer: true,
     timeout: 180_000,
+    env: { NEXT_DIST_DIR: ".next-e2e" },
   },
   // `channel: "chromium"` forces the full Chromium binary rather than the
   // separate `chromium_headless_shell` build Playwright otherwise launches

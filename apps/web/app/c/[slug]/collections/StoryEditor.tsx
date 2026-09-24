@@ -36,7 +36,7 @@ export function StoryEditor({
       <TextAreaField
         label="What is this for?"
         hint="Clearly explain what you are raising money for and how it will be used."
-        placeholder="We are raising funds to build a library for 200 primary school students…"
+        placeholder="We are raising funds to rebuild the health post on Sobi Road…"
         value={story.what}
         disabled={disabled}
         onChange={(event) => onChange({ ...story, what: event.target.value })}
@@ -44,7 +44,7 @@ export function StoryEditor({
       <TextAreaField
         label="Why does this matter?"
         hint="The reason behind it — donors give to causes they understand."
-        placeholder="Access to books changes lives. Right now, 200 children share just 3 books…"
+        placeholder="The nearest clinic is now forty minutes away, and it is the only one for six streets…"
         value={story.why}
         disabled={disabled}
         onChange={(event) => onChange({ ...story, why: event.target.value })}
@@ -52,7 +52,7 @@ export function StoryEditor({
       <TextAreaField
         label="What will donations fund?"
         hint="Concrete outcomes a donor can expect from their contribution."
-        placeholder="₦500,000 buys 500 books, 6 shelves, and a part-time librarian for a year…"
+        placeholder="₦500,000 roofs the building, ₦1,200,000 fits it out, ₦2,000,000 staffs it for a year…"
         value={story.impact}
         disabled={disabled}
         onChange={(event) => onChange({ ...story, impact: event.target.value })}

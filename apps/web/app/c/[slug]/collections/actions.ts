@@ -11,6 +11,7 @@ import {
   openCollectionCycle,
   setCollectionAudience,
   setCollectionDraftStep,
+  setCollectionFeeMode,
   setCollectionCover,
   setCollectionEvent,
   setCollectionFields,
@@ -753,4 +754,31 @@ export async function rememberStepAction(
   } catch {
     // See above.
   }
+}
+
+/**
+ * Who bears the fees (M7.7 §5).
+ *
+ * Configuration, not a charge. Phase 4 is not implemented and nothing here
+ * initiates, records or moves money — this saves the organiser's answer so
+ * that when payment does exist, the split was decided before the first
+ * contributor ever saw the page rather than after.
+ */
+export async function setCollectionFeeModeAction(
+  slug: string,
+  collectionSlug: string,
+  input: { collectionId: string; feeMode: "community_absorbs" | "contributor_pays" },
+): Promise<ActionResult> {
+  if (input.feeMode !== "community_absorbs" && input.feeMode !== "contributor_pays") {
+    return { error: "Say who bears the fees" };
+  }
+
+  const caller = await requireCallerContext();
+  try {
+    await setCollectionFeeMode(caller, input);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not save who pays the fees") };
+  }
+  revalidateCollection(slug, collectionSlug);
+  return { ok: true };
 }

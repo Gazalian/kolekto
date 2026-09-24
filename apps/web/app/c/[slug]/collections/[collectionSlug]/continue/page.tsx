@@ -1,5 +1,6 @@
 import type {
   Collection,
+  CollectionCodeSettings,
   CollectionField,
   CollectionItem,
   CollectionRecurrence,
@@ -11,6 +12,8 @@ import { notFound, redirect } from "next/navigation";
 import { getCommunityAccess, hasPermission } from "../../../../../../lib/permissions.ts";
 import { createClient } from "../../../../../../lib/supabase/server.ts";
 import { NewCollectionForm, type ExistingDraft } from "../../new/NewCollectionForm.tsx";
+import { emptyCodes } from "../../new/codeDefaults.ts";
+import { flowKeyFor } from "../../new/flows.ts";
 
 export const metadata = { title: "Continue draft" };
 
@@ -28,12 +31,16 @@ export const metadata = { title: "Continue draft" };
  * same form. The only thing that could not be derived from them is which step
  * the organiser had reached, which is why `collections.draft_step` exists.
  *
- * WHICH INTENT. The wizard's intents are presets over the configuration axes,
- * not a column (there is no collection_type — ADR 0013). Reopening one means
+ * WHICH FLOW. The wizard's flows are presets over the configuration axes, not
+ * a column (there is no collection_type — ADR 0013). Reopening one means
  * finding the preset that matches what the rows say, which is what
- * `intentKeyFor` does. It never GUESSES the collection into a different
- * shape: the fields it restores are the collection's own, and the intent only
- * decides which questions get asked about them.
+ * `flowKeyFor` does. It never GUESSES the collection into a different shape:
+ * the fields it restores are the collection's own, and the flow only decides
+ * which questions get asked about them, in what order, and in whose words.
+ *
+ * M7.7 made the flows differ in LENGTH as well as in wording, so `draft_step`
+ * is clamped to the flow that is actually being resumed. A nine-step draft
+ * cannot land on step 9 of an eight-step flow.
  *
  * Only a draft. A published collection is edited from its Settings tab, where
  * every change is a deliberate one against something people can already see.
@@ -75,6 +82,8 @@ export default async function ContinueDraftPage({
     { data: audienceGroups },
     { data: groups },
     { count: memberCount },
+    { data: codeSettings },
+    { count: referencesIssued },
   ] = await Promise.all([
     supabase.from("collection_tiers").select("*").eq("collection_id", collection.id).order("sort_order"),
     supabase.from("collection_items").select("*").eq("collection_id", collection.id).order("sort_order"),
@@ -83,15 +92,26 @@ export default async function ContinueDraftPage({
     supabase.from("collection_audience_groups").select("group_id").eq("collection_id", collection.id),
     supabase.from("member_groups").select("*").eq("community_id", c.id).is("archived_at", null).order("sort_order"),
     supabase.from("members").select("id", { count: "exact", head: true }).eq("community_id", c.id),
+    supabase.from("collection_code_settings").select("*").eq("collection_id", collection.id).maybeSingle(),
+    // Whether the format is still the organiser's to change. One issued
+    // reference freezes it (CODE-04): it may already be printed on something.
+    supabase
+      .from("contributor_references")
+      .select("id", { count: "exact", head: true })
+      .eq("collection_id", collection.id),
   ]);
+
+  const settings = codeSettings as CollectionCodeSettings | null;
+  const flowKey = flowKeyFor(collection);
 
   const existing: ExistingDraft = {
     collectionId: collection.id,
     collectionSlug: collection.slug,
-    intentKey: intentKeyFor(collection),
+    flowKey,
     step: collection.draft_step,
     name: collection.name,
     description: collection.description ?? "",
+    startsAt: toLocalInput(collection.starts_at),
     deadlineAt: toLocalInput(collection.deadline_at),
     amountModel: collection.amount_model as ExistingDraft["amountModel"],
     participationMode: collection.participation_mode as "open" | "managed",
@@ -113,6 +133,7 @@ export default async function ContinueDraftPage({
       description: tier.description ?? "",
       price: toNairaInput(tier.price_kobo),
       quantityLimit: tier.quantity_limit === null ? "" : String(tier.quantity_limit),
+      perOrderLimit: tier.per_order_limit === null ? "" : String(tier.per_order_limit),
       codePrefix: tier.code_prefix ?? "",
     })),
     items: ((items ?? []) as CollectionItem[]).map((item) => ({
@@ -149,6 +170,18 @@ export default async function ContinueDraftPage({
     })),
     audienceMode: collection.audience_mode as ExistingDraft["audienceMode"],
     audienceGroupIds: (audienceGroups ?? []).map((group) => group.group_id as string),
+    feeMode: collection.fee_mode === "contributor_pays" ? "contributor_pays" : "community_absorbs",
+    codes: settings
+      ? {
+          enabled: collection.codes_enabled,
+          prefix: settings.prefix ?? "",
+          separator: (settings.separator as ExistingDraft["codes"]["separator"]) ?? "-",
+          digits: String(settings.digits),
+          startNumber: String(settings.start_number),
+          style: settings.style,
+        }
+      : { ...emptyCodes(), enabled: collection.codes_enabled },
+    codesLocked: (referencesIssued ?? 0) > 0,
   };
 
   return (
@@ -157,29 +190,10 @@ export default async function ContinueDraftPage({
       communityId={c.id}
       memberCount={memberCount ?? 0}
       groups={(groups ?? []) as MemberGroup[]}
+      canConfigureCodes={hasPermission(access, "collection.configure_codes")}
       existing={existing}
     />
   );
-}
-
-/**
- * Which of the wizard's presets this collection was made from.
- *
- * Derived rather than stored, because storing it would create a second
- * source of truth for what the collection is — and the configuration axes
- * are the real one (ADR 0013). The order matters: the more specific match
- * comes first, since a ticketed event and a plain tiered collection differ
- * only by category.
- */
-function intentKeyFor(collection: Collection): string {
-  if (collection.schedule === "recurring") return "recurring";
-  if (collection.category === "event") return "event";
-  if (collection.category === "fundraiser") return "fundraiser";
-  if (collection.amount_model === "items") return "items";
-  if (collection.amount_model === "tiers") return "tiers";
-  if (collection.amount_model === "open_amount") return "contribution";
-  if (collection.category === "dues") return "dues";
-  return "custom";
 }
 
 /** Kobo back to what somebody typed. Whole naira, because that is what the field takes. */

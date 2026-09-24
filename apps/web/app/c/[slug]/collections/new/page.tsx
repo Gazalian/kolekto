@@ -35,6 +35,11 @@ export default async function NewCollectionPage({ params }: { params: Promise<{ 
       communityId={c.id}
       memberCount={memberCount ?? 0}
       groups={(groups ?? []) as MemberGroup[]}
+      // M7.7 §9: the reference step is an owner/admin decision, so a treasurer
+      // drafting a collection is shown what it is rather than a control they
+      // cannot use. `app.set_collection_code_settings` re-checks it regardless
+      // (ADR 0008).
+      canConfigureCodes={hasPermission(access, "collection.configure_codes")}
     />
   );
 }

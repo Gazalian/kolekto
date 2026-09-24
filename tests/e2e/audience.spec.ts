@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { walkWizard } from "./helpers/wizard.ts";
 
 /**
  * Collection audience, in a browser (§24, §38).
@@ -55,28 +56,32 @@ test("aim a collection at a group, then add obligations for newly eligible membe
   await page.getByRole("link", { name: "New collection" }).click();
   await page.waitForLoadState("networkidle");
 
-  await page.getByRole("button", { name: /Dues or a levy/ }).click();
-  await page.getByLabel("What is this collection called?").fill("Level Dues 2026");
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByLabel("Amount each person pays").fill("5000");
-  await page.getByRole("button", { name: "Continue" }).click(); // contribution
+  // §26: choosing an invitation group during creation survived M7.7's rebuild
+  // of the wizard. The walk follows the flow's own step list, so this test no
+  // longer counts Continue clicks — which is what made it walk past the flyer
+  // step for a whole milestone and time out on the audience radios.
+  await walkWizard(page, {
+    flowKey: "fixed",
+    intent: /Fixed contribution/,
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this collection called?").fill("Level Dues 2026");
+      },
+      amount: async (p) => {
+        await p.getByLabel("Amount each person pays").fill("5000");
+      },
+      // Who it is for: specific groups, and the collection must not charge
+      // anyone yet.
+      audience: async (p) => {
+        await p.getByRole("radio", { name: /Specific groups/ }).check();
+        await p.getByRole("checkbox", { name: "300 Level" }).check();
+      },
+      review: async (p) => {
+        await expect(p.getByText("Specific groups")).toBeVisible();
+      },
+    },
+  });
 
-  // The flyer step sits between the amount and the audience, and this test
-  // walked straight past it — so it had been waiting for the audience radios
-  // while looking at "Add a flyer" ever since that step was added, and timing
-  // out. Nothing to do with what M7.6 changed; found by chasing a failure
-  // rather than retrying it.
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover image
-
-  // Who it is for: specific groups, and the collection must not charge anyone yet.
-  await page.getByRole("radio", { name: /Specific groups/ }).check();
-  await page.getByRole("checkbox", { name: "300 Level" }).check();
-  await page.getByRole("button", { name: "Continue" }).click();
-  await page.getByRole("button", { name: "Continue" }).click(); // no extra questions
-
-  await expect(page.getByText("Specific groups")).toBeVisible();
-  await page.getByRole("button", { name: "Open this draft" }).click();
   await expect(page).toHaveURL(/\/collections\/level-dues-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
 

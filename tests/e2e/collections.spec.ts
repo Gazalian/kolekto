@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { fillTier, openWizard, walkWizard } from "./helpers/wizard.ts";
 
 /**
  * The Phase 3 golden path, in a real browser against the real local stack:
@@ -62,37 +63,40 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await page.getByRole("link", { name: "New collection" }).click();
   await page.waitForLoadState("networkidle");
 
-  await page.getByRole("button", { name: /Dues or a levy/ }).click();
-  await page.getByLabel("What is this collection called?").fill("Departmental Dues 2026");
-  await page.getByLabel("What is it for?").fill("Dues for the 2026 session.");
-  await page.getByRole("button", { name: "Continue" }).click();
+  // The fixed flow, walked by the flow's own definition. `walkWizard` asserts
+  // each heading as it arrives, so this journey also proves the fixed flow
+  // asks its nine steps in its own order (M7.7 §12).
+  await walkWizard(page, {
+    flowKey: "fixed",
+    intent: /Fixed contribution/,
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this collection called?").fill("Departmental Dues 2026");
+        await p.getByLabel("What is it for?").fill("Dues for the 2026 session.");
+      },
+      amount: async (p) => {
+        await p.getByLabel("Amount each person pays").fill("5000");
+      },
+      fees: async (p) => {
+        // Part 3: the policy is stated without asserting a figure Kolekto has
+        // not committed to. The computed split lives behind the estimate.
+        await expect(p.getByText("₦5,000 − applicable fees")).toBeVisible();
+        await expect(p.getByText(/nothing has been charged/i)).toBeVisible();
+      },
+      audience: async (p) => {
+        // The fixed flow is managed, so the whole roll is the default — which
+        // is what makes the collection answer "who has not paid".
+        await expect(p.getByRole("radio", { name: /Everyone on the roll/ })).toBeChecked();
+      },
+      questions: async (p) => {
+        await p.getByRole("button", { name: "Add a question" }).click();
+        await p.getByLabel("Question").fill("House number");
+      },
+    },
+  });
 
-  await page.getByLabel("Amount each person pays").fill("5000");
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  // Cover image — leaving Contribution is when the draft is actually created,
-  // so the uploader has a real collection to attach to. Upload itself is
-  // covered by collection-types.spec.ts's dedicated flyer test.
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  // Who pays — the dues preset picks the whole roll, which is what makes the
-  // collection managed. (Until M5 this step was a "Who can pay" select; it is
-  // now the audience picker, and this assertion was left behind.)
-  await expect(page.getByRole("radio", { name: /Everyone on the roll/ })).toBeChecked();
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  // Questions — one, so the public form has something beyond contact details.
-  await page.getByRole("button", { name: "Add a question" }).click();
-  await page.getByLabel("Question").fill("Matric number");
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  await expect(page.getByText("Check this over")).toBeVisible();
-  await page.getByRole("button", { name: "Open this draft" }).click();
-
-  // Saving runs three server actions in sequence (create, then the questions,
-  // then the navigation), so this one assertion gets a longer budget than the
-  // 15s default rather than the whole suite getting one.
+  // Saving runs several server actions in sequence, so this one assertion gets
+  // a longer budget than the default rather than the whole suite getting one.
   await expect(page).toHaveURL(/\/collections\/departmental-dues-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");
   await expect(page.getByText("Draft", { exact: true })).toBeVisible();
@@ -142,7 +146,7 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await expect(anonymousPage.getByText("Contributing as")).toBeVisible();
 
   // The collection's own question is asked, separately from contact details.
-  await expect(anonymousPage.getByLabel("Matric number")).toBeVisible();
+  await expect(anonymousPage.getByLabel("House number")).toBeVisible();
 
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
   // Server-side validation: a contributor with no way to be reached is refused.
@@ -150,7 +154,7 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
 
   await anonymousPage.getByLabel("Full name").fill("Ada Obi");
   await anonymousPage.getByLabel("Email address").fill("ada@example.test");
-  await anonymousPage.getByLabel("Matric number").fill("CSC/2021/001");
+  await anonymousPage.getByLabel("House number").fill("14B Sobi Close");
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
 
   await expect(anonymousPage.getByText(/Your details are checked, Ada Obi/)).toBeVisible();
@@ -165,33 +169,36 @@ test("a tiered collection prices a contribution from the option the contributor 
   await signInAsNewUser(page, "e2e-collections");
   const communitySlug = await createCommunity(page, `E2E Tiers ${Date.now()}`);
 
-  await page.getByRole("link", { name: "Collections" }).click();
-  await page.waitForLoadState("networkidle");
-  await page.getByRole("link", { name: "New collection" }).click();
-  await page.waitForLoadState("networkidle");
+  await openWizard(page);
 
-  // "Options at different prices" rather than the ticketed preset: this test is
-  // about pricing from the chosen option, and a ticketed collection would also
-  // ask for a date and a venue (covered in collection-types.spec.ts).
-  await page.getByRole("button", { name: /Options at different prices/ }).click();
-  await page.getByLabel("What is this collection called?").fill("Alumni Dinner 2026");
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  // Two options, deliberately priced far apart so the confirmation cannot pass
-  // by accident: the 2026-08-06 incident charged the first option's price for
-  // every selection.
-  await page.getByLabel("Option name").first().fill("Standard");
-  await page.getByLabel("Price").first().fill("5000");
-  await page.getByRole("button", { name: "Add another option" }).click();
-  await page.getByLabel("Option name").nth(1).fill("VIP");
-  await page.getByLabel("Price").nth(1).fill("20000");
-  await page.getByRole("button", { name: "Continue" }).click();
-
-  await expect(page.getByRole("heading", { name: "Add a flyer" })).toBeVisible({ timeout: 45_000 });
-  await page.getByRole("button", { name: "Continue" }).click(); // cover image — skipped
-  await page.getByRole("button", { name: "Continue" }).click(); // who pays — open by default
-  await page.getByRole("button", { name: "Continue" }).click(); // no extra questions
-  await page.getByRole("button", { name: "Open this draft" }).click();
+  // The packages flow rather than the ticketed one: this test is about pricing
+  // from the chosen option, and a ticketed event would also ask for a date and
+  // a venue (covered in collection-types.spec.ts).
+  await walkWizard(page, {
+    flowKey: "tiered",
+    intent: /^Packages/,
+    fill: {
+      basics: async (p) => {
+        await p.getByLabel("What is this collection called?").fill("Alumni Dinner 2026");
+      },
+      // Two packages, deliberately priced far apart so the confirmation cannot
+      // pass by accident: the 2026-08-06 incident charged the first option's
+      // price for every selection.
+      packages: async (p) => {
+        await fillTier(0, { name: "Standard", price: "5000" }, "Package")(p);
+        await fillTier(1, { name: "VIP", price: "20000" }, "Package")(p);
+      },
+      fees: async (p) => {
+        // One example per package, because absorbing fees on ₦5,000 and on
+        // ₦20,000 are two different decisions and one averaged line would
+        // hide that.
+        await expect(p.getByText("₦5,000 − applicable fees")).toBeVisible();
+        await expect(p.getByText("₦20,000 − applicable fees")).toBeVisible();
+        await expect(p.getByText("Standard")).toBeVisible();
+        await expect(p.getByText("VIP")).toBeVisible();
+      },
+    },
+  });
 
   await expect(page).toHaveURL(/\/collections\/alumni-dinner-2026/, { timeout: 45_000 });
   await page.waitForLoadState("networkidle");

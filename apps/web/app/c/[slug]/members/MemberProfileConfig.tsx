@@ -238,7 +238,7 @@ function FieldEditor({
       <div className="flex flex-col gap-4">
         <TextField
           label="Label"
-          placeholder="Matric number"
+          placeholder="House number"
           value={label}
           onChange={(event) => {
             onLabelChange(event.target.value);

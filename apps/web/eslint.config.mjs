@@ -14,6 +14,13 @@ import nextCoreWebVitals from "eslint-config-next/core-web-vitals";
  * an already-flat config is what produced a circular-structure crash from
  * `@eslint/eslintrc` against this ESLint version.
  */
-const eslintConfig = [...nextCoreWebVitals, { ignores: [".next/**", "next-env.d.ts"] }];
+const eslintConfig = [
+  ...nextCoreWebVitals,
+  // `.next-e2e/**` is the isolated production-build output Playwright's
+  // webServer writes (next.config.ts `distDir`, playwright.config.ts), kept
+  // out of `.next/**` so it doesn't collide with a running `next dev`
+  // server. It needs the same lint ignore `.next/**` already gets.
+  { ignores: [".next/**", ".next-e2e/**", "next-env.d.ts"] },
+];
 
 export default eslintConfig;

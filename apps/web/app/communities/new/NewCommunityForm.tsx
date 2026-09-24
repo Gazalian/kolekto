@@ -26,7 +26,7 @@ export function NewCommunityForm() {
 
   return (
     <form action={formAction} className="flex flex-col gap-4">
-      <TextField label="Community name" name="name" required placeholder="Computer Science Students' Association" />
+      <TextField label="Community name" name="name" required placeholder="Ikoyi Residents Association" />
       <SelectField label="Type" name="type" required defaultValue="">
         <option value="" disabled>
           Choose a type

@@ -4,8 +4,8 @@ import { Button, CheckboxField, SelectField, TextField } from "@kolekto/ui";
 import { Plus, Trash2 } from "lucide-react";
 
 /**
- * The collection's own questions (PRD 4.3) — a matric number, a shirt size, a
- * unit number.
+ * The collection's own questions (PRD 4.3) — a house number, a shirt size, a
+ * dietary requirement.
  *
  * Deliberately separate from the contributor's payment contact details, which
  * are the same three fields on every collection and are not configurable. The
@@ -60,7 +60,7 @@ export function QuestionsEditor({
           <div className="grid gap-3 sm:grid-cols-2">
             <TextField
               label="Question"
-              placeholder="e.g. Matric number"
+              placeholder="e.g. House number"
               value={question.label}
               disabled={disabled}
               onChange={(event) =>

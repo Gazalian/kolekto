@@ -6,6 +6,7 @@ node_modules/
 dist/
 build/
 .next/
+.next-e2e/
 out/
 *.tsbuildinfo
 
