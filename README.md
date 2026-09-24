@@ -125,10 +125,10 @@ so open Mailpit (`supabase status` prints `MAILPIT_URL`, typically
 sign-up gets a personal community immediately (COM-01); create a named one
 from `/communities`.
 
-## The four invariants
+## The five invariants
 
 CI fails if any of these is violated. They exist because the previous system
-violated all four, and they are checked before features are written rather
+violated all five, and they are checked before features are written rather
 than after.
 
 1. **Money is `bigint` kobo.** No floats, no `numeric`, no `toFixed`, no
@@ -139,6 +139,10 @@ than after.
    proposes; the database posts.
 4. **One Paystack caller.** `api.paystack.co` appears only in
    `packages/adapters`.
+5. **One fee implementation.** Fee arithmetic exists only in
+   `packages/domain/src/fees.ts`, and `calculateFees()` is called only from an
+   explicit allowlist. The previous system had two implementations of "net" and
+   the difference between them was the largest drift bucket in production.
 
 Run them locally with `npm run invariants`.
 

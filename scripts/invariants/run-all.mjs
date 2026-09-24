@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The four invariants.
+ * The five invariants.
  *
  * These run before features exist, not after. Every one of them corresponds to
  * a way the previous Kolekto went wrong, and each was discoverable by a script
@@ -10,6 +10,8 @@
  *   2. RLS on every table            — two tables world-writable for five weeks
  *   3. No money writes outside the DB — money logic spread over 3 runtimes
  *   4. One Paystack caller           — five call sites, no swappable provider
+ *   5. One fee implementation        — two versions of "net", and the difference
+ *                                      between them WAS the largest drift bucket
  *
  * Usage: node scripts/invariants/run-all.mjs [--verbose]
  */
@@ -153,8 +155,10 @@ async function ruleNoDirectMoneyWrites() {
   const files = await collect([".ts", ".tsx"], join(ROOT, "apps"));
   files.push(...(await collect([".ts", ".tsx"], join(ROOT, "packages"))));
 
+  // M8.1 adds the tables it created: the ledger's own three were already named
+  // here before they existed, which is the point of writing an invariant early.
   const MONEY_TABLES =
-    /\.from\(\s*["'`](ledger_entries|ledger_journals|ledger_accounts|contributions|transactions|payment_attempts|installment_plans|withdrawals|balance_releases|refunds|obligations)["'`]\s*\)/;
+    /\.from\(\s*["'`](ledger_entries|ledger_journals|ledger_accounts|ledger_account_codes|contributions|transactions|payment_attempts|installment_plans|withdrawals|balance_releases|refunds|obligations|fee_schedules|fee_schedule_category_rates|withdrawal_fee_schedules|withdrawal_fee_brackets|financial_events|financial_operation_claims)["'`]\s*\)/;
   const WRITE = /\.(insert|update|upsert|delete)\s*\(/;
 
   await scanLines(files, ({ file, line, text, lines, index }) => {
@@ -201,12 +205,104 @@ async function ruleSinglePaystackCaller() {
   }
 }
 
+// ── 5. One fee implementation (D-12, ADR 0015) ──────────────────────────────
+//
+// The largest single drift bucket in the previous system was TWO
+// implementations of "net". The live Edge writer summed raw amounts; the Node
+// writers deducted fees for the organiser-borne case. The drift between the two
+// balances was, exactly, the fees.
+//
+// So `calculateFees()` in packages/domain/src/fees.ts is the only fee
+// arithmetic in Kolekto. This rule enforces two halves of that:
+//
+//   a. no fee arithmetic anywhere else — a rate multiplied into an amount
+//   b. no new `calculateFees` call site without a deliberate decision
+//
+// The database holds no fee arithmetic either; that half is asserted by
+// supabase/tests/19_fee_schedules.sql, because a SQL function would be
+// invisible to a scan of TypeScript.
+async function ruleOneFeeImplementation() {
+  // The fee engine and the money primitives ARE the implementation.
+  const ENGINE = new Set(["packages/domain/src/fees.ts", "packages/domain/src/money.ts"]);
+
+  // Where `calculateFees` may legitimately be called. A preview screen is a
+  // legitimate caller — an organiser deciding who bears the fees is entitled to
+  // see the arithmetic. Tests may call it freely; they are not product code.
+  //
+  // When the payment-attempt writer arrives it is added here, deliberately, in
+  // the same commit that adds it — which is the point of an allowlist.
+  const CALLERS = new Set([
+    "packages/domain/src/fees.ts",
+    "apps/web/app/c/[slug]/collections/FeeConfigurator.tsx",
+  ]);
+
+  const files = await collect([".ts", ".tsx"], join(ROOT, "packages"));
+  files.push(...(await collect([".ts", ".tsx"], join(ROOT, "apps"))));
+
+  // A money-ish identifier multiplied by a FRACTIONAL literal. That is what a
+  // hand-rolled fee looks like: `amount * 0.015`, `total * 1.015`.
+  //
+  // Deliberately not "money divided by any literal": `total / 100n` is a
+  // kobo-to-naira conversion, which is a display concern and not a fee. A rule
+  // that flags those trains people to ignore it, and a gate nobody reads is
+  // worse than no gate.
+  const FRACTIONAL_RATE =
+    /\b(amount|amounts|price|prices|fee|fees|total|totals|net|payable|gross|subtotal|kobo|balance)\w*\s*\*\s*\(?\s*\d*\.\d+/i;
+
+  // Dividing by a basis-point divisor. There is exactly one legitimate place to
+  // convert basis points into an amount, and it is `applyRate()` in money.ts.
+  const BPS_DIVISION = /[*/]\s*10_?000\b/;
+
+  // And a rate named directly, outside the engine that owns them.
+  const RATE_ARITHMETIC =
+    /\b(platformRate|gatewayRate|vatRate)\b\s*[*/]|[*/]\s*\b(platformRate|gatewayRate|vatRate)\b/;
+
+  await scanLines(files, ({ file, line, text }) => {
+    const normalised = relative(ROOT, file).split(sep).join("/");
+    if (ENGINE.has(normalised)) return;
+    if (/^\s*(\/\/|\*|\/\*)/.test(text)) return; // commentary explains the rules
+
+    if (FRACTIONAL_RATE.test(text) || BPS_DIVISION.test(text) || RATE_ARITHMETIC.test(text)) {
+      fail(
+        "one-fee-implementation",
+        file,
+        line,
+        text,
+        "fee arithmetic lives only in packages/domain/src/fees.ts (D-12). The previous system had two implementations of 'net' and the difference between them was the largest drift bucket in production.",
+      );
+    }
+  });
+
+  // b. The call-site allowlist.
+  for (const file of files) {
+    const normalised = relative(ROOT, file).split(sep).join("/");
+    if (CALLERS.has(normalised)) continue;
+    if (/\.test\.tsx?$/.test(normalised)) continue;
+
+    const content = await readFile(file, "utf8");
+    content.split(/\r?\n/).forEach((text, index) => {
+      if (ALLOW.test(text)) return;
+      if (/^\s*(\/\/|\*|\/\*)/.test(text)) return;
+      if (/\bcalculateFees\s*\(/.test(text)) {
+        fail(
+          "one-fee-implementation",
+          file,
+          index + 1,
+          text,
+          `calculateFees() is called from an unlisted module. Every caller must store the breakdown it produced (D-16) rather than recomputing it later — add this file to CALLERS in scripts/invariants/run-all.mjs, deliberately, in the commit that needs it.`,
+        );
+      }
+    });
+  }
+}
+
 // ── Run ─────────────────────────────────────────────────────────────────────
 const rules = [
   ["money is bigint kobo", ruleNoFloatMoney],
   ["RLS on every table", ruleRlsCoverage],
   ["no money writes outside the database", ruleNoDirectMoneyWrites],
   ["one Paystack caller", ruleSinglePaystackCaller],
+  ["one fee implementation", ruleOneFeeImplementation],
 ];
 
 for (const [name, run] of rules) {
@@ -232,4 +328,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log("\nAll four invariants hold.");
+console.log("\nAll five invariants hold.");

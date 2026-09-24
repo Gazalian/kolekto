@@ -7,14 +7,17 @@
 -- it records, and — the part that matters most for a milestone that is not
 -- Phase 4 — what it does NOT create.
 --
--- The last section is a gate. It asserts that no payment, ledger, wallet or
--- settlement table exists, so that "Phase 4 was not started" is a checked
--- fact in the suite rather than a sentence in a report.
+-- The last section is a gate, NARROWED BY M8.1. It originally asserted that
+-- nothing in Phase 4's territory existed at all. M8.1 built the ledger, by the
+-- decision in ADR 0015, so the gate now asserts the boundary that is still
+-- closed: no payment, contribution, wallet, withdrawal, payout or refund, and
+-- nothing anywhere that can write to the ledger. The reasoning is at the
+-- section itself.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(25);
+select plan(28);
 
 -- ── The role matrix ─────────────────────────────────────────────────────────
 --
@@ -244,35 +247,72 @@ reset role;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- The Phase 4 gate (§31)
+-- The Phase 4 gate — NARROWED BY M8.1, deliberately and on the record
 --
--- M7.7 may CONFIGURE the split and PREVIEW the arithmetic. It may not record
--- money. These assertions fail the moment anything in Phase 4's territory is
--- built, which is the point: the boundary is checked by the suite rather than
--- asserted in prose.
+-- This gate originally asserted that NOTHING in Phase 4's territory existed,
+-- including the ledger. M8.1 built the ledger, so that half of the gate is
+-- crossed on purpose: ADR 0006 deferred the ledger until the settlement model
+-- was chosen, and ADR 0015 chose it (D-01). The ledger's own invariants are
+-- decided by 20_ledger.sql, which did not exist when this gate was written.
+--
+-- What is NOT crossed, and is still asserted here, is everything that records
+-- or moves an actual payment. M8.1 built the RECORD and its invariants; it built
+-- no payment, no contribution, no withdrawal, no payout, no refund, no provider
+-- call, and nothing that posts a journal.
+--
+-- The distinction that makes this a narrowing rather than a removal: the ledger
+-- exists and is empty, and nothing in the database can write to it.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 select is(
   (select count(*)::integer from information_schema.tables
    where table_schema = 'public'
      and table_name in (
-       'payment_attempts', 'payments', 'contributions', 'ledger_entries',
-       'ledger_accounts', 'wallets', 'withdrawals', 'payouts', 'settlements',
-       'refunds', 'webhook_events', 'provider_events'
+       'payment_attempts', 'payments', 'contributions', 'contribution_intents',
+       'contribution_lines', 'provider_transactions', 'tickets',
+       'wallets', 'withdrawals', 'withdrawal_accounts', 'payouts',
+       'settlements', 'provider_settlements', 'balance_releases',
+       'refunds', 'disputes', 'holds', 'webhook_events'
      )),
   0,
-  'no payment, ledger, wallet, withdrawal or settlement table exists — Phase 4 is not started (ADR 0006)'
+  'no payment, contribution, wallet, withdrawal, payout, settlement or refund table exists — M8.1 built the ledger, not the money movement'
 );
+
+-- D-02/ADR 0015: there is no community wallet, under any name, ever.
+select hasnt_column('public', 'communities', 'balance_kobo',
+  'a community carries no balance (D-02): financial ownership is the collection, and a community wallet is forbidden rather than merely absent');
 
 select is(
   (select count(*)::integer from pg_proc p
    join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'app'
-     and (p.proname like '%payment%' or p.proname like '%ledger%'
-          or p.proname like '%payout%' or p.proname like '%withdraw%'
-          or p.proname like '%settle%')),
+     and (p.proname like '%payment%' or p.proname like '%payout%'
+          or p.proname like '%withdraw%' or p.proname like '%settle%'
+          or p.proname like '%refund%'   or p.proname like '%contribution%')),
   0,
-  'and no app.* function initiates, posts or settles anything'
+  'and no app.* function initiates a payment, settles, withdraws, pays out or refunds'
+);
+
+-- The ledger exists. Nothing writes to it. Every future writer is an app.*
+-- SECURITY DEFINER function in a reviewed migration, and none has been written,
+-- so the guard functions that REFUSE writes are the only ledger code there is.
+select is_empty(
+  $$
+    select n.nspname || '.' || p.proname
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname in ('public', 'app', 'private')
+      and p.prosrc ~* 'insert\s+into\s+public\.ledger_'
+    order by 1
+  $$,
+  'no database function posts a journal — M8.1 built the record and its invariants, not a writer (the capture, fee, release, withdrawal and payout writers are later milestones)'
+);
+
+select is(
+  (select count(*)::integer from public.ledger_entries)
+  + (select count(*)::integer from public.ledger_journals),
+  0,
+  'and the ledger is empty: no opening balances, no imported history, nothing asserted that nobody can trace (D-23)'
 );
 
 -- The fee split is configuration. It says how a future payment WOULD be

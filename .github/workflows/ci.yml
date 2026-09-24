@@ -24,7 +24,7 @@ permissions:
   contents: read
 
 jobs:
-  # ── The four invariants (ADR 0003, 0008, and scripts/invariants) ───────────
+  # ── The five invariants (ADR 0003, 0008, 0015, and scripts/invariants) ─────
   # First, and fastest. If money is not integer kobo or a table is missing RLS,
   # nothing else about this change matters yet.
   invariants:

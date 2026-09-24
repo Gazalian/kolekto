@@ -112,7 +112,28 @@ select bag_eq(
       -- readable so a settings screen can say where the numbering has got
       -- to. Both are written only through app functions, and a reference is
       -- immutable once issued.
-      ('contributor_references'), ('collection_code_sequences')
+      ('contributor_references'), ('collection_code_sequences'),
+      -- M8.1: the fee schedule and the chart of accounts are reference data,
+      -- readable by any signed-in caller for the same reason `permissions` is —
+      -- an organiser is shown the rates before they publish, and a screen that
+      -- cannot name the schedule it is quoting is quoting nothing. Written only
+      -- by migrations.
+      ('fee_schedules'), ('fee_schedule_category_rates'),
+      ('withdrawal_fee_schedules'), ('withdrawal_fee_brackets'),
+      ('ledger_account_codes'),
+      -- M8.1: the ledger. Readable by whoever holds `balance.view` — owner,
+      -- admin, treasurer, viewer — and by nobody else; a collector never sees
+      -- money. RLS decides the rows, this grant decides the table is reachable
+      -- at all, and no client role holds INSERT, UPDATE or DELETE on any of
+      -- them. `financial_events` is deliberately NOT here: its raw payloads
+      -- carry contributor PII (ADR 0009).
+      ('ledger_accounts'), ('ledger_journals'), ('ledger_entries'),
+      -- The balance views. They run with the CALLER's rights
+      -- (`security_invoker`), so the RLS on the ledger still decides the rows —
+      -- unlike the seven SECURITY DEFINER views in the previous system, which
+      -- were granted to anon and bypassed RLS on contributions and deposits by
+      -- design. A balance is read through these; it is never stored.
+      ('v_ledger_account_balances'), ('v_collection_position'), ('v_ledger_imbalances')
   $$,
   'authenticated can SELECT exactly the allowlisted tables and no others'
 );

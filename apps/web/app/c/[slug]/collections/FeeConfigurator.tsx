@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { calculateFees, formatNaira, fromNaira, SCHEDULE_2026_09_PROVISIONAL, type Kobo } from "@kolekto/domain";
+import { calculateFees, formatNaira, fromNaira, SCHEDULE_2026_09_FOUNDER, type Kobo } from "@kolekto/domain";
 import { Banner } from "@kolekto/ui";
 
 /**
@@ -26,15 +26,18 @@ import { Banner } from "@kolekto/ui";
  *
  * ── WHY THE HEADLINE SAYS "APPLICABLE FEES" ─────────────────────────────────
  *
- * Kolekto's production fee schedule is NOT finalised — that is DEC-11, and
- * whether a platform fee may lawfully be passed to a contributor at all is
- * DEC-12, a legal question. `SCHEDULE_2026_09_PROVISIONAL` is what the
- * previous system charged, carried across so the arithmetic could be tested
- * against known behaviour. Printing figures from it as though they were
- * settlement amounts would be inventing pricing the business has not
- * committed to.
+ * Kolekto's own fee IS now settled — 1.5%, capped at ₦5,000 (D-10), carried by
+ * `SCHEDULE_2026_09_FOUNDER`. Two things still are not, and both are reasons a
+ * figure on this screen is an estimate rather than a settlement amount:
  *
- * So the default presentation is the honest one:
+ *   · The payment provider's fee is a MODEL at 1.5%. What Paystack actually
+ *     reports for a transaction is that transaction's truth (D-11), and it is
+ *     not knowable before the payment happens.
+ *   · Whether a platform fee may lawfully be passed to a contributor at all is
+ *     open with counsel (O-4, was DEC-12). The default stays the conservative
+ *     answer until that closes.
+ *
+ * So the default presentation stays the honest one:
  *
  *     Contributor pays   ₦10,000 + applicable fees
  *     You receive        ₦10,000
@@ -184,8 +187,9 @@ export function FeeConfigurator({
           {showEstimate && (
             <div className="mt-2 flex flex-col gap-3">
               <Banner tone="info">
-                An estimate only, using Kolekto&apos;s provisional rates ({SCHEDULE_2026_09_PROVISIONAL.version}).
-                These are not final and this is not a settlement amount — what is actually charged is calculated at
+                An estimate, using Kolekto&apos;s fee schedule ({SCHEDULE_2026_09_FOUNDER.version}). Kolekto&apos;s own
+                fee is settled; the payment provider&apos;s fee shown here is a model, and the provider&apos;s reported
+                figure is what actually applies. This is not a settlement amount — what is charged is calculated at
                 the time of payment, and online payment is not switched on yet.
               </Banner>
 
@@ -350,4 +354,4 @@ function safeKobo(input: string): Kobo | null {
 }
 
 /** The schedule any estimate is computed against. Named so a screen can say which one. */
-export const PREVIEW_SCHEDULE_VERSION = SCHEDULE_2026_09_PROVISIONAL.version;
+export const PREVIEW_SCHEDULE_VERSION = SCHEDULE_2026_09_FOUNDER.version;
