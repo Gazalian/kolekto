@@ -1,0 +1,242 @@
+{
+  "$comment": [
+    "Machine-readable legacy production baseline. Aggregates and structure ONLY.",
+    "Contains no personal data, no financial row data, no secrets, no credentials.",
+    "Amounts are integer kobo (legacy naira numeric x 100, exact - no value in the",
+    "source database exceeds 2 decimal places or is negative).",
+    "This is a BASELINE, not the final migration snapshot: legacy production is live",
+    "and two cron jobs are active, so every count moves."
+  ],
+  "captured_at": "2026-09-26",
+  "capture_method": "read-only SELECT over account-level MCP access; project ref named explicitly per query; nothing linked",
+  "source_project": {
+    "ref": "busfgcmbndleljklrcbd",
+    "name": "kolekto prod",
+    "region": "eu-central-1",
+    "postgres_version": "15.8.1.094",
+    "status": "ACTIVE_HEALTHY",
+    "created_at": "2025-06-02",
+    "organization": "wzkhbvbimazkabmdbawa",
+    "classification": "LEGACY_PRODUCTION_LIVE"
+  },
+  "schema_summary": {
+    "public_tables": 53,
+    "public_views": 8,
+    "public_functions": 95,
+    "public_functions_security_definer": 20,
+    "public_functions_anon_executable": 59,
+    "public_functions_security_definer_and_anon_executable": 0,
+    "public_triggers": 9,
+    "public_enums": 2,
+    "public_domains": 0,
+    "extensions": 10,
+    "cron_jobs_active": 2,
+    "migration_versions_tracked": 39,
+    "migration_earliest_version": "20260514201017",
+    "migration_latest_version": "20260918101428",
+    "earliest_data_date": "2025-06-02",
+    "schema_reproducible_from_migrations": false
+  },
+  "rls": {
+    "tables_total": 53,
+    "rls_enabled": 53,
+    "rls_forced": 3,
+    "tables_with_zero_policies": 28
+  },
+  "identity": {
+    "auth_users": 623,
+    "auth_users_deleted": 0,
+    "auth_users_with_email": 623,
+    "auth_users_with_phone": 0,
+    "auth_users_email_confirmed": 426,
+    "auth_users_phone_confirmed": 0,
+    "auth_identities": 623,
+    "profiles": 622,
+    "profiles_without_auth_user": 0,
+    "auth_users_without_profile": 1,
+    "profiles_with_phone": 609,
+    "profiles_without_phone": 13,
+    "profiles_is_organizer_true": 0,
+    "profiles_distinct_roles": 1,
+    "duplicate_email_groups": 0,
+    "duplicate_phone_groups": 27,
+    "profiles_in_duplicate_phone_groups": 66,
+    "largest_duplicate_phone_group": 8,
+    "phone_numbers_over_13_digits": 15,
+    "distinct_contributor_emails": 3353,
+    "contributions_matching_a_profile_email": 388
+  },
+  "money_representation": {
+    "storage_type": "numeric",
+    "unit": "naira",
+    "columns_checked": 11,
+    "values_over_2_decimal_places": 0,
+    "negative_values": 0,
+    "kobo_conversion": "round(v * 100)",
+    "kobo_conversion_lossless": true,
+    "rounding_policy_decision_required": false
+  },
+  "financial_control_totals_kobo": {
+    "deposits": {
+      "rows": 6201,
+      "gross_total": 9002064126,
+      "net_total": 8091010495,
+      "by_status": {
+        "success": { "rows": 4260, "gross": 6042365363, "net": 5481904109 },
+        "pending": { "rows": 1939, "gross": 2958068763, "net": 2609106386 },
+        "abandoned": { "rows": 2, "gross": 1630000, "net": 0 }
+      }
+    },
+    "contributions": {
+      "rows": 5576,
+      "amount_total": 6777648298,
+      "gross_amount_total": 4735210950,
+      "by_status": {
+        "paid": { "rows": 3934, "amount": 4606968935, "gross_amount": 4700475950 },
+        "pending": { "rows": 1628, "amount": 2136629363, "gross_amount": 0 },
+        "duplicate_voided": { "rows": 14, "amount": 34050000, "gross_amount": 34735000 }
+      }
+    },
+    "withdrawals": {
+      "rows": 292,
+      "amount_total": 4668287280,
+      "by_status": {
+        "approved": { "rows": 239, "amount": 4165349580, "first": "2025-12-19", "last": "2026-09-17" },
+        "success": { "rows": 43, "amount": 455091700, "first": "2025-06-07", "last": "2025-12-08" },
+        "rejected": { "rows": 10, "amount": 47846000, "first": "2025-06-07", "last": "2026-08-02" }
+      }
+    },
+    "wallets": {
+      "rows": 245,
+      "available_balance_total": 11403830,
+      "ledger_balance_total": 11403830,
+      "pending_balance_total": 0,
+      "gross_payment_total": 4700475950,
+      "net_payment_total": 4606969294,
+      "withdrawn_total": 4620441280,
+      "$comment": "A CACHE, rebuilt nightly. Never an opening balance."
+    },
+    "reconciliations": {
+      "wallets_net_payment_minus_paid_contributions": 359,
+      "wallets_gross_payment_minus_paid_gross": 0,
+      "withdrawals_total_minus_wallets_withdrawn": 47846000,
+      "$comment": "359 kobo = the documented NGN 3.59 drift, independently reproduced. The third figure equals the rejected total exactly, so it is consistent rather than drift."
+    },
+    "unattributed": {
+      "deposits_without_collection": 1317,
+      "deposits_without_collection_total": 2891008700,
+      "deposits_without_collection_success": 923,
+      "deposits_without_collection_success_total": 1979922000,
+      "$comment": "Reproduces the documented ~NGN 19.8m / 923 rows. Destination migration.unattributed_payments, which has no collection_id column."
+    }
+  },
+  "referential_integrity": {
+    "deposits_orphan_collection": 0,
+    "contributions_null_collection": 0,
+    "contributions_orphan_collection": 0,
+    "collections_without_profile": 0,
+    "collections_without_auth_user": 0,
+    "withdrawals_null_collection": 0,
+    "withdrawals_orphan_collection": 0,
+    "withdrawals_orphan_user": 0,
+    "wallets_orphan_collection": 0,
+    "collections_without_wallet": 30
+  },
+  "collections": {
+    "total": 275,
+    "currency_all_ngn": true,
+    "by_status": { "active": 237, "closed": 21, "deleted": 12, "paused": 4, "rejected": 1 },
+    "by_fee_bearer": { "contributor": 204, "organizer": 71 },
+    "type_vs_collection_type": {
+      "rows_in_agreement": 249,
+      "rows_in_disagreement": 26,
+      "combinations": [
+        { "type": "fixed", "collection_type": "fixed", "rows": 151, "with_tiers": 0 },
+        { "type": "tiered", "collection_type": "tiered", "rows": 74, "with_tiers": 74 },
+        { "type": "flat", "collection_type": "fixed", "rows": 20, "with_tiers": 0 },
+        { "type": "fundraising", "collection_type": "fundraising", "rows": 13, "with_tiers": 0 },
+        { "type": "open_pool", "collection_type": "open_pool", "rows": 11, "with_tiers": 0 },
+        { "type": "tiered", "collection_type": "ticket", "rows": 3, "with_tiers": 3 },
+        { "type": "tiered", "collection_type": "fixed", "rows": 2, "with_tiers": 2 },
+        { "type": "flat", "collection_type": "ticket", "rows": 1, "with_tiers": 0 }
+      ]
+    },
+    "tiers": {
+      "total_entries": 305,
+      "collections_with_tiers": 79,
+      "entries_without_id": 200,
+      "duplicate_name_groups": 23,
+      "collections_with_duplicate_tier_names": 5,
+      "keys_observed": ["description", "id", "name", "prefix", "price", "quantity", "remaining_quantity", "sold_quantity"]
+    }
+  },
+  "row_counts": {
+    "payment_recovery_log": 30242,
+    "deposits": 6201,
+    "contributions": 5576,
+    "email_campaign_recipients": 4710,
+    "payment_reference_backfill_snapshot_20260811": 3324,
+    "pending_payment_context": 797,
+    "profiles": 622,
+    "withdrawals": 292,
+    "collections": 275,
+    "wallets": 245,
+    "wallets_backup_20260805": 240,
+    "payment_admin_actions": 220,
+    "push_notification_events": 173,
+    "notifications": 172,
+    "email_campaign_audit_log": 96,
+    "admin_events": 71,
+    "settlement_runs": 56,
+    "kyc_verification_history": 55,
+    "contribution_code_counters": 53,
+    "kyc_files": 53,
+    "transfer_recipients": 52,
+    "campuses": 46,
+    "kyc_documents": 44,
+    "payout_accounts": 26,
+    "kyc_verifications": 21,
+    "email_test_sends": 15,
+    "push_subscriptions": 13,
+    "duplicate_void_snapshot_20260812": 12,
+    "user_identity": 12,
+    "email_templates": 8,
+    "password_change_otps": 6,
+    "email_campaigns": 5,
+    "admin_users": 2,
+    "ambassador_applications": 1,
+    "ambassador_email_logs": 1,
+    "campaign_images": 1,
+    "campaigns": 1,
+    "email_campaign_attachments": 1,
+    "students": 1,
+    "verification_documents": 1,
+    "ambassador_influenced_organizers": 0,
+    "ambassador_payout_accounts": 0,
+    "ambassador_profiles": 0,
+    "ambassador_resources": 0,
+    "ambassador_withdrawals": 0,
+    "campaign_donations": 0,
+    "collection_access_grants": 0,
+    "collection_access_invite_items": 0,
+    "collection_access_invites": 0,
+    "collection_transfer_requests": 0,
+    "email_change_requests": 0,
+    "email_unsubscribes": 0,
+    "password_reset_otps": 0
+  },
+  "total_public_rows": 53742,
+  "security_findings": [
+    { "id": "S1", "severity": "HIGH", "summary": "anon holds INSERT/UPDATE/DELETE/TRUNCATE on 10 tables; RLS blocks the first three but does not apply to TRUNCATE", "financial_tables_affected": ["settlement_runs", "wallets_backup_20260805"] },
+    { "id": "S2", "severity": "MEDIUM", "summary": "anon holds SELECT on 49 of 53 tables" },
+    { "id": "S3", "severity": "MEDIUM", "summary": "authenticated holds UPDATE on collections, profiles, campaigns, kyc_documents, kyc_verifications" },
+    { "id": "S4", "severity": "LOW", "summary": "RLS enabled but not FORCED on 50 of 53 tables" },
+    { "id": "S5", "severity": "MEDIUM", "summary": "bank account numbers stored inconsistently: payout_accounts encrypted, transfer_recipients plaintext" }
+  ],
+  "secrets_found": [
+    { "type": "cron shared secret", "location": "cron.job command, jobid 5, legacy production", "severity": "HIGH", "recommendation": "rotate", "value_recorded": false },
+    { "type": "paystack live secret key", "location": "kolekto-be-old/.env, .env.bak.pre-email-fix, and 2 diffs in that repository's git history", "severity": "HIGH", "recommendation": "rotate with a scheduled deploy", "value_recorded": false }
+  ],
+  "modifications_made_to_legacy": "none",
+  "legacy_test_inspected": false
+}

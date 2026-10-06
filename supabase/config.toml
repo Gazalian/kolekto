@@ -50,7 +50,7 @@ file_size_limit = "5MiB"
 [auth]
 enabled = true
 site_url = "http://127.0.0.1:3000"
-additional_redirect_urls = ["http://127.0.0.1:3000"]
+additional_redirect_urls = ["http://127.0.0.1:3000", "http://127.0.0.1:3000/auth/callback"]
 
 # Access-token lifetime. One hour, so a token cannot outlive a handover by more
 # than that; permission checks also run per request, so an ended officer term
@@ -64,11 +64,25 @@ jwt_expiry = 3600
 enable_refresh_token_rotation = true
 refresh_token_reuse_interval = 10
 
-# SEC-01: phone OTP is the primary sign-in and passwords are optional. The
-# previous system was email + password only, with ZERO enrolled MFA factors
-# across 623 accounts including every staff member who could authorise a payout.
+# Auth model: password signup with OTP as a passwordless alternative and
+# verification mechanism. The previous system was email + password only, with
+# ZERO enrolled MFA factors across 623 accounts (SEC-01). The new model adds
+# passwords back as the primary credential while keeping OTP for verification,
+# passwordless login, and recovery.
 enable_signup = true
 enable_anonymous_sign_ins = false
+
+# NIST 800-63B: minimum 8 characters, no arbitrary complexity requirements.
+# Supabase/GoTrue handles hashing (bcrypt); passwords never reach public.users.
+# Renamed from password_min_length in CLI 2.109.1.
+minimum_password_length = 8
+
+# SEC-04: session policy.
+# timebox: absolute session lifetime regardless of activity (7 days = 604800s).
+# inactivity_timeout: session expires if unused for this long (12 hours = 43200s).
+[auth.sessions]
+timebox = 604800
+inactivity_timeout = 43200
 
 [auth.email]
 enable_signup = true
@@ -104,6 +118,10 @@ content_path = "./supabase/templates/otp.html"
 [auth.email.template.magic_link]
 subject = "Your Kolekto sign-in code"
 content_path = "./supabase/templates/otp.html"
+
+[auth.email.template.recovery]
+subject = "Reset your Kolekto password"
+content_path = "./supabase/templates/recovery.html"
 
 [auth.sms]
 enable_signup = true

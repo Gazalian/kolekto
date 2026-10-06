@@ -1,5 +1,5 @@
 import type { Community } from "@kolekto/db";
-import { Badge, Card, CardBody, EmptyState } from "@kolekto/ui";
+import { Card, CardBody, EmptyState } from "@kolekto/ui";
 import Link from "next/link";
 import { requireUser } from "../../lib/auth.ts";
 import { createClient } from "../../lib/supabase/server.ts";
@@ -33,8 +33,9 @@ export default async function CommunitiesPage() {
               <Card className="h-full transition-shadow hover:shadow-[var(--shadow-md)]">
                 <CardBody className="flex flex-col gap-2">
                   <div className="flex items-center justify-between gap-2">
-                    <span className="font-medium text-[var(--color-text)]">{community.name}</span>
-                    {community.is_personal && <Badge>Personal</Badge>}
+                    <span className="font-medium text-[var(--color-text)]">
+                      {community.is_personal ? "My Workspace" : community.name}
+                    </span>
                   </div>
                   <span className="text-xs text-[var(--color-text-muted)]">kolekto.app/{community.slug}</span>
                 </CardBody>

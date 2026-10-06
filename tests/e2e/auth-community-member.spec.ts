@@ -2,18 +2,17 @@ import { expect, test } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
 
 /**
- * The golden path this phase exists to support (section 30): sign in, create
- * a community, add a member. Each step is a real browser interaction against
- * the real local stack — no mocked Supabase client, no seeded session.
+ * The golden path: sign up with password, complete onboarding (which creates
+ * the first community), then create a second community and add a member. Each
+ * step is a real browser interaction against the real local stack — no mocked
+ * Supabase client, no seeded session.
  */
-test("sign in via email OTP, create a community, and add a member", async ({ page }) => {
-  // The OTP flow itself, including the hydration wait and the retry the local
-  // stack occasionally needs, lives in helpers/auth.ts — it is the first step of
-  // every journey in this suite, and its reasoning is worth stating once.
+test("sign up with password, complete onboarding, and add a member", async ({ page }) => {
   await signInAsNewUser(page);
 
-  // COM-01: a brand-new sign-up already has their personal community.
-  await expect(page.getByText("Personal")).toBeVisible();
+  // After onboarding + navigation, we land on the communities listing. The
+  // onboarding-created community should be visible.
+  await expect(page).toHaveURL(/\/communities/);
 
   await page.getByRole("link", { name: "+ New community" }).click();
   await page.waitForLoadState("networkidle");

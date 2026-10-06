@@ -7,8 +7,11 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "engines": { "node": ">=22.6.0" },
+  "engines": {
+    "node": ">=22.6.0"
+  },
   "scripts": {
+    "test": "node --experimental-strip-types --test \"test/*.test.ts\"",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

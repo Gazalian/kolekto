@@ -2,7 +2,9 @@ import { loadConfig } from "@kolekto/config";
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/login", "/invite", "/accept-invite"];
+const AUTH_PATHS = ["/login", "/signup", "/verify", "/forgot-password", "/reset-password"];
+const ONBOARDING_PATHS = ["/welcome", "/setup"];
+const PUBLIC_PATHS = [...AUTH_PATHS, "/invite", "/accept-invite", "/auth/callback"];
 
 /**
  * First path segments that belong to the application itself, and therefore
@@ -13,7 +15,23 @@ const PUBLIC_PATHS = ["/login", "/invite", "/accept-invite"];
  * exclude them — noted in the Phase 3 report as a follow-up, because fixing it
  * means changing how Phase 2 allocates community slugs.
  */
-const APP_SEGMENTS = new Set(["c", "communities", "login", "logout", "invite", "accept-invite", "api"]);
+const APP_SEGMENTS = new Set([
+  "c",
+  "communities",
+  "login",
+  "logout",
+  "signup",
+  "verify",
+  "forgot-password",
+  "reset-password",
+  "welcome",
+  "setup",
+  "account",
+  "invite",
+  "accept-invite",
+  "auth",
+  "api",
+]);
 
 /**
  * `/{community-slug}/{collection-slug}` — the published collection page. It is
@@ -35,6 +53,14 @@ function isPublicPath(pathname: string): boolean {
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
     isPublicCollectionPath(pathname)
   );
+}
+
+function isAuthPath(pathname: string): boolean {
+  return AUTH_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+function isOnboardingPath(pathname: string): boolean {
+  return ONBOARDING_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
 /**
@@ -70,14 +96,36 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  if (!user && !isPublicPath(request.nextUrl.pathname)) {
+  const pathname = request.nextUrl.pathname;
+
+  if (!user && !isPublicPath(pathname)) {
     const redirectUrl = new URL("/login", request.url);
-    redirectUrl.searchParams.set("next", request.nextUrl.pathname);
+    redirectUrl.searchParams.set("next", pathname);
     return NextResponse.redirect(redirectUrl);
   }
 
-  if (user && request.nextUrl.pathname === "/login") {
-    return NextResponse.redirect(new URL("/communities", request.url));
+  if (user) {
+    if (isAuthPath(pathname) && !pathname.startsWith("/reset-password")) {
+      return NextResponse.redirect(new URL("/communities", request.url));
+    }
+
+    if (!isPublicPath(pathname) || isOnboardingPath(pathname)) {
+      const { data: userRow } = await supabase
+        .from("users")
+        .select("onboarding_completed_at")
+        .eq("id", user.id)
+        .single();
+
+      const onboarded = !!userRow?.onboarding_completed_at;
+
+      if (!onboarded && !isOnboardingPath(pathname)) {
+        return NextResponse.redirect(new URL("/welcome", request.url));
+      }
+
+      if (onboarded && isOnboardingPath(pathname)) {
+        return NextResponse.redirect(new URL("/communities", request.url));
+      }
+    }
   }
 
   return response;

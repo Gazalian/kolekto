@@ -77,8 +77,8 @@ insert into public.communities (id, slug, name, type, is_personal, created_by) v
 insert into public.officer_terms (community_id, user_id, role, actor_name_snapshot, start_reason) values
   ('77777777-7777-4777-8777-777777777777', '66666666-6666-4666-8666-666666666666', 'owner', 'Migration Test Owner', 'migration');
 
-insert into migration.import_runs (id, source_snapshot_label, status, completed_at) values
-  ('88888888-8888-4888-8888-888888888888', 'pgtap-fixture-snapshot', 'completed', now());
+insert into migration.import_runs (id, source_project, source_snapshot_label, status, completed_at) values
+  ('88888888-8888-4888-8888-888888888888', 'synthetic:pgtap-06', 'pgtap-fixture-snapshot', 'completed', now());
 
 -- M2: 'migration' is a real, usable enum value — the insert above already
 -- proves it (it would have failed to parse otherwise), but assert it directly

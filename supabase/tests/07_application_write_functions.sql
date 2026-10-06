@@ -11,7 +11,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(24);
+select plan(38);
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
 insert into auth.users (id, instance_id, aud, role, email) values
@@ -21,9 +21,9 @@ insert into auth.users (id, instance_id, aud, role, email) values
   ('99999999-9999-4999-8999-999999999994', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'invitee@app.example.test');
 
 -- ON CONFLICT DO UPDATE: the auth.users insert above already fired
--- app.handle_new_auth_user() (20260918140000), which created a placeholder
--- public.users row per id (and, incidentally, a personal community and owner
--- term for each — harmless extra rows this file's assertions never count).
+-- app.handle_new_auth_user() (20260930110000), which created a placeholder
+-- public.users row per id. The trigger no longer creates personal communities
+-- or officer terms — those are created during the onboarding flow instead.
 insert into public.users (id, full_name, email) values
   ('99999999-9999-4999-8999-999999999991', 'App Owner',    'owner@app.example.test'),
   ('99999999-9999-4999-8999-999999999992', 'App Admin',    'admin@app.example.test'),
@@ -39,26 +39,124 @@ insert into public.officer_terms (id, community_id, user_id, role, actor_name_sn
   ('77777777-7777-4777-8777-777777777772', '88888888-8888-4888-8888-888888888881', '99999999-9999-4999-8999-999999999992', 'admin', 'App Admin', 'created');
 
 
--- ── Sign-up bootstrap (COM-01, 20260918140000) ───────────────────────────────
+-- ── Sign-up bootstrap (20260930110000) ───────────────────────────────────────
 insert into auth.users (id, instance_id, aud, role, email, raw_user_meta_data)
-values ('99999999-9999-4999-8999-999999999999', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'newcomer@app.example.test', '{"full_name":"New Comer"}');
+values ('99999999-9999-4999-8999-999999999999', '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'newcomer@app.example.test', '{"full_name":"New Comer","phone_e164":"+2348031234567"}');
 
 select ok(
-  exists (select 1 from public.users where id = '99999999-9999-4999-8999-999999999999' and full_name = 'New Comer'),
-  'a public.users row is created automatically on auth.users insert'
+  exists (select 1 from public.users where id = '99999999-9999-4999-8999-999999999999' and full_name = 'New Comer' and phone_e164 = '+2348031234567'),
+  'a public.users row is created with full_name and phone from metadata'
 );
 select ok(
-  (select count(*) from public.communities where created_by = '99999999-9999-4999-8999-999999999999' and is_personal) = 1,
-  'exactly one personal community is created for the new user (COM-01)'
+  (select count(*) from public.communities where created_by = '99999999-9999-4999-8999-999999999999') = 0,
+  'the bootstrap trigger does NOT create any community for the new user'
+);
+select ok(
+  (select onboarding_completed_at from public.users where id = '99999999-9999-4999-8999-999999999999') is null,
+  'onboarding_completed_at is null for a freshly bootstrapped user'
+);
+
+
+-- ── complete_onboarding / set_contact_verified / update_user_profile ────────
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"99999999-9999-4999-8999-999999999999","role":"authenticated"}';
+select lives_ok(
+  $$ select app.complete_onboarding() $$,
+  'complete_onboarding succeeds for a new user'
+);
+reset role;
+
+select ok(
+  (select onboarding_completed_at from public.users where id = '99999999-9999-4999-8999-999999999999') is not null,
+  'onboarding_completed_at is set after calling complete_onboarding'
+);
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"99999999-9999-4999-8999-999999999999","role":"authenticated"}';
+select lives_ok(
+  $$ select app.set_contact_verified() $$,
+  'set_contact_verified succeeds for a user with identity_level = none'
+);
+reset role;
+
+select ok(
+  (select identity_level from public.users where id = '99999999-9999-4999-8999-999999999999') = 'contact_verified',
+  'identity_level is contact_verified after calling set_contact_verified'
+);
+
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"99999999-9999-4999-8999-999999999999","role":"authenticated"}';
+select lives_ok(
+  $$ select app.update_user_profile('Updated Name', '+2348099999999') $$,
+  'update_user_profile succeeds for the calling user'
+);
+reset role;
+
+select ok(
+  exists (select 1 from public.users where id = '99999999-9999-4999-8999-999999999999' and full_name = 'Updated Name' and phone_e164 = '+2348099999999'),
+  'update_user_profile changes the name and phone for the calling user'
+);
+
+
+-- ── ensure_personal_workspace ────────────────────────────────────────────────
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"99999999-9999-4999-8999-999999999999","role":"authenticated"}';
+create temporary table tmp_personal_ws as
+  select app.ensure_personal_workspace() as id;
+reset role;
+
+select ok(
+  exists (select 1 from public.communities where id = (select id from tmp_personal_ws) and is_personal and type = 'personal'),
+  'ensure_personal_workspace creates a personal community with is_personal=true and type=personal'
+);
+select ok(
+  (select name from public.communities where id = (select id from tmp_personal_ws)) = 'My Workspace',
+  'personal workspace is named My Workspace'
 );
 select ok(
   exists (
-    select 1 from public.officer_terms ot
-    join public.communities c on c.id = ot.community_id
-    where ot.user_id = '99999999-9999-4999-8999-999999999999' and ot.role = 'owner' and ot.ended_at is null
-      and c.is_personal
+    select 1 from public.officer_terms
+    where community_id = (select id from tmp_personal_ws)
+      and user_id = '99999999-9999-4999-8999-999999999999'
+      and role = 'owner' and ended_at is null
   ),
-  'the new user holds an active owner term on their personal community'
+  'personal workspace has an owner officer_term for the user'
+);
+select ok(
+  (select count(*) from public.members where community_id = (select id from tmp_personal_ws)) = 0,
+  'personal workspace does not create a member record'
+);
+
+-- Idempotency: calling again returns the same ID
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"99999999-9999-4999-8999-999999999999","role":"authenticated"}';
+create temporary table tmp_personal_ws_2 as
+  select app.ensure_personal_workspace() as id;
+reset role;
+
+select ok(
+  (select id from tmp_personal_ws) = (select id from tmp_personal_ws_2),
+  'calling ensure_personal_workspace a second time returns the same community ID'
+);
+select ok(
+  (select count(*) from public.communities where created_by = '99999999-9999-4999-8999-999999999999' and is_personal) = 1,
+  'only one personal workspace exists after two calls'
+);
+
+-- A different user gets their own workspace
+set local role authenticated;
+set local request.jwt.claims = '{"sub":"99999999-9999-4999-8999-999999999991","role":"authenticated"}';
+create temporary table tmp_personal_ws_other as
+  select app.ensure_personal_workspace() as id;
+reset role;
+
+select ok(
+  (select id from tmp_personal_ws) <> (select id from tmp_personal_ws_other),
+  'different users get different personal workspaces'
+);
+select ok(
+  exists (select 1 from public.communities where id = (select id from tmp_personal_ws_other) and is_personal and type = 'personal'),
+  'the other users personal workspace is also is_personal=true and type=personal'
 );
 
 

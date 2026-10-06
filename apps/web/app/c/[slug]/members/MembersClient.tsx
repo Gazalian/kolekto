@@ -129,6 +129,14 @@ export function MembersClient({
     });
   }, [roster, query, groupFilter, showArchived]);
 
+  const fieldValueCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const definition of definitions) {
+      counts[definition.id] = rows.filter((row) => row.attributes[definition.key] != null && row.attributes[definition.key] !== "").length;
+    }
+    return counts;
+  }, [rows, definitions]);
+
   const groupName = (id: string) => groups.find((group) => group.id === id)?.name ?? "";
 
   return (
@@ -335,6 +343,7 @@ export function MembersClient({
           definitions={definitions}
           codeSettings={codeSettings}
           memberCount={rows.length}
+          fieldValueCounts={fieldValueCounts}
           onClose={() => setConfigOpen(false)}
         />
       )}

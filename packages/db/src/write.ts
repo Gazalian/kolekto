@@ -963,6 +963,32 @@ export async function recordCollectionExport(
   );
 }
 
+// ── User profile & onboarding ────────────────────────────────────────────
+
+export async function setContactVerified(caller: CallerContext): Promise<void> {
+  await call(caller, (tx) => tx`select app.set_contact_verified()`);
+}
+
+export async function completeOnboarding(caller: CallerContext): Promise<void> {
+  await call(caller, (tx) => tx`select app.complete_onboarding()`);
+}
+
+export async function ensurePersonalWorkspace(caller: CallerContext): Promise<string> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ id: string }[]>`select app.ensure_personal_workspace() as id`,
+  );
+  return row!.id;
+}
+
+export async function updateUserProfile(
+  caller: CallerContext,
+  input: { fullName: string; phoneE164?: string | undefined },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.update_user_profile(${input.fullName}, ${input.phoneE164 ?? null})`,
+  );
+}
+
 /** M7.6 part A4: remembers how far through the wizard a draft got, so reopening it lands where the organiser left off. */
 export async function setCollectionDraftStep(
   caller: CallerContext,

@@ -1,0 +1,13 @@
+<!--
+  recovery.html — password reset email template.
+  Configured in config.toml under [auth.email.template.recovery].
+
+  Uses {{ .ConfirmationURL }} for a clickable recovery link. The link goes
+  through Supabase's auth endpoint, which validates the token and redirects
+  to /auth/callback with a PKCE code. The callback route exchanges the code
+  for a session and sends the user to /reset-password.
+-->
+<h2>Reset your Kolekto password</h2>
+<p>Click the link below to reset your password:</p>
+<p><a href="{{ .ConfirmationURL }}">Reset password</a></p>
+<p>This link expires in 5 minutes. If you did not request a password reset, you can ignore this email.</p>

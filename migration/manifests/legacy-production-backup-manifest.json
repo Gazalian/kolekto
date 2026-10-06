@@ -1,0 +1,238 @@
+{
+  "$schema_note": [
+    "Backup manifest for legacy Kolekto production.",
+    "STATUS IS 'EXECUTED_AND_VERIFIED'. The backup was taken on 2026-09-27 and verified",
+    "locally the same day. Every checksum matches and all twenty control totals reproduce",
+    "from the artefact, including the 359-kobo drift. See verification_after_backup.",
+    "Another engineer can read this file and know exactly what was captured, how, and to",
+    "where — without any secret appearing in it.",
+    "This file contains NO credential, NO connection string and NO secret value.",
+    "D2 restore has NOT been performed. Restore prerequisites are in",
+    "docs/migration/legacy/production-backup-plan.md section 13.1 — five extensions are",
+    "unavailable in a vanilla postgres:15 and four roles must be created first."
+  ],
+
+  "manifest_version": "1.1",
+  "status": "EXECUTED_AND_VERIFIED",
+  "prepared_at_utc": "2026-09-27T01:10:01Z",
+  "executed_at_utc": "2026-09-27T12:06:56Z",
+  "verified_on_utc_date": "2026-09-27",
+  "blocked_on": [],
+  "blockers_resolved": [
+    "CRED-1 database password unavailable — resolved; credential supplied via discrete PG* environment variables and cleared afterwards. Never written to a file, never printed.",
+    "TOOL-1 no PostgreSQL 15 client available — resolved; pg_dump 15.19 from the postgres:15 container image."
+  ],
+  "still_open_after_d1": [
+    "D2 restore — not performed. See production-backup-plan.md 13.1 for prerequisites.",
+    "SECURE PRESERVATION — the artefact directory is NOT yet encrypted and exists as ONE unencrypted copy on ONE machine. This is a single point of failure until the founder performs the encryption and off-machine copy manually.",
+    "D6 storage object files (68 objects, ~24.4 MB) — needs B5; includes 53 identity documents.",
+    "D7 Edge Function deployed-vs-local diff.",
+    "D8 archive ACCOUNT_ENCRYPTION_KEY to a secret store. Do NOT rotate it."
+  ],
+
+  "source": {
+    "project_ref": "busfgcmbndleljklrcbd",
+    "project_name": "kolekto prod",
+    "organization": "wzkhbvbimazkabmdbawa",
+    "region": "eu-central-1",
+    "postgres_version": "15.8.1.064",
+    "postgres_major": 15,
+    "environment": "legacy-production",
+    "status_at_preparation": "LIVE — actively receiving writes",
+    "db_host": "db.busfgcmbndleljklrcbd.supabase.co"
+  },
+
+  "scope": {
+    "format": "plain SQL (pg_dump default), one file per concern",
+    "why_plain_not_custom": "Plain SQL is greppable, diffable and restorable with psql alone. Custom format would need pg_restore and offers no benefit at this size.",
+
+    "included": {
+      "public_schema_ddl": true,
+      "public_schema_data": true,
+      "tables": 53,
+      "expected_rows": 53742,
+      "expected_rows_note": "Corrected 2026-09-27 from 52562. The published figure was an arithmetic error: the per-table list in legacy-control-totals.md section 1 sums to 53,742, not 52,562. 53,742 is the baseline total as of 2026-09-26.",
+      "actual_rows_in_backup": 53743,
+      "actual_rows_note": "The D1 backup holds 53,743 rows: 53,742 plus one row appended to settlement_runs (56 -> 57) by the nightly settlement cron between the 2026-09-26 baseline and the 2026-09-27 dump. Expected liveness, non-financial, and no financial control total moved.",
+      "constraints": true,
+      "check_constraint_expressions": true,
+      "indexes": true,
+      "index_definitions": true,
+      "sequences_and_current_values": true,
+      "functions_with_bodies": 95,
+      "triggers": 9,
+      "views_with_definitions": 8,
+      "enums_with_values": 2,
+      "domains": 0,
+      "foreign_keys_with_actions": true,
+      "rls_policies_and_expressions": true,
+      "rls_enable_force_state": true,
+      "table_and_function_grants": true,
+      "cron_schema": true,
+      "auth_users": true,
+      "auth_identities": true,
+      "storage_metadata_buckets": true,
+      "storage_metadata_objects": true
+    },
+
+    "excluded_deliberately": {
+      "auth_sessions": "live session material; no migration value; excluded to reduce artefact sensitivity",
+      "auth_refresh_tokens": "same",
+      "auth_mfa_and_sso_tables": "no migration value for this estate",
+      "storage_object_files": "68 objects / ~24.4 MB. Separate mechanism, separate approval (B5) — includes 53 identity documents",
+      "edge_function_source": "13 functions, already git-tracked in kolekto-fe-old; a deployed-vs-local diff is D7, not this dump",
+      "supabase_project_settings": "auth providers, SMTP, rate limits, JWT config — captured manually, not by pg_dump",
+      "edge_function_secret_values": "not needed; the new system gets fresh credentials. Names only are inventoried",
+      "platform_roles": "not restorable into a plain PostgreSQL instance",
+      "vault_secrets": "verified empty — 0 secrets",
+      "large_objects": "verified not used by this schema"
+    },
+
+    "auth_scope_decision": {
+      "chosen": "auth.users + auth.identities ONLY",
+      "rationale": "Auth UUID preservation is mandatory and uncorrectable after the fact, so these two tables must be captured. Sessions and refresh tokens carry live credential material with zero migration value, so including them would make the artefact more dangerous for no benefit.",
+      "consequence": "The artefact still contains auth.users.encrypted_password and MUST be treated as a secret-bearing file.",
+      "requires_founder_confirmation": "B4"
+    }
+  },
+
+  "files_produced": [
+    { "name": "legacy-prod-schema.sql", "contents": "full DDL, all schemas", "bytes": 561112, "rows": null, "sha256": "9db8e7f247c2f12e21fe87c6344db6841f3e80aaa99c818a2ea7c6b2d6d3a899", "verified": true },
+    { "name": "legacy-prod-public-data.sql", "contents": "public schema data, 53 tables", "bytes": 27679303, "rows": 53743, "sha256": "efed1cf391d93001276e03cbc91cf5b51ee4fff5537da72499e6c40657ad0257", "verified": true },
+    { "name": "legacy-prod-auth.sql", "contents": "auth.users (623) + auth.identities (623)", "bytes": 699985, "rows": 1246, "sensitivity": "CREDENTIAL-BEARING — contains auth.users.encrypted_password", "sha256": "1daf51b6b7e750df8b75195dcfa5a9694ace4f579a0f99ecc70872c03c3b2b97", "verified": true },
+    { "name": "legacy-prod-storage-metadata.sql", "contents": "storage.buckets (6) + storage.objects (68) metadata; object FILES not included", "bytes": 36019, "rows": 74, "sha256": "d98f1203a697441729bc1992c428273988148f8f4ad11050f6288e7c8399d6b8", "verified": true },
+    { "name": "legacy-prod-cron.sql", "contents": "cron.job definitions (2 jobs)", "bytes": 1419, "rows": 2, "sensitivity": "SECRET-BEARING — job 5 command contains a shared secret", "sha256": "c34b83c62803d2c79fd81f455b3fcade36d7c1107dc592c9e012b813ac9a5bf7", "verified": true },
+    { "name": "SHA256SUMS", "contents": "checksums for the five dumps; ASCII, no BOM, no CR, 5/5 well-formed", "bytes": 456, "verified": true },
+    { "name": "high-water-mark.json", "contents": "the mark captured immediately before the dumps", "bytes": 899, "verified": true }
+  ],
+  "_files_note": "Renamed from 'files_expected' on 2026-09-27: these are the artefacts that now exist, not predictions. Each sha256 was verified twice — once via 'sha256sum -c SHA256SUMS' and once by independent recomputation. The two runner scripts run-backup.ps1 and run-backup.sh also sit in the directory; they are tooling, carry NO credential literal, and are deliberately not checksummed here.",
+
+  "total_actual_size": "28,979,193 bytes across the seven artefacts (27.64 MB)",
+  "all_five_dumps_untruncated": "Each dump carries the '-- PostgreSQL database dump complete' marker four lines from EOF, followed by a \\unrestrict line and a trailing newline.",
+
+  "destination": {
+    "planned_path": "<OUTSIDE_REPO>/kolekto-legacy-preservation/2026-09-27-busfgcmbndleljklrcbd/",
+    "actual_path": "C:/Users/USER/Desktop/Kolekto-codebase/Kolekto-Preservation/2026-09-27-busfgcmbndleljklrcbd/",
+    "actual_path_assessment": "PARTIALLY CONFORMANT, and the founder is aware. It satisfies the substantive rule — verified NOT inside any git repository ('git rev-parse' returns 'not a git repository'), and no artefact appears in 'git status'. It contradicts the literal rule 'inside Desktop/Kolekto-codebase/', because it sits under that folder. The purpose of that rule was to keep the artefact out of version control, which is met.",
+    "encryption_state": "NOT ENCRYPTED AS AT 2026-09-27. One unencrypted copy on one machine. This is a single point of failure and the final preservation operation is reserved to the founder, to be performed manually.",
+    "must_not_be": [
+      "inside Desktop/Kolekto-codebase/",
+      "inside any git repository",
+      "any shared drive with broad access",
+      "any third-party upload service"
+    ],
+    "encryption_approach": "Encrypt the completed directory as a single archive (age, GPG, or an encrypted disk image). Passphrase stored in a password manager, NOT alongside the archive.",
+    "retention": "Retain until the new production migration is complete AND reconciled, plus the financial-records retention period counsel specifies (O-10 / D7 retention question is unresolved).",
+    "checksum_approach": "sha256sum over every file, written to SHA256SUMS, verified before and after any move or copy.",
+    "requires_founder_confirmation": "B3"
+  },
+
+  "high_water_mark": {
+    "status": "AUTHORITATIVE MARK CAPTURED 2026-09-27 — see authoritative_mark. The reference_* fields below are the earlier 01:10 discovery capture, retained for comparison.",
+    "reference_captured_at_utc": "2026-09-27T01:10:01.909013Z",
+    "reference_read_only_confirmed": true,
+    "reference_read_only_evidence": "txid_current_if_assigned() returned null — the capturing statement was assigned no transaction id, so it wrote nothing",
+    "authoritative_mark": {
+      "captured_at_utc": "2026-09-27T12:06:56.844896Z",
+      "recorded_in": "high-water-mark.json",
+      "wrote_nothing": true,
+      "source_project_ref": "busfgcmbndleljklrcbd",
+      "server_version": "15.8",
+      "agreement_with_artefact": "All ten counts in the mark match what the dump files actually contain. The mark was taken roughly one minute before the first dump began. This mutual agreement is the strongest available evidence that the artefact is a coherent point-in-time capture.",
+      "wallets_max_updated_at_utc": "2026-09-27T04:00:00.17814Z",
+      "wallets_note": "Later than the 2026-09-26 reference because the nightly 04:00 UTC recompute ran again. Count unchanged at 245."
+    },
+    "capture_method": "Inside the same repeatable-read transaction pg_dump uses, run: select now(), plus per-table max(created_at)/max(updated_at). pg_dump does not emit this, so it is captured as a separate statement immediately before the dump begins and recorded in high-water-mark.json.",
+
+    "reference_per_table": {
+      "auth.users": { "count": 623 },
+      "auth.identities": { "count": 623 },
+      "profiles": { "count": 622, "max_updated_at_utc": "2026-09-14T18:20:57.462936Z" },
+      "collections": { "count": 275, "max_updated_at_utc": "2026-09-26T00:45:13.305Z" },
+      "contributions": { "count": 5576, "max_updated_at_utc": "2026-09-26T00:42:32.658427Z" },
+      "deposits": { "count": 6201, "max_updated_at_utc": "2026-06-17T04:00:04.685868Z", "note": "frozen — no INSERT since 2026-06-16" },
+      "withdrawals": { "count": 292, "max_updated_at_utc": "2026-09-20T13:09:51.43752Z" },
+      "wallets": { "count": 245, "max_updated_at_utc": "2026-09-26T04:00:00.064726Z", "note": "nightly recompute at 04:00 UTC" },
+      "pending_payment_context": { "count": 797, "max_updated_at_utc": "2026-09-26T00:45:13.403215Z", "note": "the live payment-critical table" },
+      "payment_recovery_log": { "count": 30242, "max_created_at_utc": "2026-09-26T00:45:13.238862Z" }
+    },
+
+    "observed_liveness": "Counts were identical across three independent captures on 2026-09-26 and 2026-09-27 (~24.5 hours apart). Zero new rows in the core tables during that window. Production is live but currently low-volume. This is a measurement, not a guarantee."
+  },
+
+  "control_totals_reference": {
+    "source": "docs/migration/legacy/legacy-control-totals.md",
+    "note": "Restore verification compares the restored copy against these. Amounts are integer kobo. naira-to-kobo conversion is exact: no value in the database exceeds 2 decimal places and none is negative.",
+    "auth": { "users": 623, "profiles": 622, "identities": 623, "users_without_profile": 1, "profiles_without_user": 0 },
+    "collections": { "total": 275, "by_status": { "active": 237, "closed": 21, "deleted": 12, "paused": 4, "rejected": 1 } },
+    "contributions": { "total": 5576, "paid": 3934, "paid_kobo": 4606968935, "pending": 1628, "duplicate_voided": 14 },
+    "deposits": { "total": 6201, "all_gross_kobo": 9002064126, "success": 4260, "success_gross_kobo": 6042365363, "unattributed": 1317, "unattributed_success": 923, "unattributed_success_kobo": 1979922000 },
+    "_deposits_label_correction_2026_09_27": "The former key 'gross_kobo': 9002064126 sat beside 'success': 4260 and read as though it were the gross of the successful subset. It is not. 9,002,064,126 kobo is the gross of ALL 6,201 deposits; the successful 4,260 gross 6,042,365,363 kobo. Both figures were confirmed against the D1 backup on 2026-09-27. The key is now split so the two cannot be conflated during D2 restore verification. No source data changed.",
+    "withdrawals": { "total": 292, "approved": 239, "success": 43, "rejected": 10, "total_kobo": 4668287280 },
+    "wallets": { "total": 245, "available_kobo": 11403830, "net_payment_kobo": 4606969294 },
+    "known_drift_kobo": 359,
+    "known_drift_note": "wallets.net_payment exceeds paid contributions by 359 kobo (NGN 3.59). This drift MUST reproduce in the restored copy — if it does not, the restore is not faithful.",
+    "referential_integrity": { "all_orphan_checks": 0, "collections_without_wallet": 30 }
+  },
+
+  "method": {
+    "tool": "supabase db dump (CLI 2.109.1) or pg_dump 15 directly",
+    "postgres_client_major_required": 15,
+    "client_must_not_be_older_than_server": true,
+    "read_only": true,
+    "read_only_detail": "pg_dump issues only SELECT and takes ACCESS SHARE locks. It writes no data and changes no schema. It runs in a single repeatable-read transaction so the dump is internally consistent.",
+    "known_caveat": "ACCESS SHARE conflicts with ACCESS EXCLUSIVE. A concurrent ALTER/DROP/TRUNCATE/VACUUM FULL would wait. Nothing in normal Kolekto operation issues those, and neither cron job does.",
+    "forbidden_during_backup": ["DELETE", "TRUNCATE", "DROP", "ALTER", "VACUUM FULL", "migrations", "RLS changes", "grant changes", "disabling cron", "disabling Edge Functions"]
+  },
+
+  "restore_instructions": {
+    "gate": "SEPARATE GATE — do not run in the same step as the backup",
+    "target": "a disposable local PostgreSQL 15 container",
+    "target_must_not_be": ["legacy production", "legacy test", "any new Supabase project", "the Kolekto local development stack"],
+    "why_not_local_dev_stack": "It holds the new schema and uncommitted developer work, and `collections`/`profiles` exist in both with different shapes.",
+    "prerequisites_established_by_d1_verification": {
+      "see": "docs/migration/legacy/production-backup-plan.md section 13.1 — authoritative",
+      "extensions_unavailable_in_vanilla_postgres15": ["pg_cron", "pg_net", "supabase_vault", "hypopg", "index_advisor"],
+      "extensions_available": ["plpgsql", "citext", "pgcrypto", "uuid-ossp", "pg_stat_statements"],
+      "extension_errors_are_expected": "These five CREATE EXTENSION statements WILL error. No table, row, constraint or index depends on any of them. Enumerate the five in advance and tick them off; treat any error on CREATE TABLE, COPY, ADD CONSTRAINT or CREATE INDEX as real.",
+      "roles_that_must_be_created_first": ["service_role", "authenticated", "anon", "dashboard_user"],
+      "roles_note": "The dump carries 883 GRANT statements naming these roles. 'postgres' already exists as the container superuser. Create the four as 'nologin' stand-ins, one statement per role — a single DO block with one duplicate_object handler would swallow the first duplicate and skip the rest.",
+      "psql_version_requirement": "15.14 or newer. pg_dump 15.19 wraps each file in \\restrict / \\unrestrict; an older psql fails at the top of the file. The postgres:15 image currently ships 15.19.",
+      "restrict_tokens_are_not_secrets": "The \\restrict nonces are per-dump psql guard tokens, not credentials.",
+      "cron_file_not_loadable_here": "legacy-prod-cron.sql cannot be restored into this target because pg_cron is unavailable and the cron schema will not exist. Verify its 2 rows by reading the file."
+    },
+    "steps": [
+      "docker run --name kolekto-legacy-restore -e POSTGRES_PASSWORD=<local-only> -p 55432:5432 -d postgres:15",
+      "docker exec -i kolekto-legacy-restore createdb -U postgres legacy_restore",
+      "create the four stand-in roles FIRST — see prerequisites_established_by_d1_verification",
+      "psql ... -f legacy-prod-schema.sql   (WITHOUT ON_ERROR_STOP, then audit the error log against the five expected extension errors)",
+      "psql ... --set ON_ERROR_STOP=on -f legacy-prod-public-data.sql   (a COPY failure is never acceptable)",
+      "psql ... --set ON_ERROR_STOP=on -f legacy-prod-auth.sql",
+      "psql ... --set ON_ERROR_STOP=on -f legacy-prod-storage-metadata.sql",
+      "then compare every figure in control_totals_reference, including the 359-kobo drift"
+    ],
+    "pass_condition": "Every control total reproduces, including the drift. Any mismatch means the backup is NOT verified."
+  },
+
+  "verification_after_backup": {
+    "performed_on": "2026-09-27, entirely locally. No remote connection was opened.",
+    "A_file_exists": "PASS — all 7 artefacts present, none zero bytes",
+    "B_checksum_exists": "PASS — 5/5 verified twice: 'sha256sum -c SHA256SUMS' and independent recomputation",
+    "C_manifest_exists": "PASS",
+    "D_readable": "PASS — all 5 dumps parse; no unterminated COPY block in any file",
+    "E_size_plausible": "PASS — 28,979,193 bytes total, within the 20-60 MB estimate for the data dump",
+    "F_contains_expected_schemas": "PASS — 53 CREATE TABLE public. (exact match to the 53 known tables), 9 CREATE SCHEMA, 80 CREATE POLICY, 78 ENABLE ROW LEVEL SECURITY, 883 GRANT, 96 CREATE FUNCTION, 19 CREATE TRIGGER, 9 CREATE VIEW, 14 enums, 3 sequences, 213 constraints, 80 foreign keys",
+    "G_control_totals_match": "PASS — all 20 control totals reproduce from the artefact, including the 359-kobo drift, the 0-kobo gross reconciliation, and the rejected-withdrawal identity of 47,846,000 kobo. Zero monetary values carry more than 2 decimal places, so naira-to-kobo remains exact.",
+    "H_high_water_mark_recorded": "PASS — valid JSON, wrote_nothing true, and all ten counts agree with the dump contents",
+    "I_no_secrets_in_logs": "PASS — no credential value was read, printed, logged or written. run-backup.ps1 contains no credential literal and no connection-string literal.",
+    "J_repository_clean": "PASS — no artefact in 'git status'; the preservation directory is not inside any git repository",
+    "K_truncation": "PASS — all five dumps carry the completion marker four lines from EOF",
+    "L_cross_contamination": "PASS — schema dump has 0 COPY and 0 INSERT; data dump has 0 CREATE TABLE and 0 DROP/TRUNCATE",
+    "M_b4_scope_honoured": "PASS — auth.users and auth.identities only. Zero rows of auth.sessions, auth.refresh_tokens, auth.mfa_factors, auth.mfa_challenges, auth.sso_providers, auth.saml_providers, auth.one_time_tokens.",
+    "N_sequence_state": "PASS — campuses_campus_id_seq and students_student_id_seq preserved; campuses retains explicit non-UUID ids 1..47",
+    "final_status": "PASS WITH EXCEPTION",
+    "exception_1": "settlement_runs 56 -> 57. The nightly settlement job appended one audit row between the 2026-09-26 baseline and the 2026-09-27 dump. Expected liveness in a live system, non-financial, and no financial total moved. 39 of 40 non-empty tables match the baseline exactly.",
+    "exception_2": "Two documentation errors found and corrected on 2026-09-27: the mislabelled deposit gross, and the published 52,562 row total which should have been 53,742. Both were documentation defects, not backup defects.",
+    "_note": "The backup itself is verified healthy. D2 restore has NOT been performed. Secure preservation — encryption and an off-machine copy — has NOT been performed and is reserved to the founder."
+  }
+}

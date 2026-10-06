@@ -81,6 +81,12 @@ export function loadConfig(): KolektoConfig {
   const supabasePublishableKey = required("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
   const projectRef = projectRefFromUrl(supabaseUrl);
 
+  assertEnvironmentTarget({
+    environment,
+    supabaseUrl,
+    projectRef,
+    expectedProjectRef: optional("KOLEKTO_EXPECTED_PROJECT_REF"),
+  });
   assertNotProduction({ environment, supabaseUrl, projectRef });
 
   cached = {
@@ -118,6 +124,95 @@ export function assertNotProduction(input: {
         `PRODUCTION Supabase project (${productionRef}). ` +
         `A non-production process must never read or write production data. ` +
         `Check your .env.local.`,
+    );
+  }
+}
+
+/**
+ * The legacy estate: the previous Kolekto's live production project and its test
+ * project. The new application never connects to either, in any environment —
+ * migration reads the verified D1 backup files, never a legacy database.
+ *
+ * Deliberately a constant, not configuration. These refs are not secrets (a ref
+ * is in every URL a browser sees), and they never change. The guard they replace
+ * read its one ref from an environment variable, which meant a missing variable
+ * silently switched the guard off — the failure mode this closes.
+ */
+export const LEGACY_PROJECT_REFS: Readonly<Record<string, string>> = Object.freeze({
+  busfgcmbndleljklrcbd: "the LEGACY PRODUCTION project",
+  lpeeckqsltxohppheucz: "the LEGACY TEST project",
+});
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+
+/** True when the URL addresses this machine — the local Supabase stack. */
+export function isLoopbackUrl(url: string): boolean {
+  try {
+    return LOOPBACK_HOSTS.has(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Each environment may only talk to its own kind of database.
+ *
+ *   every environment   refuses the legacy estate, however the URL is spelled
+ *   local               must be this machine
+ *   staging             must be a hosted project whose ref equals
+ *                       KOLEKTO_EXPECTED_PROJECT_REF — two independent settings
+ *                       that have to agree, so a mistyped or copied URL fails
+ *   production          nothing further here; it is controlled separately, and
+ *                       assertNotProduction keeps non-production away from it
+ */
+export function assertEnvironmentTarget(input: {
+  environment: KolektoEnvironment;
+  supabaseUrl: string;
+  projectRef: string | null;
+  expectedProjectRef: string | undefined;
+}): void {
+  const url = input.supabaseUrl.toLowerCase();
+  for (const [ref, what] of Object.entries(LEGACY_PROJECT_REFS)) {
+    if (input.projectRef === ref || url.includes(ref)) {
+      throw new ConfigError(
+        `REFUSING TO START: NEXT_PUBLIC_SUPABASE_URL points at ${what} (${ref}). ` +
+          `The new Kolekto never connects to the legacy estate, in any environment. ` +
+          `See docs/environments/staging.md.`,
+      );
+    }
+  }
+
+  if (input.environment === "production") return;
+
+  if (input.environment === "local") {
+    if (!isLoopbackUrl(input.supabaseUrl)) {
+      throw new ConfigError(
+        `REFUSING TO START: KOLEKTO_ENV is "local" but NEXT_PUBLIC_SUPABASE_URL is not this machine. ` +
+          `Local talks only to the local Supabase stack (http://127.0.0.1:54321). ` +
+          `To use a hosted project, set KOLEKTO_ENV to that project's environment.`,
+      );
+    }
+    return;
+  }
+
+  // staging
+  if (!input.projectRef) {
+    throw new ConfigError(
+      `REFUSING TO START: KOLEKTO_ENV is "staging" but NEXT_PUBLIC_SUPABASE_URL is not a hosted Supabase ` +
+        `project URL (https://<ref>.supabase.co).`,
+    );
+  }
+  if (!input.expectedProjectRef) {
+    throw new ConfigError(
+      `REFUSING TO START: KOLEKTO_ENV is "staging" and the URL points at project ${input.projectRef}, but ` +
+        `KOLEKTO_EXPECTED_PROJECT_REF is not set. A hosted project must be named explicitly before this ` +
+        `process will use it.`,
+    );
+  }
+  if (input.projectRef !== input.expectedProjectRef) {
+    throw new ConfigError(
+      `REFUSING TO START: NEXT_PUBLIC_SUPABASE_URL points at project ${input.projectRef}, but ` +
+        `KOLEKTO_EXPECTED_PROJECT_REF is ${input.expectedProjectRef}. The two must name the same project.`,
     );
   }
 }

@@ -26,6 +26,7 @@ export function MemberProfileConfig({
   definitions,
   codeSettings,
   memberCount,
+  fieldValueCounts,
   onClose,
 }: {
   slug: string;
@@ -33,12 +34,14 @@ export function MemberProfileConfig({
   definitions: MemberAttributeDefinition[];
   codeSettings: CommunityMemberCodeSettings | null;
   memberCount: number;
+  fieldValueCounts: Record<string, number>;
   onClose: () => void;
 }) {
   const [prefix, setPrefix] = useState(codeSettings?.prefix ?? "");
   const [padding, setPadding] = useState(String(codeSettings?.padding ?? 4));
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [editing, setEditing] = useState<MemberAttributeDefinition | "new" | null>(null);
+  const [deleting, setDeleting] = useState<MemberAttributeDefinition | null>(null);
   const [isPending, startTransition] = useTransition();
 
   const nextNumber = codeSettings?.next_number ?? 1;
@@ -47,6 +50,25 @@ export function MemberProfileConfig({
   // One dialog at a time rather than a dialog inside a dialog: the Dialog
   // component gives its title a fixed element id, so two open at once would put
   // duplicate ids in the document and leave both with the same accessible name.
+  if (deleting) {
+    return (
+      <DeleteFieldConfirmation
+        slug={slug}
+        definition={deleting}
+        valueCount={fieldValueCounts[deleting.id] ?? 0}
+        onCancel={() => setDeleting(null)}
+        onDeleted={() => {
+          setDeleting(null);
+          setMessage({ tone: "success", text: `"${deleting.label}" removed.` });
+        }}
+        onError={(errorMessage) => {
+          setDeleting(null);
+          setMessage({ tone: "danger", text: errorMessage });
+        }}
+      />
+    );
+  }
+
   if (editing) {
     return (
       <FieldEditor
@@ -171,12 +193,7 @@ export function MemberProfileConfig({
                       type="button"
                       disabled={isPending}
                       className="text-xs font-medium text-[var(--color-danger)] hover:underline"
-                      onClick={() =>
-                        startTransition(async () => {
-                          const result = await deleteMemberFieldAction(slug, definition.id);
-                          if (result.error) setMessage({ tone: "danger", text: result.error });
-                        })
-                      }
+                      onClick={() => setDeleting(definition)}
                     >
                       <Trash2 className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />
                       Remove
@@ -329,6 +346,66 @@ function FieldEditor({
         >
           {definition ? "Save field" : "Add field"}
         </Button>
+      </div>
+    </Dialog>
+  );
+}
+
+function DeleteFieldConfirmation({
+  slug,
+  definition,
+  valueCount,
+  onCancel,
+  onDeleted,
+  onError,
+}: {
+  slug: string;
+  definition: MemberAttributeDefinition;
+  valueCount: number;
+  onCancel: () => void;
+  onDeleted: () => void;
+  onError: (message: string) => void;
+}) {
+  const [isPending, startTransition] = useTransition();
+
+  return (
+    <Dialog
+      open
+      onClose={onCancel}
+      title={`Remove "${definition.label}"?`}
+      description="This cannot be undone."
+    >
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-[var(--color-text)]">
+          {valueCount > 0 ? (
+            <>
+              <strong>{valueCount}</strong> member{valueCount === 1 ? " has" : "s have"} a value
+              recorded for this field. Removing the field deletes all of those values permanently.
+            </>
+          ) : (
+            <>No members have a value for this field yet, so nothing else will be lost.</>
+          )}
+        </p>
+
+        <div className="flex justify-end gap-3">
+          <Button variant="secondary" size="sm" onClick={onCancel} disabled={isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            size="sm"
+            loading={isPending}
+            onClick={() =>
+              startTransition(async () => {
+                const result = await deleteMemberFieldAction(slug, definition.id);
+                if (result.error) onError(result.error);
+                else onDeleted();
+              })
+            }
+          >
+            Remove field
+          </Button>
+        </div>
       </div>
     </Dialog>
   );

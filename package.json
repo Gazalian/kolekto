@@ -29,7 +29,10 @@
     "db:backup": "node scripts/db/backup.mjs",
     "db:restore": "node scripts/db/restore.mjs",
     "db:marker": "node scripts/db/persistence-marker.mjs",
-    "test:concurrency": "node scripts/verify/reference-concurrency.mjs"
+    "test:concurrency": "node scripts/verify/reference-concurrency.mjs",
+    "rehearsal:up": "node scripts/migration/rehearsal-target.mjs up",
+    "rehearsal:down": "node scripts/migration/rehearsal-target.mjs down",
+    "rehearsal:status": "node scripts/migration/rehearsal-target.mjs status"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

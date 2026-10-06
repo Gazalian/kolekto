@@ -1,0 +1,21 @@
+{
+  "name": "@kolekto/migration",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Legacy Kolekto → new Kolekto importer. Transformation functions, orchestrator, reconciliation. Never touched by the running application.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./transformers": "./src/transformers/index.ts",
+    "./reconcile": "./src/reconcile.ts"
+  },
+  "engines": { "node": ">=22.6.0" },
+  "scripts": {
+    "test": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kolekto/domain": "*",
+    "postgres": "^3.4.4"
+  }
+}

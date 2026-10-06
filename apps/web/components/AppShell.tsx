@@ -75,7 +75,7 @@ export function AppShell({
       {/* Mobile top bar + slide-out */}
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:hidden">
-          <span className="font-semibold text-[var(--color-text)]">{community.name}</span>
+          <span className="font-semibold text-[var(--color-text)]">{community.is_personal ? "My Workspace" : community.name}</span>
           <button
             type="button"
             aria-label={mobileOpen ? "Close menu" : "Open menu"}
@@ -104,8 +104,8 @@ function SidebarHeader({ community, role }: { community: Community; role: Office
       <Link href="/communities" className="text-xs font-medium text-[var(--color-text-muted)] hover:underline">
         ← All communities
       </Link>
-      <p className="mt-2 truncate font-semibold text-[var(--color-text)]" title={community.name}>
-        {community.name}
+      <p className="mt-2 truncate font-semibold text-[var(--color-text)]" title={community.is_personal ? "My Workspace" : community.name}>
+        {community.is_personal ? "My Workspace" : community.name}
       </p>
       <p className="text-xs capitalize text-[var(--color-text-faint)]">{role}</p>
     </div>

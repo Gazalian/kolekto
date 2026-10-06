@@ -43,6 +43,7 @@ export interface User {
   avatar_url: string | null;
   identity_level: "none" | "contact_verified" | "identity_verified";
   status: "active" | "suspended" | "closed";
+  onboarding_completed_at: string | null;
   created_at: string;
 }
 

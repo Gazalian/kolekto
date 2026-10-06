@@ -17,8 +17,8 @@ export default async function CommunityOverviewPage({ params }: { params: Promis
   return (
     <div className="flex flex-col gap-6">
       <div>
-        <h1 className="text-xl font-semibold text-[var(--color-text)]">{c.name}</h1>
-        <p className="text-sm text-[var(--color-text-muted)]">kolekto.app/{c.slug}</p>
+        <h1 className="text-xl font-semibold text-[var(--color-text)]">{c.is_personal ? "My Workspace" : c.name}</h1>
+        {!c.is_personal && <p className="text-sm text-[var(--color-text-muted)]">kolekto.app/{c.slug}</p>}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">

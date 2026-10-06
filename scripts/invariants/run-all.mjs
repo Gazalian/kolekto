@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The five invariants.
+ * The six invariants.
  *
  * These run before features exist, not after. Every one of them corresponds to
  * a way the previous Kolekto went wrong, and each was discoverable by a script
@@ -12,6 +12,8 @@
  *   4. One Paystack caller           — five call sites, no swappable provider
  *   5. One fee implementation        — two versions of "net", and the difference
  *                                      between them WAS the largest drift bucket
+ *   6. App functions state who may   — PUBLIC EXECUTE is the default, and anon
+ *      execute them                    inherits PUBLIC
  *
  * Usage: node scripts/invariants/run-all.mjs [--verbose]
  */
@@ -296,6 +298,103 @@ async function ruleOneFeeImplementation() {
   }
 }
 
+// ── 6. Every app function states who may execute it (SEC-12, M8.2) ──────────
+//
+// Postgres grants EXECUTE to PUBLIC on every new function. `20260917121100`
+// counters that with
+//
+//     alter default privileges in schema app revoke execute on functions from public;
+//
+// which is the right mechanism — but `alter default privileges` is recorded per
+// GRANTOR ROLE, so it covers objects created by the role that ran it and not
+// necessarily others. The repository already knew this; `20260919120100`'s own
+// comment says so. Empirically the six trigger functions added in M8.1 arrived
+// PUBLIC-executable anyway, and only `02_grant_matrix.sql` asserting the
+// anon-executable set exactly caught them — anon inherits PUBLIC, so a PUBLIC
+// grant is an anon grant.
+//
+// Three SECURITY DEFINER functions driving the payment state machine, executable
+// by anybody holding the publishable key that ships in every page's JavaScript,
+// is how the previous system exposed its payment ledger. Phase 4 adds many
+// `app.*` functions and the next ones post journals.
+//
+// So the rule is not "revoke from PUBLIC" — the migration already does that
+// broadly. The rule is that **reachability is stated**: every `app.*` function
+// must carry an explicit `revoke execute` or an explicit `grant execute`
+// somewhere in the migration set, so who can call it is a decision on the record
+// rather than a default nobody looked at.
+async function ruleAppFunctionsStateTheirReachability() {
+  const sql = await collect([".sql"], join(ROOT, "supabase", "migrations"));
+
+  // Pre-M8.2 internal helpers and trigger functions. Every one is currently
+  // unreachable by `anon` and `authenticated` (verified against the live
+  // database), covered by the schema-wide revokes rather than by a named one.
+  //
+  // THIS LIST IS FROZEN. It may shrink — adding an explicit revoke for one of
+  // these is a small, welcome change — and it must never grow. A new function
+  // that needs to be here is a new function whose reachability nobody stated.
+  const GRANDFATHERED = new Set([
+    "all_amounts_positive", "assert_attribute_definition_limit", "assert_audience_group_tenancy",
+    "assert_community_has_owner", "assert_item_is_consistent",
+    "assert_member_attribute_value_consistent", "assert_obligation_tenancy", "assert_tier_is_consistent",
+    "block_audit_mutation", "block_manual_paid_status", "current_user_id",
+    "derive_collection_audience_mode", "enforce_collection_delete_guard", "enforce_member_delete_guard",
+    "enforce_obligation_delete_guard", "enforce_reference_immutability", "generate_secret_token",
+    "generate_unique_collection_slug", "generate_unique_community_slug",
+    "next_member_code", "normalise_phone", "propagate_definition_uniqueness", "require_permission",
+    "resolve_collection_audience", "set_member_attributes", "set_updated_at", "slugify",
+    "uuid_generate_v7", "write_audit_log",
+  ]);
+
+  const created = new Map(); // name → {file, line}
+  const decided = new Set(); // name → has an explicit revoke or grant
+
+  for (const file of sql) {
+    const content = await readFile(file, "utf8");
+    const lines = content.split(/\r?\n/);
+
+    lines.forEach((text, index) => {
+      if (ALLOW.test(text)) return;
+
+      const createdHere = /create\s+(?:or\s+replace\s+)?function\s+app\.([a-z0-9_]+)/i.exec(text);
+      if (createdHere?.[1] && !created.has(createdHere[1].toLowerCase())) {
+        created.set(createdHere[1].toLowerCase(), { file, line: index + 1 });
+      }
+
+      const decidedHere = /(?:revoke|grant)\s+execute\s+on\s+function\s+app\.([a-z0-9_]+)/i.exec(text);
+      if (decidedHere?.[1]) decided.add(decidedHere[1].toLowerCase());
+    });
+  }
+
+  for (const [name, where] of created) {
+    if (decided.has(name) || GRANDFATHERED.has(name)) continue;
+    fail(
+      "app-function-reachability",
+      where.file,
+      where.line,
+      `app.${name}`,
+      `app.${name} is created without stating who may execute it. Add an explicit ` +
+        `\`revoke execute on function app.${name}(...) from public, anon, authenticated;\` for an internal ` +
+        `or trigger function, or an explicit \`grant execute ... to authenticated;\` for a callable one. ` +
+        `Postgres grants EXECUTE to PUBLIC by default and anon inherits PUBLIC, which is how the previous ` +
+        `system's payment state machine became callable with the publishable key.`,
+    );
+  }
+
+  // The grandfather list may only shrink. A name in it that has since gained an
+  // explicit decision should be removed, and saying so keeps the list honest
+  // rather than letting it rot.
+  if (VERBOSE) {
+    const redundant = [...GRANDFATHERED].filter((n) => decided.has(n));
+    if (redundant.length > 0) {
+      console.log(
+        `note  ${redundant.length} grandfathered function(s) now have an explicit decision and can be ` +
+          `removed from GRANDFATHERED: ${redundant.join(", ")}`,
+      );
+    }
+  }
+}
+
 // ── Run ─────────────────────────────────────────────────────────────────────
 const rules = [
   ["money is bigint kobo", ruleNoFloatMoney],
@@ -303,6 +402,7 @@ const rules = [
   ["no money writes outside the database", ruleNoDirectMoneyWrites],
   ["one Paystack caller", ruleSinglePaystackCaller],
   ["one fee implementation", ruleOneFeeImplementation],
+  ["every app function states who may execute it", ruleAppFunctionsStateTheirReachability],
 ];
 
 for (const [name, run] of rules) {
@@ -328,4 +428,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log("\nAll five invariants hold.");
+console.log("\nAll six invariants hold.");
