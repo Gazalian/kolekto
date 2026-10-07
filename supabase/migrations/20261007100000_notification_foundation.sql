@@ -202,7 +202,7 @@ create trigger notification_events_no_delete
   for each row execute function app.block_notification_event_mutation();
 
 revoke update, delete, truncate on public.notification_events from authenticated, anon;
-revoke all on function app.block_notification_event_mutation() from public;
+revoke execute on function app.block_notification_event_mutation() from public, anon, authenticated;
 
 
 -- ── RLS policies ────────────────────────────────────────────────────────────
@@ -372,7 +372,7 @@ $$;
 comment on function app.enqueue_notification_on_audit() is
   'M13.1: watches audit_logs INSERTs and enqueues notification-worthy events to the pgmq notification_events queue. Adding a new event type = adding one string to the IN (...) list.';
 
-revoke all on function app.enqueue_notification_on_audit() from public;
+revoke execute on function app.enqueue_notification_on_audit() from public, anon, authenticated;
 
 create trigger audit_log_notification_enqueue
   after insert on public.audit_logs
