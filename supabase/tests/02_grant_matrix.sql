@@ -133,7 +133,11 @@ select bag_eq(
       -- unlike the seven SECURITY DEFINER views in the previous system, which
       -- were granted to anon and bypassed RLS on contributions and deposits by
       -- design. A balance is read through these; it is never stored.
-      ('v_ledger_account_balances'), ('v_collection_position'), ('v_ledger_imbalances')
+      ('v_ledger_account_balances'), ('v_collection_position'), ('v_ledger_imbalances'),
+      -- M13.1: notification tables. Readable by the authenticated role under RLS;
+      -- officers see their community's events and deliveries, members see their
+      -- own inbox, and preferences are per-member.
+      ('notification_events'), ('notification_deliveries'), ('notification_preferences')
   $$,
   'authenticated can SELECT exactly the allowlisted tables and no others'
 );

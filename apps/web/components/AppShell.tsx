@@ -6,6 +6,8 @@ import { Activity, Gift, LayoutGrid, LogOut, Menu, Settings, Users, X } from "lu
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { type ReactNode, useState } from "react";
+import { NotificationBell } from "./NotificationBell.tsx";
+import { NotificationProvider } from "./NotificationProvider.tsx";
 
 interface NavItem {
   href: string;
@@ -64,11 +66,15 @@ export function AppShell({
   );
 
   return (
+    <NotificationProvider>
     <div className="flex min-h-screen">
       {/* Desktop sidebar */}
       <aside className="hidden w-64 shrink-0 flex-col border-r border-[var(--color-border)] bg-[var(--color-surface)] sm:flex">
         <SidebarHeader community={community} role={role} />
         {nav}
+        <div className="border-t border-[var(--color-border)] px-3 py-2">
+          <NotificationBell />
+        </div>
         <UserFooter userName={userName} />
       </aside>
 
@@ -76,14 +82,17 @@ export function AppShell({
       <div className="flex flex-1 flex-col">
         <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:hidden">
           <span className="font-semibold text-[var(--color-text)]">{community.is_personal ? "My Workspace" : community.name}</span>
-          <button
-            type="button"
-            aria-label={mobileOpen ? "Close menu" : "Open menu"}
-            onClick={() => setMobileOpen((v) => !v)}
-            className="rounded-[var(--radius-sm)] p-2 text-[var(--color-text)] hover:bg-[var(--color-bg)]"
-          >
-            {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
+          <div className="flex items-center gap-1">
+            <NotificationBell />
+            <button
+              type="button"
+              aria-label={mobileOpen ? "Close menu" : "Open menu"}
+              onClick={() => setMobileOpen((v) => !v)}
+              className="rounded-[var(--radius-sm)] p-2 text-[var(--color-text)] hover:bg-[var(--color-bg)]"
+            >
+              {mobileOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
         </header>
         {mobileOpen && (
           <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-surface)] sm:hidden">
@@ -95,6 +104,7 @@ export function AppShell({
         <main className="flex-1 px-4 py-6 sm:px-8 sm:py-8">{children}</main>
       </div>
     </div>
+    </NotificationProvider>
   );
 }
 
