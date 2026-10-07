@@ -127,3 +127,136 @@ jobs:
       - run: npm ci
       - name: Dependency audit
         run: npm audit --audit-level=high
+
+  # ── Browser E2E (M13.1 FINAL-2, QA-ENV-01) ────────────────────────────────
+  # The existing Playwright suite driven through a real Chromium against the
+  # full local stack. It exists because the suite cannot run reliably on the
+  # resource-constrained Windows dev box (QA-ENV-01): signup+OTP succeed but the
+  # post-verify onboarding sequence stalls under load. ubuntu-latest runs the
+  # same `supabase start` the `database` job already proves, with CPU/RAM to
+  # spare, so a green run here establishes that the stall is environmental.
+  #
+  # Additive and self-contained: local stack only (env.ts loopback guard refuses
+  # anything else), no hosted/production credentials, no deploy, no DB reset.
+  # This job is NOT yet wired into branch protection, so its result is reported
+  # honestly (red on failure) without blocking merges until it has proven green.
+  # See docs/product/M13.1-CI-E2E-IMPLEMENTATION-REPORT.md.
+  e2e:
+    name: browser e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Static, non-secret local values. The dynamic keys and the ephemeral
+      # session secret are written to $GITHUB_ENV by the steps below so they
+      # reach every later step — including the `next build` Playwright runs,
+      # where the NEXT_PUBLIC_* values must be present to be inlined.
+      KOLEKTO_ENV: local
+      NEXT_PUBLIC_SUPABASE_URL: http://127.0.0.1:54321
+      SUPABASE_DB_URL: postgresql://postgres:postgres@127.0.0.1:54322/postgres
+      MAILPIT_URL: http://127.0.0.1:54324
+      # KOLEKTO_PRODUCTION_PROJECT_REF / KOLEKTO_EXPECTED_PROJECT_REF are left
+      # unset on purpose: for KOLEKTO_ENV=local the config guards require a
+      # loopback URL and no hosted ref.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start the local stack
+        run: supabase start
+
+      # Map the CLI's key names onto the names the app requires. The CLI output
+      # name is not assumed: a publishable key is preferred when present and the
+      # legacy anon key is the fallback; likewise service_role then secret. If
+      # neither is found the step fails loudly rather than letting the app start
+      # with an empty key. (`supabase status -o env --override-name` is the
+      # documented alternative but ties us to the CLI's internal key spelling.)
+      - name: Export local Supabase keys to the environment
+        run: |
+          supabase status -o env > supabase-status.env
+          read_key() { grep -E "^$1=" supabase-status.env | head -n1 | cut -d'=' -f2- | sed -e 's/^"//' -e 's/"$//'; }
+          publishable="$(read_key PUBLISHABLE_KEY)"
+          anon="$(read_key ANON_KEY)"
+          service="$(read_key SERVICE_ROLE_KEY)"
+          secret="$(read_key SECRET_KEY)"
+          client_key="${publishable:-$anon}"
+          service_key="${service:-$secret}"
+          if [ -z "$client_key" ] || [ -z "$service_key" ]; then
+            echo "::error::Could not extract Supabase keys from 'supabase status -o env'. Output was:"
+            cat supabase-status.env
+            exit 1
+          fi
+          echo "::add-mask::$client_key"
+          echo "::add-mask::$service_key"
+          echo "NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=$client_key" >> "$GITHUB_ENV"
+          echo "SUPABASE_SERVICE_ROLE_KEY=$service_key" >> "$GITHUB_ENV"
+          rm -f supabase-status.env
+
+      # The contributor-cookie signing secret (>=32 chars). Generated per run and
+      # never persisted — it only has to be present and long enough for the app
+      # to start (packages/config/src/env.ts loadSessionSecret).
+      - name: Generate an ephemeral session secret
+        run: |
+          secret="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))")"
+          echo "::add-mask::$secret"
+          echo "KOLEKTO_SESSION_SECRET=$secret" >> "$GITHUB_ENV"
+
+      - run: npm ci
+
+      - name: Install Chromium and its Linux system dependencies
+        run: npx playwright install --with-deps chromium
+
+      # The production worker, built and run exactly as it ships: esbuild bundle,
+      # plain Node, no tsx. It idles against an empty queue for the existing
+      # suite (no notification spec yet) but completes the real runtime so the
+      # environment matches what the later notification spec will need.
+      - name: Build the notification worker
+        run: npm run build --workspace apps/worker
+
+      - name: Start the notification worker in the background
+        run: |
+          nohup node apps/worker/dist/index.js > worker.log 2>&1 &
+          echo $! > worker.pid
+          echo "Worker started (PID $(cat worker.pid))."
+
+      # Playwright owns the web server: its webServer block runs
+      # `npm run build --workspace apps/web && npm run start ... -p 3010` with
+      # NEXT_DIST_DIR=.next-e2e. We do not duplicate that here.
+      - name: Run the Playwright E2E suite
+        run: npm run test:e2e
+
+      - name: Upload Playwright artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload worker log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: worker-log
+          path: worker.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop the worker
+        if: always()
+        run: |
+          if [ -f worker.pid ]; then
+            kill "$(cat worker.pid)" 2>/dev/null || true
+          fi
+
+      - name: Stop the local stack
+        if: always()
+        run: supabase stop || true
