@@ -22,6 +22,10 @@ concurrency:
 
 permissions:
   contents: read
+  # gitleaks/gitleaks-action@v2 reads the PR's commits via the GitHub API on
+  # pull_request events; without this it fails with HTTP 403 "Resource not
+  # accessible by integration". Read-only, no write scope added.
+  pull-requests: read
 
 jobs:
   # ── The five invariants (ADR 0003, 0008, 0015, and scripts/invariants) ─────
@@ -63,7 +67,9 @@ jobs:
           node-version-file: .nvmrc
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned: config.toml is authored against CLI 2.109.x. `latest`
+          # installs a newer CLI that cannot parse it (CliConfigParseError).
+          version: 2.109.1
 
       - name: Start the local stack
         run: supabase start
@@ -165,7 +171,9 @@ jobs:
           cache: npm
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          # Pinned: config.toml is authored against CLI 2.109.x. `latest`
+          # installs a newer CLI that cannot parse it (CliConfigParseError).
+          version: 2.109.1
 
       - name: Start the local stack
         run: supabase start
