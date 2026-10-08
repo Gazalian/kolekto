@@ -216,6 +216,19 @@ jobs:
 
       - run: npm ci
 
+      # Build the composite workspace packages before Playwright's webServer
+      # runs `next build`. apps/web type-checks as a composite project with
+      # project references (packages/{domain,config,validation,db,ui,adapters});
+      # a bare `next build` needs those references' build outputs
+      # (packages/*/dist/*.d.ts) to already exist. On a fresh runner they do
+      # not — dist is gitignored and the packages are consumed as source with
+      # no build step — so `next build` fails type checking with TS6305. The
+      # typecheck-and-test job builds these via `tsc --build`; this job, which
+      # never ran it, must do the same before next build. (This is why the
+      # suite could not even start: the webServer's build exited 1.)
+      - name: Build workspace project references
+        run: npm run typecheck
+
       - name: Install Chromium and its Linux system dependencies
         run: npx playwright install --with-deps chromium
 
