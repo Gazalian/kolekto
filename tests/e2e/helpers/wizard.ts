@@ -60,14 +60,19 @@ export async function walkWizard(page: Page, walk: WizardWalk): Promise<void> {
   await page.getByRole("button", { name: walk.intent }).click();
 
   for (const [index, step] of flow.steps.entries()) {
-    if (walk.stopBefore && step.kind === walk.stopBefore) return;
-
     // The heading is the flow's own, in the flow's own words. Arriving at the
     // wrong one means the sequence has drifted.
+    //
+    // It is also checked on the step the walk stops before: the wizard only
+    // renders the next step after the previous step's save and its remembered
+    // position have both landed, so returning before it appears let a caller
+    // navigate away mid-save and resume a draft one step behind.
     await expect(
       page.getByRole("heading", { name: step.heading, exact: true }),
       `${flow.key} step ${index + 1} should ask "${step.heading}"`,
     ).toBeVisible({ timeout: 45_000 });
+
+    if (walk.stopBefore && step.kind === walk.stopBefore) return;
 
     await walk.fill?.[step.kind]?.(page);
 

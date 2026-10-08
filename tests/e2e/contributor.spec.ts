@@ -372,7 +372,7 @@ test("a recurring charge shows the period it is asking about", async ({ page, br
     intent: /^Recurring/,
     fill: {
       basics: async (p) => {
-        await p.getByLabel("What is this collection called?").fill("Service Charge M7");
+        await p.getByLabel("What is this plan called?").fill("Service Charge M7");
       },
       amount: async (p) => {
         await p.getByLabel("Amount per period").fill("20000");

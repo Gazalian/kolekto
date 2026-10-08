@@ -145,8 +145,8 @@ test("the fee decision changes the numbers, is saved, and charges nothing", asyn
 
         // ── The DEFAULT presentation asserts no figure it cannot stand behind ──
         //
-        // Part 3: "Do not show fake exact numbers if the actual fee schedule
-        // is not finalized." It is not (DEC-11), so the headline is the
+        // Kolekto's own fee is settled (D-10), but the provider's fee is only a
+        // model until Paystack reports it (D-11), so the headline is the
         // organiser's own amount plus "applicable fees" — and the computed
         // split must not be on screen until it is asked for.
         await chooseFeeBearer("Contributor pays")(p);
@@ -158,7 +158,7 @@ test("the fee decision changes the numbers, is saved, and charges nothing", asyn
 
         // ── The estimate is available, and clearly marked as one ──────────────
         await p.getByRole("button", { name: "Show an estimate of the fees" }).click();
-        await expect(p.getByText(/An estimate only, using Kolekto's provisional rates/i)).toBeVisible();
+        await expect(p.getByText(/An estimate, using Kolekto's fee schedule \(2026-09-founder\)/i)).toBeVisible();
         await expect(p.getByText(/not a settlement amount/i)).toBeVisible();
 
         // The two fees are named separately, never summed into one line: an
@@ -167,15 +167,20 @@ test("the fee decision changes the numbers, is saved, and charges nothing", asyn
         await expect(p.getByText("Estimated payment processing fee")).toBeVisible();
         await expect(p.getByText("Estimated Kolekto service fee")).toBeVisible();
 
-        // Absorbing: the contributor pays ₦20,000, the community nets ₦19,600.
-        await expect(p.getByText("₦19,600")).toBeVisible();
+        // D-10: 1.5% modeled provider fee and 1.5% Kolekto fee on ₦20,000 —
+        // ₦300 each, both under their caps.
+        await expect(p.getByText("₦300", { exact: true })).toHaveCount(2);
+        await expect(p.getByText("₦600", { exact: true })).toBeVisible();
 
-        // Passing on: ₦20,000 + ₦400 of fees. NOT ₦20,408, which is what a
-        // fee charged on the payable would produce — the arithmetic is on the
-        // contribution, so it cannot compound.
+        // Absorbing: the contributor pays ₦20,000, the community nets ₦19,400.
+        await expect(p.getByText("₦19,400")).toBeVisible();
+
+        // Passing on: ₦20,000 + ₦600 of fees. NOT ₦20,619, which is what 3% of
+        // fees charged on the payable would produce (20,000 / 0.97) — the
+        // arithmetic is on the contribution, so it cannot compound.
         await chooseFeeBearer("Contributor pays")(p);
-        await expect(p.getByText("₦20,400")).toBeVisible();
-        await expect(p.getByText("₦20,408")).toHaveCount(0);
+        await expect(p.getByText("₦20,600")).toBeVisible();
+        await expect(p.getByText("₦20,619")).toHaveCount(0);
 
         await expect(p.getByText(/nothing has been charged/i)).toBeVisible();
       },
