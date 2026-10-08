@@ -13,13 +13,87 @@ import { readOtpCode } from "./mailpit.ts";
  *
  * Returns the email address that signed up.
  */
+/**
+ * Drives the onboarding flow from /welcome through to a created community:
+ * /welcome → /setup/type → /setup/create → create community → /c/[slug].
+ * Assumes the browser is authenticated and currently on /welcome. Throws if a
+ * step does not complete, so the caller can decide whether to retry.
+ */
+async function completeOnboarding(page: Page): Promise<void> {
+  await page.getByRole("link", { name: "Set up a community" }).click();
+  await page.waitForURL(/\/setup\/type/);
+
+  await page.getByRole("button", { name: "Fellowship" }).click();
+  await page.waitForURL(/\/setup\/create/);
+
+  const communityName = `E2E Community ${Date.now()}`;
+  await page.getByLabel("Community name").fill(communityName);
+  await page.getByRole("button", { name: "Create community" }).click();
+
+  await page.waitForURL(/\/c\//, { timeout: 30_000 });
+  await expect(page).toHaveURL(/\/c\//);
+}
+
+/**
+ * Whether the browser already holds an authenticated session, decided by where
+ * middleware sends a request for /welcome: an unauthenticated request is
+ * redirected to /login; an authenticated one stays on /welcome (not onboarded)
+ * or is sent on to /communities (already onboarded). Navigates as a side
+ * effect, leaving the page on whichever route middleware chose.
+ */
+async function isAuthenticated(page: Page): Promise<boolean> {
+  await page.goto("/welcome");
+  await page.waitForLoadState("networkidle");
+  return !new URL(page.url()).pathname.startsWith("/login");
+}
+
+/** Fails immediately, with diagnostics, if the browser is not on the signup form. */
+async function assertOnSignupPage(page: Page): Promise<void> {
+  const path = new URL(page.url()).pathname;
+  const createAccountVisible = await page
+    .getByRole("button", { name: "Create account" })
+    .isVisible()
+    .catch(() => false);
+  if (!path.startsWith("/signup") || !createAccountVisible) {
+    const title = await page.title().catch(() => "(unknown)");
+    const heading = await page
+      .locator("h1, h2")
+      .first()
+      .innerText()
+      .catch(() => "(none)");
+    throw new Error(
+      `Expected the signup form but the browser is on ${page.url()} ` +
+        `(title: ${JSON.stringify(title)}, heading: ${JSON.stringify(heading)}). ` +
+        `The browser may already be authenticated from a previous attempt.`,
+    );
+  }
+}
+
 export async function signInAsNewUser(page: Page, prefix = "e2e"): Promise<string> {
+  let email = "";
+
   for (let attempt = 1; attempt <= 2; attempt += 1) {
-    const email = `${prefix}-${Date.now()}-${attempt}@example.test`;
+    // A previous attempt may already have authenticated the browser (e.g. OTP
+    // verification succeeded but a later step was retried). Re-running signup
+    // would land an authenticated user on /welcome via redirect and then fail
+    // trying to fill the signup form — the misleading "Full name" timeout. So
+    // on retry, detect the authenticated state and resume onboarding from it
+    // instead of signing up again.
+    if (attempt > 1 && (await isAuthenticated(page))) {
+      if (new URL(page.url()).pathname.startsWith("/welcome")) {
+        await completeOnboarding(page);
+      }
+      await page.goto("/communities");
+      await page.waitForLoadState("networkidle");
+      return email;
+    }
+
+    email = `${prefix}-${Date.now()}-${attempt}@example.test`;
 
     // ── Step 1: Sign up with password ──────────────────────────────────────
     await page.goto("/signup");
     await page.waitForLoadState("networkidle");
+    await assertOnSignupPage(page);
 
     await page.getByLabel("Full name").fill("E2E Test User");
     await page.getByLabel("Email address").fill(email);
@@ -54,26 +128,14 @@ export async function signInAsNewUser(page: Page, prefix = "e2e"): Promise<strin
       continue;
     }
 
-    await page.getByRole("link", { name: "Set up a community" }).click();
-    await page.waitForURL(/\/setup\/type/);
-
-    await page.getByRole("button", { name: "Fellowship" }).click();
-    await page.waitForURL(/\/setup\/create/);
-
-    const communityName = `E2E Community ${Date.now()}`;
-    await page.getByLabel("Community name").fill(communityName);
-    await page.getByRole("button", { name: "Create community" }).click();
-
     try {
-      await page.waitForURL(/\/c\//, { timeout: 30_000 });
+      await completeOnboarding(page);
     } catch {
       if (attempt === 2) {
         throw new Error("The local stack did not complete onboarding after two attempts");
       }
       continue;
     }
-
-    await expect(page).toHaveURL(/\/c\//);
 
     // Navigate to /communities so callers can click "+ New community" or
     // interact with the community listing, matching the old helper's contract.

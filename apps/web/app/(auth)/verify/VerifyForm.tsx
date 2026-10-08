@@ -2,14 +2,13 @@
 
 import { Banner, Button, TextField } from "@kolekto/ui";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { mapAuthError } from "../../../lib/auth-errors.ts";
 import { createClient } from "../../../lib/supabase/browser.ts";
 import { setContactVerifiedAction } from "./actions.ts";
 
 export function VerifyForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const email = searchParams.get("email") ?? "";
 
@@ -47,11 +46,30 @@ export function VerifyForm() {
       return;
     }
 
-    await setContactVerifiedAction();
+    // Mark the contact as verified, but as best-effort bookkeeping that must
+    // NOT gate navigation. There is a client->server session-cookie propagation
+    // race: this server action can run before its server-side Supabase client
+    // sees the session the browser just established, in which case
+    // requireCallerContext() calls redirect("/login") — a thrown NEXT_REDIRECT.
+    // identity_level gates only withdrawals (PRD 10.1), never onboarding, and
+    // app.set_contact_verified() is idempotent, so a miss here is safe and
+    // re-drivable. We log rather than silently swallow, then always proceed.
+    try {
+      const result = await setContactVerifiedAction();
+      if (result?.error) {
+        console.error("setContactVerifiedAction reported:", result.error);
+      }
+    } catch (verifiedError) {
+      console.error("setContactVerifiedAction did not complete before navigation:", verifiedError);
+    }
 
     setLoading(false);
-    router.push("/welcome");
-    router.refresh();
+
+    // Full-document navigation rather than router.push + router.refresh: the
+    // browser sends the freshly written session cookie with this request, so
+    // middleware and the /welcome render both see the session — removing the
+    // race where a client-side navigation outruns the cookie write.
+    window.location.assign("/welcome");
   }
 
   async function resendCode() {
