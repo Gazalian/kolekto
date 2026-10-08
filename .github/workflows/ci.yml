@@ -131,8 +131,10 @@ jobs:
           node-version-file: .nvmrc
           cache: npm
       - run: npm ci
+      # `npm audit --audit-level=high`, plus the written exceptions in
+      # docs/security/dependency-audit-exceptions.md.
       - name: Dependency audit
-        run: npm audit --audit-level=high
+        run: node scripts/security/audit.mjs
 
   # ── Browser E2E (M13.1 FINAL-2, QA-ENV-01) ────────────────────────────────
   # The existing Playwright suite driven through a real Chromium against the

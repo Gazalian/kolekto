@@ -1,0 +1,15 @@
+{
+  "$comment": "Accepted dependency advisories. Each entry needs a written record in docs/security/dependency-audit-exceptions.md. scripts/security/audit.mjs fails CI when an entry passes its reviewBy date, stops matching anything, or reaches the production dependency tree.",
+  "exceptions": [
+    {
+      "advisory": "GHSA-vfj7-8cjw-p6xm",
+      "cve": "CVE-2026-93687",
+      "package": "braces",
+      "severity": "high",
+      "path": "eslint-config-next > @next/eslint-plugin-next > fast-glob > micromatch > braces",
+      "devOnly": true,
+      "reviewBy": "2026-11-08",
+      "reason": "No patched braces release exists (<= 3.0.3 affected, 3.0.3 is latest). Reached only through lint tooling; not in the production dependency tree."
+    }
+  ]
+}
