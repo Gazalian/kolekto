@@ -19,3 +19,7 @@ export * from "./settlement-provider.ts";
 export * from "./payment-provider.ts";
 export * from "./fake-payment-provider.ts";
 export * from "./fixtures.ts";
+export * from "./email-provider.ts";
+export * from "./fake-email-provider.ts";
+export * from "./mailpit-email-provider.ts";
+export * from "./email-factory.ts";
