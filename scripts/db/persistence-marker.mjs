@@ -78,7 +78,14 @@ insert into public.member_attribute_values (member_id, definition_id, community_
 values ('${MEMBER}', '${DEFINITION}', '${COMMUNITY}', 'MARKER-001', 'marker-001')
 on conflict (member_id, definition_id) do nothing;
 
+-- This audit row names a watched action (member.create). It is a marker, not a person adding
+-- a member, so it must not notify anyone: M13.2 P3 (decision record 10.7). The setting is
+-- transaction-local, and psql runs each statement of piped input on its own unless they share
+-- a transaction block, so the suppression and the audit write are wrapped in one.
+begin;
+select app.begin_notification_suppression('persistence marker');
 select app.write_audit_log('${COMMUNITY}', 'system', null, 'member.create', 'member', '${MEMBER}');
+commit;
 `;
 
 const CHECKS = [
