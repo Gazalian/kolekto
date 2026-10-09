@@ -1,49 +1,93 @@
 /**
- * notification-processor.ts — event → recipient resolution → delivery creation.
+ * notification-processor.ts — event → recipient resolution → in-app delivery creation.
  *
- * Each pgmq message carries the audit log row's fields. This module:
- *   1. Creates a notification_event row (idempotent via event_key).
- *   2. Resolves recipients based on the event type.
- *   3. Creates notification_delivery rows (one per recipient, in_app channel).
+ * Each pgmq message carries an audit-log row's fields (see the trigger in
+ * 20261009110000). This module:
+ *   1. Validates the message and decides whether it is processed at all
+ *      (notification-rules.ts: shape, watched action, person actor, age).
+ *   2. Creates a notification_event row (idempotent via event_key).
+ *   3. Resolves the in-app recipients and creates notification_delivery rows.
  *
- * M13.1 handles the three audit actions the domain actually writes:
- *   collection.publish, member.approve_join, member.join_via_invite.
- * M13.2+ adds email/whatsapp/sms channels.
+ * M13.2 P3 handles seven audit actions: collection.publish, member.create,
+ * member.approve_join, member.reject_join, member.join_via_invite,
+ * officer_invitation.accept and officer_term.end.
  *
- * Crash safety (QA BUG-4): the whole unit runs in one transaction and is
- * resumable. On a redelivered message the event already exists, so we read its
- * id (rather than returning early) and re-insert deliveries idempotently — any
- * deliveries a previous partial run missed are completed, none are duplicated.
+ * ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────────
+ * It writes NO email delivery row. The only channel string in this file is 'in_app'.
+ * Who may be emailed is the eligibility engine (P4); the sender and the send limits
+ * are P5. Nothing here reads, stores or forwards a contact address except the one
+ * narrow field the trigger passes for a rejection, and even that is dropped: the
+ * event payload carries a name, a code and a slug, never an address.
+ *
+ * Crash safety (QA BUG-4, unchanged): the whole unit runs in one transaction and is
+ * resumable. On a redelivered message the event already exists, so we read its id
+ * rather than returning early, and re-insert deliveries idempotently — deliveries a
+ * previous partial run missed are completed, none are duplicated.
+ *
+ * A message that cannot or should not be processed is SKIPPED (acknowledged, reported
+ * through the return value), never thrown: a thrown error leaves the message in the
+ * queue to reappear every 30 seconds, and there is no retry cap until P6.
  */
 
 import type postgres from "postgres";
 
-// Helpers run both on the base connection and inside sql.begin(), so accept
-// either. (TransactionSql is not assignable to Sql in postgres.js's types.)
+import {
+  admission,
+  buildPayload,
+  eventKey,
+  isImportedMember,
+  narrowRequester,
+  parseAuditMessage,
+  recipientPlan,
+  type AuditMessage,
+  type PayloadFacts,
+  type SkipReason,
+} from "./notification-rules.ts";
+
+// Helpers run both on the base connection and inside a transaction, so accept either.
+// (TransactionSql is not assignable to Sql in postgres.js's types.)
 type Db = postgres.Sql<Record<string, never>> | postgres.TransactionSql<Record<string, never>>;
 
-interface AuditMessage {
-  audit_log_id: string;
-  community_id: string;
-  action: string;
-  actor_type: string;
-  actor_user_id: string | null;
-  actor_name: string;
-  object_type: string;
-  object_id: string;
-  after_state: Record<string, unknown> | null;
-  created_at: string;
+export type ProcessOutcome =
+  | { readonly outcome: "processed"; readonly deliveries: number }
+  | { readonly outcome: "skipped"; readonly reason: SkipReason };
+
+const SKIPPED = (reason: SkipReason): ProcessOutcome => ({ outcome: "skipped", reason });
+
+/**
+ * Run `fn` atomically. On the base connection that is a transaction; inside an
+ * existing transaction (the integration test wraps the whole run in one so it can
+ * roll back) it is a savepoint.
+ */
+function atomically<T>(sql: postgres.Sql | postgres.TransactionSql, fn: (tx: Db) => Promise<T>): Promise<T> {
+  const s = sql as unknown as {
+    begin?: (f: (tx: Db) => Promise<T>) => Promise<T>;
+    savepoint?: (f: (tx: Db) => Promise<T>) => Promise<T>;
+  };
+  if (typeof s.begin === "function") return s.begin(fn);
+  if (typeof s.savepoint === "function") return s.savepoint(fn);
+  throw new Error("processNotificationMessage needs a postgres.js connection or transaction");
 }
 
 export async function processNotificationMessage(
-  sql: postgres.Sql,
+  sql: postgres.Sql | postgres.TransactionSql,
   raw: Record<string, unknown>,
-): Promise<void> {
-  const msg = raw as unknown as AuditMessage;
-  const eventKey = `${msg.action}:${msg.object_id}`;
+  nowMs: number = Date.now(),
+): Promise<ProcessOutcome> {
+  const parsed = parseAuditMessage(raw);
+  if (!parsed.ok) return SKIPPED(parsed.reason);
+  const msg = parsed.message;
 
-  await sql.begin(async (tx) => {
-    const payload = await buildPayload(tx, msg);
+  const admitted = admission(msg, nowMs);
+  if (!admitted.process) return SKIPPED(admitted.reason);
+
+  return atomically(sql, async (tx): Promise<ProcessOutcome> => {
+    const facts = await readFacts(tx, msg);
+    if (facts === "member_unavailable") return SKIPPED("member_unavailable");
+    if (facts === "imported_member") return SKIPPED("imported_member");
+
+    const payload = buildPayload(msg, facts.payload);
+    const key = eventKey(msg.action, msg.object_id);
 
     // Idempotent event create. ON CONFLICT so a replayed message does not error.
     await tx`
@@ -54,24 +98,24 @@ export async function processNotificationMessage(
       ) values (
         ${msg.community_id}::uuid,
         ${msg.action},
-        ${eventKey},
+        ${key},
         ${msg.actor_type}::public.audit_actor_type,
         ${msg.actor_user_id}::uuid,
         ${msg.object_type},
         ${msg.object_id}::uuid,
-        ${tx.json(payload as Record<string, string | number | boolean | null>)}
+        ${tx.json(payload)}
       )
       on conflict (event_key) do nothing
     `;
 
-    // Read the event id whether we just inserted it or a previous (possibly
-    // partial) run did. This is what makes redelivery resumable.
+    // Read the event id whether we just inserted it or a previous (possibly partial)
+    // run did. This is what makes redelivery resumable.
     const [event] = await tx<{ id: string }[]>`
-      select id from public.notification_events where event_key = ${eventKey}
+      select id from public.notification_events where event_key = ${key}
     `;
-    if (!event) return;
+    if (!event) return { outcome: "processed", deliveries: 0 };
 
-    const recipients = await resolveRecipients(tx, msg);
+    const recipients = await resolveRecipients(tx, msg, facts.recipientHints);
 
     for (const r of recipients) {
       await tx`
@@ -98,84 +142,28 @@ export async function processNotificationMessage(
         ) do nothing
       `;
     }
+
+    return { outcome: "processed", deliveries: recipients.length };
   });
 }
+
+// ── Reading facts ────────────────────────────────────────────────────────────
 
 interface Recipient {
   member_id: string | null;
   user_id: string;
 }
 
-async function resolveRecipients(
+interface Facts {
+  payload: PayloadFacts;
+  /** Ids read while gathering facts, so recipient resolution does not re-query them. */
+  recipientHints: { memberUserId?: string | null; memberId?: string | null; termUserId?: string | null };
+}
+
+async function readFacts(
   sql: Db,
   msg: AuditMessage,
-): Promise<Recipient[]> {
-  switch (msg.action) {
-    case "collection.publish":
-      return resolveCollectionAudience(sql, msg.object_id);
-    case "member.approve_join":
-      return resolveMemberSelf(sql, msg.object_id);
-    case "member.join_via_invite":
-      // "New member joined" goes to the officers who govern membership
-      // admission. invite.approve is held by admin/owner/treasurer — the
-      // membership gatekeepers — and is the closest existing permission
-      // (QA BUG-5). No new permission is invented.
-      return resolveOfficersWithPermission(sql, msg.community_id, "invite.approve");
-    default:
-      return [];
-  }
-}
-
-async function resolveCollectionAudience(
-  sql: Db,
-  collectionId: string,
-): Promise<Recipient[]> {
-  return sql<Recipient[]>`
-    select a.member_id, m.user_id
-    from app.resolve_collection_audience(${collectionId}::uuid) a
-    join public.members m on m.id = a.member_id
-    where m.user_id is not null
-  `;
-}
-
-async function resolveMemberSelf(
-  sql: Db,
-  memberId: string,
-): Promise<Recipient[]> {
-  return sql<Recipient[]>`
-    select m.id as member_id, m.user_id
-    from public.members m
-    where m.id = ${memberId}::uuid
-      and m.user_id is not null
-  `;
-}
-
-async function resolveOfficersWithPermission(
-  sql: Db,
-  communityId: string,
-  permission: string,
-): Promise<Recipient[]> {
-  return sql<Recipient[]>`
-    select null as member_id, ot.user_id
-    from public.officer_terms ot
-    join public.role_permissions rp
-      on rp.role = ot.role
-     and rp.permission = ${permission}
-    where ot.community_id = ${communityId}::uuid
-      and ot.ended_at is null
-      and ot.started_at <= now()
-  `;
-}
-
-async function buildPayload(
-  sql: Db,
-  msg: AuditMessage,
-): Promise<Record<string, unknown>> {
-  const base = {
-    actor_name: msg.actor_name,
-    community_id: msg.community_id,
-  };
-
+): Promise<Facts | "member_unavailable" | "imported_member"> {
   switch (msg.action) {
     case "collection.publish": {
       const [col] = await sql<{ name: string; slug: string; community_slug: string }[]>`
@@ -184,47 +172,129 @@ async function buildPayload(
         join public.communities cm on cm.id = c.community_id
         where c.id = ${msg.object_id}::uuid
       `;
-      if (!col) return base;
       return {
-        ...base,
-        collection_name: col.name,
-        collection_slug: col.slug,
-        community_slug: col.community_slug,
+        payload: col
+          ? { collectionName: col.name, collectionSlug: col.slug, communitySlug: col.community_slug }
+          : {},
+        recipientHints: {},
       };
     }
-    case "member.approve_join": {
-      const [mem] = await sql<{ full_name: string; member_code: string | null; community_slug: string }[]>`
-        select m.full_name, m.member_code, cm.slug as community_slug
-        from public.members m
-        join public.communities cm on cm.id = m.community_id
-        where m.id = ${msg.object_id}::uuid
-      `;
-      if (!mem) return base;
-      return {
-        ...base,
-        member_name: mem.full_name,
-        member_code: mem.member_code,
-        community_slug: mem.community_slug,
-      };
-    }
+
+    case "member.create":
+    case "member.approve_join":
     case "member.join_via_invite": {
-      // object_id is the new member; the name lives on the member row, not in
-      // after_state (which carries only member_code).
-      const [mem] = await sql<{ full_name: string; community_slug: string; community_name: string }[]>`
-        select m.full_name, cm.slug as community_slug, cm.name as community_name
+      const [mem] = await sql<
+        {
+          id: string;
+          full_name: string;
+          member_code: string | null;
+          user_id: string | null;
+          is_imported: boolean | null;
+          joined_via: string | null;
+          community_slug: string;
+          community_name: string;
+        }[]
+      >`
+        select m.id, m.full_name, m.member_code, m.user_id, m.is_imported, m.joined_via,
+               cm.slug as community_slug, cm.name as community_name
         from public.members m
         join public.communities cm on cm.id = m.community_id
         where m.id = ${msg.object_id}::uuid
       `;
-      if (!mem) return base;
+      // Rejected, deleted or never existed before we got to it: nothing to tell anyone.
+      if (!mem) return "member_unavailable";
+      if (isImportedMember(mem)) return "imported_member";
       return {
-        ...base,
-        member_name: mem.full_name,
-        community_name: mem.community_name,
-        community_slug: mem.community_slug,
+        payload: {
+          memberName: mem.full_name,
+          memberCode: mem.member_code,
+          communitySlug: mem.community_slug,
+          communityName: mem.community_name,
+        },
+        recipientHints: { memberUserId: mem.user_id, memberId: mem.id },
       };
     }
+
+    case "member.reject_join": {
+      // The member row is deleted by the rejection. The requester's name comes from the
+      // narrow before_state the trigger forwarded; nothing else of theirs is used.
+      const requester = narrowRequester(msg.before_state);
+      const [cm] = await sql<{ slug: string; name: string }[]>`
+        select slug, name from public.communities where id = ${msg.community_id}::uuid
+      `;
+      return {
+        payload: {
+          memberName: requester.full_name,
+          communitySlug: cm?.slug ?? null,
+          communityName: cm?.name ?? null,
+        },
+        recipientHints: {},
+      };
+    }
+
+    case "officer_invitation.accept":
+    case "officer_term.end": {
+      const [term] = await sql<
+        { user_id: string; role: string; end_reason: string | null; community_slug: string; community_name: string }[]
+      >`
+        select ot.user_id, ot.role, ot.end_reason, cm.slug as community_slug, cm.name as community_name
+        from public.officer_terms ot
+        join public.communities cm on cm.id = ot.community_id
+        where ot.id = ${msg.object_id}::uuid
+      `;
+      return {
+        payload: term
+          ? {
+              officerRole: term.role,
+              endReason: term.end_reason,
+              communitySlug: term.community_slug,
+              communityName: term.community_name,
+            }
+          : {},
+        recipientHints: { termUserId: term?.user_id ?? null },
+      };
+    }
+
     default:
-      return base;
+      return { payload: {}, recipientHints: {} };
+  }
+}
+
+// ── Who is told, in-app ──────────────────────────────────────────────────────
+
+async function resolveRecipients(sql: Db, msg: AuditMessage, hints: Facts["recipientHints"]): Promise<Recipient[]> {
+  const plan = recipientPlan(msg.action);
+  switch (plan.kind) {
+    case "collection_audience":
+      return sql<Recipient[]>`
+        select a.member_id, m.user_id
+        from app.resolve_collection_audience(${msg.object_id}::uuid) a
+        join public.members m on m.id = a.member_id
+        where m.user_id is not null
+      `;
+
+    case "member_self":
+      // Only a member who has an account can be told in-app. None do yet (D-LINK).
+      return hints.memberUserId && hints.memberId ? [{ member_id: hints.memberId, user_id: hints.memberUserId }] : [];
+
+    case "officers_with_permission":
+      // "New member joined" goes to the officers who govern membership admission.
+      // invite.approve is held by admin/owner/treasurer (QA BUG-5). The joiner is NOT told.
+      return sql<Recipient[]>`
+        select null as member_id, ot.user_id
+        from public.officer_terms ot
+        join public.role_permissions rp
+          on rp.role = ot.role
+         and rp.permission = ${plan.permission}
+        where ot.community_id = ${msg.community_id}::uuid
+          and ot.ended_at is null
+          and ot.started_at <= now()
+      `;
+
+    case "officer_term_holder":
+      return hints.termUserId ? [{ member_id: null, user_id: hints.termUserId }] : [];
+
+    case "nobody":
+      return [];
   }
 }

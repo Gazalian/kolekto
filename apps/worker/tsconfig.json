@@ -4,9 +4,9 @@
     "rootDir": ".",
     "outDir": "dist",
     "composite": true,
-    "allowImportingTsExtensions": false,
+    "allowImportingTsExtensions": true,
     "emitDeclarationOnly": true
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts"],
   "references": [{ "path": "../../packages/config" }, { "path": "../../packages/db" }, { "path": "../../packages/domain" }]
 }
