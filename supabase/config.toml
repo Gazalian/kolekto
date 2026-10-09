@@ -40,7 +40,13 @@ port = 54323
 # Mailpit now, not InBucket. The old section still parses but warns.
 [local_smtp]
 enabled = true
+# The Mailpit web interface and API.
 port = 54324
+# M13.2: publish Mailpit's SMTP listener on the host, so the app's Mailpit email
+# adapter (EMAIL_PROVIDER=mailpit, EMAIL_SMTP_PORT=54325) can deliver to it. It
+# only accepts mail into the catcher; nothing is relayed. Takes effect on the
+# next `supabase stop` / `supabase start`.
+smtp_port = 54325
 
 [storage]
 enabled = true
