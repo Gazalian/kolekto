@@ -251,12 +251,26 @@ begin
     if v_state.present then
       if not v_state.trusted then
         -- Someone tried to use the control from a public role. It is ignored, and visible.
-        insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome)
-        values (new.id, new.community_id, new.action, 'ignored_untrusted_role');
+        -- The record is informational: if it cannot be written, the notification must
+        -- still go out, so a broken log can never swallow an event.
+        begin
+          insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome)
+          values (new.id, new.community_id, new.action, 'ignored_untrusted_role');
+        exception when others then
+          null;
+        end;
       elsif v_state.valid and new.action = any (c_suppressible) then
-        insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome, reason)
-        values (new.id, new.community_id, new.action, 'suppressed', v_state.reason);
-        return new;
+        -- A suppression is honoured only if it can be RECORDED. One that cannot be
+        -- recorded is not an auditable suppression, so it falls through and the
+        -- notification proceeds: failing toward notifying is recoverable, a silent
+        -- unrecorded loss is not.
+        begin
+          insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome, reason)
+          values (new.id, new.community_id, new.action, 'suppressed', v_state.reason);
+          return new;
+        exception when others then
+          null;
+        end;
       end if;
       -- Anything else (expired, too far ahead, malformed, or a non-suppressible
       -- action) falls through: the notification proceeds as normal.

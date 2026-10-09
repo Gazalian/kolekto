@@ -170,6 +170,20 @@ describe("what is skipped, and that skipping touches nothing", () => {
     }
   });
 
+  it("an archived or merged member (decision record F-3): no event, no delivery", async () => {
+    for (const member of [{ ...MEMBER, status: "archived", user_id: USER }, { ...MEMBER, status: "merged", user_id: USER }, { ...MEMBER, archived_at: "2026-10-09T10:00:00Z", user_id: USER }, { ...MEMBER, merged_into_id: "a5000000-0000-4000-8000-000000000009", user_id: USER }]) {
+      for (const action of ["member.create", "member.approve_join", "member.join_via_invite"]) {
+        const { out, log } = await skipped(message(action), { member });
+        assert.deepEqual(out, { outcome: "skipped", reason: "member_unavailable" }, `${action} / ${JSON.stringify(member).slice(-60)}`);
+        assert.ok(!log.some((r) => r.text.startsWith("insert")), action);
+      }
+    }
+  });
+
+  it("but a pending-approval joiner IS available: officers must still be told someone applied", async () => {
+    const { out } = await skipped(message("member.join_via_invite"), { member: { ...MEMBER, status: "pending_approval", joined_via: "invite_link" }, officers: [{ member_id: null, user_id: "o1" }] });
+    assert.deepEqual(out, { outcome: "processed", deliveries: 1 });
+  });
   it("a member who no longer exists (rejected or deleted before processing)", async () => {
     for (const action of ["member.create", "member.approve_join", "member.join_via_invite"]) {
       const { out, log } = await skipped(message(action), { member: null });

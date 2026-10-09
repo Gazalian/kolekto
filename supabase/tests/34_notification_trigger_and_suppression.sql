@@ -20,7 +20,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(72);
+select plan(74);
 
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -393,6 +393,18 @@ select ok(
 -- Run LAST: it destroys the queue and the log table, inside this rolled-back transaction.
 select set_config('kolekto.suppress_notifications', '', true);
 
+-- F0. The log table is broken but the queue is fine. A broken RECORD must never lose or hide a notification.
+alter table public.notification_suppression_log rename to notification_suppression_log_moved;
+create temporary table tmp_f0 as
+  select pg_temp.owner_creates_member('Untrusted Setting And No Log', '+2348095550404', pg_temp.sv(300)) as member_id;
+select is(pg_temp.queued(pg_temp.audit_id_for((select member_id from tmp_f0), 'member.create')), 1,
+  'F0: a public caller''s setting is ignored AND the log table is broken: the event is still enqueued (the failed record must not abandon the notification)');
+select set_config('kolekto.suppress_notifications', pg_temp.sv(300), true);
+create temporary table tmp_f0b as select pg_temp.audit('officer', 'member.create', 'a4000000-0000-4000-8000-000000000a01') as id;
+select set_config('kolekto.suppress_notifications', '', true);
+select is(pg_temp.queued((select id from tmp_f0b)), 1,
+  'F0: a valid operator suppression that CANNOT be recorded is not honoured: the event is enqueued, never silently lost');
+alter table public.notification_suppression_log_moved rename to notification_suppression_log;
 -- F1. A malformed setting, through a real domain function.
 create temporary table tmp_f1 as
   select pg_temp.owner_creates_member('Write With Malformed Setting', '+2348095550401', 'v1|not-a-number|!!') as member_id;

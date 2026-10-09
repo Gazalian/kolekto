@@ -36,6 +36,7 @@ import {
   buildPayload,
   eventKey,
   isImportedMember,
+  isUnavailableMember,
   narrowRequester,
   parseAuditMessage,
   recipientPlan,
@@ -191,18 +192,22 @@ async function readFacts(
           user_id: string | null;
           is_imported: boolean | null;
           joined_via: string | null;
+          status: string | null;
+          archived_at: string | null;
+          merged_into_id: string | null;
           community_slug: string;
           community_name: string;
         }[]
       >`
         select m.id, m.full_name, m.member_code, m.user_id, m.is_imported, m.joined_via,
+               m.status, m.archived_at, m.merged_into_id,
                cm.slug as community_slug, cm.name as community_name
         from public.members m
         join public.communities cm on cm.id = m.community_id
         where m.id = ${msg.object_id}::uuid
       `;
-      // Rejected, deleted or never existed before we got to it: nothing to tell anyone.
-      if (!mem) return "member_unavailable";
+      // Rejected, deleted, archived, merged or never existed before we got to it: nothing to tell anyone.
+      if (!mem || isUnavailableMember(mem)) return "member_unavailable";
       if (isImportedMember(mem)) return "imported_member";
       return {
         payload: {

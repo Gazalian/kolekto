@@ -157,6 +157,18 @@ export function admission(message: AuditMessage, nowMs: number): Admission {
   return { process: true };
 }
 
+/**
+ * A member who has been archived or merged away is not someone to notify (decision record F-3).
+ * A member awaiting approval IS available: officers must still hear that someone applied.
+ */
+export function isUnavailableMember(m: {
+  readonly status?: string | null;
+  readonly archived_at?: string | null;
+  readonly merged_into_id?: string | null;
+}): boolean {
+  return m.status === "archived" || m.status === "merged" || (m.archived_at ?? null) !== null || (m.merged_into_id ?? null) !== null;
+}
+
 /** Historical imports and migrations never notify (inventory path 8). Defence in depth. */
 export function isImportedMember(m: { readonly is_imported?: boolean | null; readonly joined_via?: string | null }): boolean {
   return m.is_imported === true || m.joined_via === "import" || m.joined_via === "migration";
