@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * The six invariants.
+ * The seven invariants.
  *
  * These run before features exist, not after. Every one of them corresponds to
  * a way the previous Kolekto went wrong, and each was discoverable by a script
@@ -14,6 +14,9 @@
  *                                      between them WAS the largest drift bucket
  *   6. App functions state who may   — PUBLIC EXECUTE is the default, and anon
  *      execute them                    inherits PUBLIC
+ *   7. Audited writes of a watched   - a repair or marker that writes an audit row
+ *      action suppress notifications   a notification is built from would message
+ *                                      real people (M13.2 P3)
  *
  * Usage: node scripts/invariants/run-all.mjs [--verbose]
  */
@@ -21,6 +24,13 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
 import process from "node:process";
+
+import {
+  extractTriggerWatched,
+  extractWorkerWatched,
+  findUnsuppressedWatchedWrites,
+  selfTest as suppressionRuleSelfTest,
+} from "./notification-suppression-rule.mjs";
 
 const ROOT = new URL("../../", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const VERBOSE = process.argv.includes("--verbose");
@@ -395,6 +405,82 @@ async function ruleAppFunctionsStateTheirReachability() {
   }
 }
 
+// ── 7. Audited writes of a watched action must suppress (M13.2 P3) ───────────
+//
+// The notification trigger turns certain audit rows into notifications. A migration or
+// a maintenance script that EXECUTES an audited write of one of those actions - a repair,
+// a backfill, a marker - would notify real people unless it calls
+// app.begin_notification_suppression(). See notification-suppression-rule.mjs for what
+// "executes" and "watched" mean, and decision record 10.7.
+//
+// Also fails if the trigger's watched list and the worker's WATCHED_ACTIONS differ, since
+// a mismatch means an action is queued that the worker ignores, or the reverse.
+async function ruleWatchedWritesMustSuppress() {
+  const ruleFile = join(ROOT, "scripts", "invariants", "notification-suppression-rule.mjs");
+  for (const message of suppressionRuleSelfTest()) {
+    fail("notification-suppression", ruleFile, 0, "", message);
+  }
+
+  const migrationFiles = (await collect([".sql"], join(ROOT, "supabase", "migrations"))).sort();
+  let watched = null;
+  let triggerFile = ruleFile;
+  for (const file of migrationFiles) {
+    const list = extractTriggerWatched(await readFile(file, "utf8"));
+    if (list) {
+      watched = list; // the latest migration that defines the list wins
+      triggerFile = file;
+    }
+  }
+  if (!watched) {
+    fail("notification-suppression", ruleFile, 0, "", "could not find the trigger's c_watched list in any migration, so the rule cannot know which actions are watched");
+    return;
+  }
+
+  try {
+    const workerList = extractWorkerWatched(await readFile(join(ROOT, "apps", "worker", "src", "notification-rules.ts"), "utf8"));
+    if (!workerList) {
+      fail("notification-suppression", triggerFile, 0, "", "could not read WATCHED_ACTIONS from apps/worker/src/notification-rules.ts");
+    } else if (JSON.stringify([...workerList].sort()) !== JSON.stringify([...watched].sort())) {
+      fail(
+        "notification-suppression",
+        triggerFile,
+        0,
+        `trigger: ${[...watched].sort().join(", ")} | worker: ${[...workerList].sort().join(", ")}`,
+        "the trigger's watched actions and the worker's WATCHED_ACTIONS differ: an action is either queued and ignored, or handled and never queued",
+      );
+    }
+  } catch {
+    fail("notification-suppression", triggerFile, 0, "", "apps/worker/src/notification-rules.ts is missing");
+  }
+
+  const targets = [
+    ...migrationFiles.map((file) => ({ file, kind: "sql" })),
+    { file: join(ROOT, "supabase", "seed.sql"), kind: "sql" },
+    ...(await collect([".mjs", ".js", ".ts", ".sh"], join(ROOT, "scripts")))
+      .filter((file) => !file.includes(`${sep}invariants${sep}`))
+      .map((file) => ({ file, kind: "script" })),
+  ];
+  for (const { file, kind } of targets) {
+    let text;
+    try {
+      text = await readFile(file, "utf8");
+    } catch {
+      continue; // seed.sql may not exist
+    }
+    for (const hit of findUnsuppressedWatchedWrites(text, kind, watched)) {
+      fail(
+        "notification-suppression",
+        file,
+        hit.line,
+        hit.text,
+        "this file executes an audited write of a watched action without calling app.begin_notification_suppression(). " +
+          "A repair, backfill or marker must not notify real people. Call the helper inside the same transaction " +
+          "(see docs/product/M13.2-EMAIL-NOTIFICATIONS-DECISION-RECORD.md section 10.7).",
+      );
+    }
+  }
+}
+
 // ── Run ─────────────────────────────────────────────────────────────────────
 const rules = [
   ["money is bigint kobo", ruleNoFloatMoney],
@@ -403,6 +489,7 @@ const rules = [
   ["one Paystack caller", ruleSinglePaystackCaller],
   ["one fee implementation", ruleOneFeeImplementation],
   ["every app function states who may execute it", ruleAppFunctionsStateTheirReachability],
+  ["audited writes of a watched action suppress notifications", ruleWatchedWritesMustSuppress],
 ];
 
 for (const [name, run] of rules) {
@@ -428,4 +515,4 @@ if (violations.length > 0) {
   process.exit(1);
 }
 
-console.log("\nAll six invariants hold.");
+console.log("\nAll seven invariants hold.");
