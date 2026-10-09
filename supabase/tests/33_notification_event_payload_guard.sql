@@ -12,7 +12,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(18);
+select plan(24);
 
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -54,6 +54,11 @@ insert into public.notification_events (id, community_id, event_type, event_key,
 insert into public.notification_events (id, community_id, event_type, event_key, actor_type, object_type, object_id, payload) values
   ('c4000000-0000-4000-8000-0000000000e4', 'c2000000-0000-4000-8000-00000000000a', 'member.create', 'pl.evt:escaped', 'officer', 'member', 'c3000000-0000-4000-8000-000000000005',
    ('{"member_name":"dave' || chr(92) || 'u0040example.net"}')::jsonb);
+
+-- Banned keys at depth, in arrays, and in other letter cases (re-review, round 2).
+insert into public.notification_events (id, community_id, event_type, event_key, actor_type, object_type, object_id, payload) values
+  ('c4000000-0000-4000-8000-0000000000e5', 'c2000000-0000-4000-8000-00000000000a', 'member.create', 'pl.evt:nested', 'officer', 'member', 'c3000000-0000-4000-8000-000000000006',
+   '{"outer":{"reason":"officer free text","Keep_Me":"yes","deeper":{"NOTE":"n","fine":1}},"list":[{"note":"n","phone":"+2348000000000","ok":"y"},"plain",{"Email":"x"}],"EMAIL":"upper","Token":"t","member_name":"Chidi"}');
 
 create function pg_temp.payload_text_seen_by(p_user uuid, p_event uuid) returns text
 language plpgsql as $$
@@ -150,6 +155,42 @@ select ok(
   'the constraint and the sanitize trigger both exist'
 );
 
+-- ── 3b. Banned keys at every depth, any case (24 total) ──────────────────────
+select is(
+  (select payload from public.notification_events where id = 'c4000000-0000-4000-8000-0000000000e5'),
+  '{"outer":{"Keep_Me":"yes","deeper":{"fine":1}},"list":[{"ok":"y"},"plain",{}],"member_name":"Chidi"}'::jsonb,
+  'banned keys are removed from nested objects, array elements and in any letter case, and every sibling is kept'
+);
+
+select ok(
+  not app.payload_has_banned_key('{"a":{"b":[{"c":1}]},"d":"x"}'::jsonb),
+  'the predicate is false for a clean payload, however deeply nested'
+);
+
+select ok(
+  app.payload_has_banned_key('{"a":{"b":[{"Reason":1}]}}'::jsonb),
+  'and true when a banned key is buried in an array inside an object, in mixed case'
+);
+
+select is(
+  app.strip_banned_payload_keys('"just a string"'::jsonb),
+  '"just a string"'::jsonb,
+  'a scalar passes through the strip function unchanged'
+);
+
+select ok(
+  not has_function_privilege('authenticated', 'app.strip_banned_payload_keys(jsonb)', 'EXECUTE')
+  and not has_function_privilege('anon', 'app.strip_banned_payload_keys(jsonb)', 'EXECUTE')
+  and not has_function_privilege('public', 'app.strip_banned_payload_keys(jsonb)', 'EXECUTE'),
+  'no client role can execute the strip function'
+);
+
+select ok(
+  not has_function_privilege('authenticated', 'app.payload_has_banned_key(jsonb)', 'EXECUTE')
+  and not has_function_privilege('anon', 'app.payload_has_banned_key(jsonb)', 'EXECUTE')
+  and not has_function_privilege('public', 'app.payload_has_banned_key(jsonb)', 'EXECUTE'),
+  'nor the predicate'
+);
 
 -- ── 4. What officers can actually read, under the real role (13-15) ──────────
 select ok(

@@ -16,7 +16,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(59);
+select plan(62);
 
 
 -- ── Fixtures: two communities, every officer role, a member with an account ──
@@ -293,6 +293,24 @@ select ok(
   'nor a provider message id'
 );
 
+-- ── 7b. Paging inputs cannot be abused (3 more assertions) ───────────────────
+select is(
+  (select count(*)::int from app.list_email_delivery_log('f2000000-0000-4000-8000-00000000000a', 0)),
+  1,
+  'a limit of 0 is clamped up to 1 row, not "no limit"'
+);
+
+select is(
+  (select count(*)::int from app.list_email_delivery_log('f2000000-0000-4000-8000-00000000000a', -50)),
+  1,
+  'a negative limit is clamped to 1 row'
+);
+
+select is(
+  (select count(*)::int from app.list_email_delivery_log('f2000000-0000-4000-8000-00000000000a', 50, now() - interval '1 day')),
+  0,
+  'the before-cursor excludes rows created after it'
+);
 
 -- ── 8. Function reachability (38-43) ─────────────────────────────────────────
 select ok(not has_function_privilege('anon', 'app.list_email_delivery_log(uuid,integer,timestamptz)', 'EXECUTE'),
