@@ -138,6 +138,11 @@ export function NewCollectionForm({
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  // The mid-step draft creation's own transition. It must not share
+  // `isPending`: that disables Continue, and the creation starts on the name
+  // field's blur — which a click on Continue itself causes — so the button
+  // was disabled between mousedown and click and the click was dropped.
+  const [, startDraftTransition] = useTransition();
 
   const [flow, setFlow] = useState<Flow>(existing ? flowFor(existing.flowKey) : FLOWS[0]!);
   const steps = [PURPOSE_STEP, ...flow.steps];
@@ -309,7 +314,10 @@ export function NewCollectionForm({
    */
   function ensureDraft(): void {
     if (draftRef.current || creationRef.current || name.trim().length < 3) return;
-    startTransition(async () => {
+    // A Continue clicked while this is in flight is still ordered correctly:
+    // `saveCollectionRow` waits on `creationRef` before it updates the row,
+    // and the step's position is remembered only after that.
+    startDraftTransition(async () => {
       await guard(async () => {
         await saveCollectionRow();
       });

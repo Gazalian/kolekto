@@ -304,7 +304,12 @@ test("a group collection only knows the members of that group, and never another
   await page.getByRole("button", { name: "New group" }).click();
   await page.getByLabel("Name").fill("300 Level");
   await page.getByRole("button", { name: "Create group" }).click();
-  await expect(page.getByText("300 Level").first()).toBeVisible();
+  // The group's row in the manager's list — not the hidden <option> the
+  // members filter gains behind the dialog, and not the dialog's own example
+  // sentence, which also mentions "300 Level".
+  await expect(
+    page.locator("dialog[open]").getByRole("listitem").filter({ hasText: "300 Level" }),
+  ).toBeVisible();
 
   await page.getByRole("button", { name: "Add members" }).click();
   await page.locator("dialog[open]").locator("label", { hasText: "Inside Group" }).getByRole("checkbox").check();
@@ -372,7 +377,7 @@ test("a recurring charge shows the period it is asking about", async ({ page, br
     intent: /^Recurring/,
     fill: {
       basics: async (p) => {
-        await p.getByLabel("What is this collection called?").fill("Service Charge M7");
+        await p.getByLabel("What is this plan called?").fill("Service Charge M7");
       },
       amount: async (p) => {
         await p.getByLabel("Amount per period").fill("20000");

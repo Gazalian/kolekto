@@ -421,3 +421,39 @@ export interface AuditLog {
   reason: string | null;
   created_at: string;
 }
+
+export type NotificationChannel = "in_app" | "email" | "whatsapp" | "sms";
+export type NotificationDeliveryStatus = "pending" | "sent" | "delivered" | "failed" | "skipped";
+
+export interface NotificationEvent {
+  id: string;
+  community_id: string;
+  event_type: string;
+  event_key: string;
+  actor_type: "officer" | "member" | "contributor" | "staff" | "system";
+  actor_user_id: string | null;
+  object_type: string;
+  object_id: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface NotificationDelivery {
+  id: string;
+  notification_event_id: string;
+  community_id: string;
+  recipient_member_id: string | null;
+  recipient_user_id: string | null;
+  recipient_address: string | null;
+  channel: NotificationChannel;
+  status: NotificationDeliveryStatus;
+  read_at: string | null;
+  provider_message_id: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  attempt_count: number;
+  last_attempted_at: string | null;
+  next_retry_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
