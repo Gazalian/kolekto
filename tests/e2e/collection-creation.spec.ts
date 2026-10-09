@@ -10,7 +10,7 @@ import { chooseFeeBearer, openWizard, stepCount, walkWizard } from "./helpers/wi
  * door, an export. These are about the wizard, because the defect M7.7
  * corrects lives there: seven kinds of collection walking one generic form.
  *
- * Four journeys:
+ * Five journeys:
  *
  *   1. two types, side by side, proving the flows differ in shape and in
  *      words rather than only in labels (§28)
@@ -20,6 +20,7 @@ import { chooseFeeBearer, openWizard, stepCount, walkWizard } from "./helpers/wi
  *   3. the review's preview, which is the real public page rather than a
  *      mock-up of one (§24)
  *   4. a draft resumed into ITS OWN flow, at its own step (§25)
+ *   5. Continue clicked straight from a name field that creates the draft
  *
  * Nothing here pays for anything. The fee screen is a decision and a
  * preview — Phase 4 is not implemented, and no payment, contribution or
@@ -408,4 +409,63 @@ test("a resumed draft comes back in its own flow, at its own step", async ({ pag
   await expect(resumed.getByLabel("Where is it?")).toHaveValue("Kwara Hotel, Ilorin");
 
   await second.close();
+});
+
+test("Continue works straight from the name field, while the draft is still being created", async ({ page }) => {
+  await signInAsNewUser(page, "e2e-name-continue");
+  const slug = await createCommunity(page, `E2E Name Continue ${Date.now()}`);
+
+  // The two steps that create their draft when the name field loses focus, so
+  // a flyer has somewhere to live. Clicking Continue is what takes the focus
+  // away: the creation starts between mousedown and click, and it used to
+  // disable Continue in that gap, so the click was silently dropped.
+  const journeys = [
+    {
+      flowKey: "fundraiser",
+      intent: /^Fundraising/,
+      nameLabel: "What are you raising money for?",
+      name: "Clinic Roof Fund",
+      draftSlug: "clinic-roof-fund",
+      before: async () => {},
+    },
+    {
+      flowKey: "ticketing",
+      intent: /^Tickets/,
+      nameLabel: "What is the event called?",
+      name: "Founders Gala",
+      draftSlug: "founders-gala",
+      // Required on this step, and filled first so the name is the last field.
+      before: async () => {
+        await page.getByLabel("When does it start?").fill("2026-11-14T19:00");
+      },
+    },
+  ];
+
+  for (const journey of journeys) {
+    const flow = flowFor(journey.flowKey);
+    await openWizard(page);
+    await walkWizard(page, { flowKey: journey.flowKey, intent: journey.intent, stopBefore: flow.steps[0]!.kind });
+
+    await journey.before();
+    await page.getByLabel(journey.nameLabel).fill(journey.name);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: flow.steps[1]!.heading, exact: true })).toBeVisible({
+      timeout: 45_000,
+    });
+  }
+
+  // Each draft was created once, and remembered the step it reached — the
+  // create, the step's save and its position landed in that order.
+  await page.goto(`/c/${slug}/collections`);
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByRole("link", { name: /Continue setting this up/ })).toHaveCount(journeys.length);
+
+  for (const journey of journeys) {
+    await page.goto(`/c/${slug}/collections/${journey.draftSlug}/continue`);
+    await page.waitForLoadState("networkidle");
+    await expect(
+      page.getByRole("heading", { name: flowFor(journey.flowKey).steps[1]!.heading, exact: true }),
+    ).toBeVisible({ timeout: 45_000 });
+  }
 });
