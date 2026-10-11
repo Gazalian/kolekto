@@ -60,6 +60,11 @@ create function pg_temp.queued_msg(p_audit uuid) returns jsonb language sql as $
   select message from pgmq.q_notification_events where message ->> 'audit_log_id' = p_audit::text limit 1;
 $$;
 
+-- Events held because an operator's suppression lapsed (migration 20261009120000).
+create function pg_temp.held(p_audit uuid) returns integer language sql as $$
+  select count(*)::int from pgmq.q_notification_events_held where message ->> 'audit_log_id' = p_audit::text;
+$$;
+
 create function pg_temp.logged(p_audit uuid, p_outcome text) returns integer language sql as $$
   select count(*)::int from public.notification_suppression_log where audit_log_id = p_audit and outcome = p_outcome;
 $$;
@@ -247,11 +252,13 @@ create temporary table tmp_c4b as select pg_temp.audit('officer', 'member.create
 select set_config('kolekto.suppress_notifications', pg_temp.sv(840), true);
 create temporary table tmp_c4c as select pg_temp.audit('officer', 'member.create', 'a4000000-0000-4000-8000-000000000413') as id;
 select set_config('kolekto.suppress_notifications', '', true);
-select is(pg_temp.queued((select id from tmp_c4a)), 1, 'C4: an expired setting is ignored: the event is enqueued');
-select is(pg_temp.queued((select id from tmp_c4b)), 1, 'C4: a setting that expires 16 minutes from now is ignored (the maximum is 15): enqueued');
+select is(pg_temp.queued((select id from tmp_c4a)) * 10 + pg_temp.held((select id from tmp_c4a)), 1,
+  'C4: an EXPIRED operator setting is neither honoured nor ignored: the event is not sent and is HELD (full lapse behaviour: 35_notification_suppression_lapse.sql)');
+select is(pg_temp.queued((select id from tmp_c4b)) * 10 + pg_temp.held((select id from tmp_c4b)), 1,
+  'C4: a setting that expires 16 minutes from now is past the approved 15-minute ceiling: not honoured, not sent, HELD');
 select is(pg_temp.queued((select id from tmp_c4c)), 0, 'C4: a setting that expires 14 minutes from now is honoured: suppressed');
-select is((select count(*)::int from public.notification_suppression_log where audit_log_id in ((select id from tmp_c4a), (select id from tmp_c4b))), 0,
-  'C4: ignored-for-time settings are not logged as suppressions');
+select is((select count(*)::int from public.notification_suppression_log where audit_log_id in ((select id from tmp_c4a), (select id from tmp_c4b)) and outcome = 'suppressed'), 0,
+  'C4: and neither is recorded as a suppression: they are recorded as lapsed_held instead');
 
 -- C5. Malformed values: no error, the event proceeds (36-37)
 create function pg_temp.audit_with_setting(p_setting text, p_n integer) returns uuid language plpgsql as $$
