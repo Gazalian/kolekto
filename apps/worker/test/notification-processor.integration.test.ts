@@ -59,9 +59,12 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           const tx = rawTx as unknown as Tx;
 
           // ── fixtures ──────────────────────────────────────────────────────────
-          await tx`insert into auth.users (id, instance_id, aud, role, email) values
-            (${OWNER}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'owner@itest.example.test'),
-            (${ADMIN}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@itest.example.test')`;
+          // OWNER's Auth email is confirmed; ADMIN's is not. Membership rows are
+          // never linked to accounts (inventory F-1), so member confirmations
+          // go to supplied addresses while the officer notice must skip.
+          await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
+            (${OWNER}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'owner@itest.example.test', now()),
+            (${ADMIN}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@itest.example.test', null)`;
           await tx`insert into public.users (id, full_name, email) values
             (${OWNER}, 'It Owner', 'owner@itest.example.test'), (${ADMIN}, 'It Admin', 'admin@itest.example.test')
             on conflict (id) do update set full_name = excluded.full_name`;
@@ -180,23 +183,48 @@ describe("the processor against the real database", { skip: SKIP }, () => {
 
           const events = await tx<{ event_type: string; payload: Record<string, unknown> }[]>`
             select event_type, payload from public.notification_events where community_id = ${COMMUNITY} order by event_type`;
-          const deliveries = await tx<{ channel: string; recipient_user_id: string | null; event_type: string }[]>`
-            select d.channel, d.recipient_user_id, e.event_type
+          const deliveries = await tx<{ channel: string; status: string; error_code: string | null; assurance: string | null; address: string | null; recipient_user_id: string | null; event_type: string }[]>`
+            select d.channel, d.status, d.error_code, d.recipient_address_assurance as assurance, d.recipient_address as address,
+                   d.recipient_user_id, e.event_type
             from public.notification_deliveries d join public.notification_events e on e.id = d.notification_event_id
             where d.community_id = ${COMMUNITY}`;
           evidence["events"] = events.length;
           evidence["deliveries"] = deliveries.length;
 
           assert.equal(events.length, 6, "one event per processed message (the rejected joiner's join notice and the archived member's create were skipped)");
-          assert.ok(deliveries.every((d) => d.channel === "in_app"), "every delivery is in_app");
-          assert.equal(deliveries.filter((d) => d.channel === "email").length, 0, "NO email delivery row exists");
+
+          const emails = deliveries.filter((d) => d.channel === "email");
+          const inApp = deliveries.filter((d) => d.channel === "in_app");
+          assert.ok(inApp.every((d) => d.status === "sent"), "in-app rows keep their M13.1 status");
+
+          // Non-account membership confirmations: pending to the supplied address.
+          for (const type of ["member.create", "member.approve_join"]) {
+            const rows = emails.filter((d) => d.event_type === type);
+            assert.equal(rows.length, 1, `${type}: one email row`);
+            assert.equal(rows[0]!.status, "pending", type);
+            assert.equal(rows[0]!.assurance, "unverified_supplied", type);
+            assert.ok(String(rows[0]!.address).includes("@"), `${type}: the supplied address is stored`);
+            assert.equal(rows[0]!.recipient_user_id, null, `${type}: no account is linked`);
+          }
+          // The officer whose Auth email is unconfirmed: skipped, no address.
+          const officerMail = emails.filter((d) => d.event_type === "officer_term.end");
+          assert.equal(officerMail.length, 1, "the officer notice is evaluated");
+          assert.equal(officerMail[0]!.status, "skipped");
+          assert.equal(officerMail[0]!.error_code, "unverified_account_email");
+          assert.equal(officerMail[0]!.address, null, "skipped rows store no address");
+          assert.equal(officerMail[0]!.assurance, null);
+          // R1 and the rejection policy: no email rows for redemptions or rejections.
+          assert.equal(emails.filter((d) => d.event_type === "member.join_via_invite").length, 0, "R1: no joiner mail");
+          assert.equal(emails.filter((d) => d.event_type === "member.reject_join").length, 0, "no rejection mail to an unverified address");
+          assert.ok(emails.every((d) => d.status === "pending" || d.status === "skipped"), "email rows are pending or skipped only");
+          assert.ok(!deliveries.some((d) => d.channel !== "in_app" && d.channel !== "email"), "only in_app and email channels exist");
 
           // The admin's term was ended before processing, so only the owner still admits members.
           const joined = deliveries.filter((d) => d.event_type === "member.join_via_invite");
           assert.equal(joined.length, 2, "the approved joiner and the still-pending joiner are each told to the one remaining officer who admits members");
           assert.ok(joined.every((d) => d.recipient_user_id === OWNER), "only an officer is told; never a joiner");
           assert.deepEqual(
-            deliveries.filter((d) => d.event_type === "officer_term.end").map((d) => d.recipient_user_id),
+            deliveries.filter((d) => d.event_type === "officer_term.end" && d.channel === "in_app").map((d) => d.recipient_user_id),
             [ADMIN],
             "the ended officer is told in-app",
           );

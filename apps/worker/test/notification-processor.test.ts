@@ -21,6 +21,8 @@ interface World {
   collection?: Record<string, unknown> | null;
   officers?: Array<{ member_id: null; user_id: string }>;
   audience?: Array<{ member_id: string; user_id: string }>;
+  /** Canned answer for app.evaluate_email_eligibility. Default: skipped, no usable account link. */
+  eligibility?: { eligible: boolean; address: string | null; assurance: string | null; skip_reason: string | null };
 }
 
 function fakeDb(world: World) {
@@ -28,6 +30,9 @@ function fakeDb(world: World) {
   const tx = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("?").replace(/\s+/g, " ").trim();
     log.push({ text, values });
+    if (text.includes("from app.evaluate_email_eligibility")) {
+      return [world.eligibility ?? { eligible: false, address: null, assurance: null, skip_reason: "missing_membership_relationship" }];
+    }
     if (text.includes("from public.members m join public.communities")) return world.member ? [world.member] : [];
     if (text.includes("select slug, name from public.communities")) return world.community ? [world.community] : [];
     if (text.includes("from public.officer_terms ot join public.communities")) return world.term ? [world.term] : [];
@@ -69,71 +74,101 @@ function deliveryRows(log: Recorded[]): Recorded[] {
   return log.filter((r) => r.text.startsWith("insert into public.notification_deliveries"));
 }
 
+function emailRows(log: Recorded[]): Recorded[] {
+  return deliveryRows(log).filter((r) => r.text.includes("'email'"));
+}
+
+function inAppRows(log: Recorded[]): Recorded[] {
+  return deliveryRows(log).filter((r) => r.text.includes("'in_app'"));
+}
+
 describe("what each action does", () => {
-  it("member.create: an event, and no delivery when the member has no account", async () => {
+  it("member.create: an event, and a skipped email row when no account is linked", async () => {
     const { sql, log } = fakeDb({ member: MEMBER });
     const out = await processNotificationMessage(sql, message("member.create"), NOW);
-    assert.deepEqual(out, { outcome: "processed", deliveries: 0 });
+    assert.deepEqual(out, { outcome: "processed", deliveries: 0, email: { kind: "skipped", reason: "missing_membership_relationship" } });
     assert.equal(eventInsert(log)?.key, `member.create:${OBJ}`);
     assert.equal(eventInsert(log)?.payload["member_code"], "K/0001");
-    assert.equal(deliveryRows(log).length, 0);
+    assert.equal(inAppRows(log).length, 0);
+    assert.equal(emailRows(log).length, 1, "an evaluation event always files an email row");
+    assert.match(emailRows(log)[0]!.text, /'skipped'/);
   });
 
   it("member.create: one in-app delivery when the member does have an account", async () => {
-    const { sql, log } = fakeDb({ member: { ...MEMBER, user_id: USER } });
+    const { sql, log } = fakeDb({
+      member: { ...MEMBER, user_id: USER },
+      eligibility: { eligible: true, address: "holder@example.com", assurance: "verified_account", skip_reason: null },
+    });
     const out = await processNotificationMessage(sql, message("member.create"), NOW);
-    assert.deepEqual(out, { outcome: "processed", deliveries: 1 });
-    assert.equal(deliveryRows(log).length, 1);
+    assert.deepEqual(out, { outcome: "processed", deliveries: 1, email: { kind: "pending" } });
+    assert.equal(inAppRows(log).length, 1);
+    assert.equal(emailRows(log).length, 1);
+    assert.match(emailRows(log)[0]!.text, /'pending'/);
+    assert.ok(emailRows(log)[0]!.values.includes("holder@example.com"), "the eligible address is stored");
+    assert.ok(emailRows(log)[0]!.values.includes("verified_account"), "assurance is stored");
+    assert.ok(emailRows(log)[0]!.values.includes(`membership_confirmation:${OBJ}`), "confirmations carry the shared dedupe key");
   });
 
   it("member.approve_join keeps its M13.1 payload keys and recipient", async () => {
-    const { sql, log } = fakeDb({ member: { ...MEMBER, user_id: USER } });
-    await processNotificationMessage(sql, message("member.approve_join"), NOW);
+    const { sql, log } = fakeDb({
+      member: { ...MEMBER, user_id: USER },
+      eligibility: { eligible: true, address: "holder@example.com", assurance: "verified_account", skip_reason: null },
+    });
+    const out = await processNotificationMessage(sql, message("member.approve_join"), NOW);
+    assert.deepEqual(out, { outcome: "processed", deliveries: 1, email: { kind: "pending" } });
     const p = eventInsert(log)!.payload;
     for (const k of ["actor_name", "community_id", "member_name", "member_code", "community_slug"]) assert.ok(k in p, k);
-    assert.equal(deliveryRows(log).length, 1);
+    assert.equal(inAppRows(log).length, 1);
   });
 
   it("R1: member.join_via_invite tells the officers who admit members, never the joiner", async () => {
     const { sql, log } = fakeDb({ member: { ...MEMBER, user_id: USER, joined_via: "invite_link" }, officers: [{ member_id: null, user_id: "o1" }, { member_id: null, user_id: "o2" }] });
     const out = await processNotificationMessage(sql, message("member.join_via_invite"), NOW);
-    assert.deepEqual(out, { outcome: "processed", deliveries: 2 });
+    assert.deepEqual(out, { outcome: "processed", deliveries: 2, email: { kind: "no_row" } });
     const recipients = deliveryRows(log).map((r) => r.values[3]);
     assert.deepEqual(recipients, ["o1", "o2"]);
     assert.ok(!recipients.includes(USER), "the joiner's own user id must not be a recipient");
     assert.ok(log.some((r) => r.values.includes("invite.approve")), "officers are chosen by the invite.approve permission");
   });
 
-  it("member.reject_join: an event with the requester's NAME only, and no delivery", async () => {
+  it("member.reject_join: an event with the requester's NAME only, and no email row", async () => {
     const { sql, log } = fakeDb({ community: { slug: "kwasu", name: "KWASU" } });
     const out = await processNotificationMessage(
       sql,
       message("member.reject_join", { before_state: { full_name: "Requester Name", joined_via: "invite_link", email: "requester@example.com", phone_e164: "+2348099990001" } }),
       NOW,
     );
-    assert.deepEqual(out, { outcome: "processed", deliveries: 0 });
+    assert.deepEqual(out, { outcome: "processed", deliveries: 0, email: { kind: "no_row" } });
     const payload = eventInsert(log)!.payload;
     assert.equal(payload["member_name"], "Requester Name");
     const json = JSON.stringify(payload);
     assert.ok(!json.includes("requester@example.com") && !json.includes("2348099990001"), "no address or phone in the event payload");
     assert.ok(!log.some((r) => r.text.includes("from public.members")), "the deleted member row is not queried");
+    assert.ok(!log.some((r) => r.text.includes("evaluate_email_eligibility")), "rejections are not email-evaluated (R-E3 stays open)");
+    assert.equal(emailRows(log).length, 0, "no email row for a rejection");
   });
 
   it("officer_invitation.accept and officer_term.end: one in-app delivery to the officer whose term it is", async () => {
     for (const action of ["officer_invitation.accept", "officer_term.end"]) {
-      const { sql, log } = fakeDb({ term: { user_id: USER, role: "admin", end_reason: "removed", community_slug: "kwasu", community_name: "KWASU" } });
+      const { sql, log } = fakeDb({
+        term: { user_id: USER, role: "admin", end_reason: "removed", community_slug: "kwasu", community_name: "KWASU" },
+        eligibility: { eligible: true, address: "officer@example.com", assurance: "verified_account", skip_reason: null },
+      });
       const out = await processNotificationMessage(sql, message(action, { object_type: "officer_term" }), NOW);
-      assert.deepEqual(out, { outcome: "processed", deliveries: 1 }, action);
+      assert.deepEqual(out, { outcome: "processed", deliveries: 1, email: { kind: "pending" } }, action);
       assert.equal(deliveryRows(log)[0]?.values[3], USER, action);
       assert.equal(eventInsert(log)!.payload["officer_role"], "admin", action);
+      assert.equal(emailRows(log).length, 1, `${action}: one email row`);
+      assert.ok(!emailRows(log)[0]!.values.some((v) => typeof v === "string" && v.startsWith("membership_confirmation:")), `${action}: officer notices carry no membership dedupe key`);
     }
   });
 
   it("collection.publish: unchanged — audience members who have accounts", async () => {
     const { sql, log } = fakeDb({ collection: { name: "Dues", slug: "dues", community_slug: "kwasu" }, audience: [{ member_id: "m1", user_id: "u1" }, { member_id: "m2", user_id: "u2" }] });
     const out = await processNotificationMessage(sql, message("collection.publish", { object_type: "collection" }), NOW);
-    assert.deepEqual(out, { outcome: "processed", deliveries: 2 });
+    assert.deepEqual(out, { outcome: "processed", deliveries: 2, email: { kind: "no_row" } });
     assert.equal(eventInsert(log)!.payload["collection_name"], "Dues");
+    assert.equal(emailRows(log).length, 0, "collection lifecycle stays in-app only");
   });
 });
 
@@ -182,7 +217,7 @@ describe("what is skipped, and that skipping touches nothing", () => {
 
   it("but a pending-approval joiner IS available: officers must still be told someone applied", async () => {
     const { out } = await skipped(message("member.join_via_invite"), { member: { ...MEMBER, status: "pending_approval", joined_via: "invite_link" }, officers: [{ member_id: null, user_id: "o1" }] });
-    assert.deepEqual(out, { outcome: "processed", deliveries: 1 });
+    assert.deepEqual(out, { outcome: "processed", deliveries: 1, email: { kind: "no_row" } });
   });
   it("a member who no longer exists (rejected or deleted before processing)", async () => {
     for (const action of ["member.create", "member.approve_join", "member.join_via_invite"]) {
@@ -193,7 +228,56 @@ describe("what is skipped, and that skipping touches nothing", () => {
   });
 });
 
-describe("P3 writes no email delivery row", () => {
+describe("P4 email rows: evaluation events file one, everything else files none", () => {
+  const ELIGIBLE = { eligible: true, address: "holder@example.com", assurance: "verified_account", skip_reason: null };
+
+  it("eligible membership confirmations: pending with address, assurance and the shared dedupe key", async () => {
+    for (const action of ["member.create", "member.approve_join"]) {
+      const { sql, log } = fakeDb({ member: { ...MEMBER, user_id: USER }, eligibility: ELIGIBLE });
+      const out = await processNotificationMessage(sql, message(action), NOW);
+      if (out.outcome !== "processed") throw new Error(`expected processed for ${action}`);
+      assert.deepEqual(out.email, { kind: "pending" }, action);
+      assert.equal(emailRows(log).length, 1, action);
+      const row = emailRows(log)[0]!;
+      assert.match(row.text, /'email', 'pending'/, action);
+      assert.ok(row.values.includes("holder@example.com") && row.values.includes("verified_account"), action);
+      assert.ok(row.values.includes(`membership_confirmation:${OBJ}`), `${action}: shared dedupe key`);
+      assert.match(row.text, /on conflict do nothing/, `${action}: replay-safe insert`);
+    }
+  });
+
+  it("ineligible evaluations: skipped with a stable reason and no stored address", async () => {
+    const { sql, log } = fakeDb({
+      member: { ...MEMBER, user_id: USER },
+      eligibility: { eligible: false, address: null, assurance: null, skip_reason: "unverified_account_email" },
+    });
+    const out = await processNotificationMessage(sql, message("member.create"), NOW);
+    if (out.outcome !== "processed") throw new Error("expected processed");
+    assert.deepEqual(out.email, { kind: "skipped", reason: "unverified_account_email" });
+    assert.equal(emailRows(log).length, 1);
+    const row = emailRows(log)[0]!;
+    assert.match(row.text, /'email', 'skipped'/);
+    assert.ok(row.values.includes("unverified_account_email"), "the stable reason is stored");
+    assert.ok(!row.values.some((v) => typeof v === "string" && v.includes("@")), "no address on a skipped row");
+    assert.ok(!row.values.some((v) => typeof v === "string" && v.startsWith("membership_confirmation:")), "no dedupe key on a skipped row");
+    assert.equal(inAppRows(log).length, 1, "the email skip leaves the valid in-app delivery intact");
+  });
+
+  it("non-evaluation events: no email row and no eligibility call", async () => {
+    const cases: Array<[string, World, Record<string, unknown>]> = [
+      ["member.join_via_invite", { member: MEMBER, officers: [{ member_id: null as null, user_id: "o1" }] }, {}],
+      ["member.reject_join", { community: { slug: "k", name: "K" } }, { before_state: { full_name: "R", joined_via: "invite_link", email: "r@example.com" } }],
+      ["collection.publish", { collection: { name: "D", slug: "d", community_slug: "k" }, audience: [{ member_id: "m", user_id: "u" }] }, { object_type: "collection" }],
+    ];
+    for (const [action, world, patch] of cases) {
+      const { sql, log } = fakeDb(world);
+      const out = await processNotificationMessage(sql, message(action, patch), NOW);
+      if (out.outcome !== "processed") throw new Error(`expected processed for ${action}`);
+      assert.deepEqual(out.email, { kind: "no_row" }, action);
+      assert.equal(emailRows(log).length, 0, action);
+      assert.ok(!log.some((r) => r.text.includes("evaluate_email_eligibility")), action);
+    }
+  });
   const ALL = [
     ["member.create", { member: { ...MEMBER, user_id: USER } }],
     ["member.approve_join", { member: { ...MEMBER, user_id: USER } }],
@@ -204,27 +288,20 @@ describe("P3 writes no email delivery row", () => {
     ["collection.publish", { collection: { name: "D", slug: "d", community_slug: "k" }, audience: [{ member_id: "m", user_id: "u" }] }],
   ] as const;
 
-  it("every delivery the processor inserts is in_app, for every action", async () => {
+  it("every in-app delivery the processor inserts is still in_app", async () => {
     let total = 0;
     for (const [action, world] of ALL) {
       const { sql, log } = fakeDb(world as World);
       await processNotificationMessage(sql, message(action, { before_state: { full_name: "R", joined_via: "invite_link", email: "r@example.com" } }), NOW);
-      for (const d of deliveryRows(log)) {
+      for (const d of inAppRows(log)) {
         total += 1;
         assert.match(d.text, /'in_app'/, `${action}: channel is the literal in_app`);
-        assert.doesNotMatch(d.text, /'email'|'whatsapp'|'sms'/i, action);
-        assert.ok(!d.values.includes("email"), action);
+      }
+      for (const d of emailRows(log)) {
+        assert.match(d.text, /'email', '(pending|skipped)'/, `${action}: email rows are pending or skipped only`);
       }
     }
     assert.ok(total >= 5, "the scenarios did exercise real deliveries");
-  });
-
-  it("no statement the processor runs mentions the email channel at all", async () => {
-    for (const [action, world] of ALL) {
-      const { sql, log } = fakeDb(world as World);
-      await processNotificationMessage(sql, message(action), NOW);
-      for (const r of log) assert.doesNotMatch(r.text, /'email'/i, `${action}: ${r.text.slice(0, 60)}`);
-    }
   });
 
   it("no event payload contains an address, for any action, even when one is handed to it", async () => {
@@ -239,10 +316,14 @@ describe("P3 writes no email delivery row", () => {
 
 describe("replay safety", () => {
   it("the event insert and the delivery insert are both idempotent statements", async () => {
-    const { sql, log } = fakeDb({ member: { ...MEMBER, user_id: USER } });
+    const { sql, log } = fakeDb({
+      member: { ...MEMBER, user_id: USER },
+      eligibility: { eligible: true, address: "holder@example.com", assurance: "verified_account", skip_reason: null },
+    });
     await processNotificationMessage(sql, message("member.approve_join"), NOW);
     assert.match(log.find((r) => r.text.startsWith("insert into public.notification_events"))!.text, /on conflict \(event_key\) do nothing/);
-    assert.match(deliveryRows(log)[0]!.text, /on conflict \( notification_event_id, coalesce\( recipient_member_id, recipient_user_id,/);
+    assert.match(inAppRows(log)[0]!.text, /on conflict \( notification_event_id, coalesce\( recipient_member_id, recipient_user_id,/);
+    assert.match(emailRows(log)[0]!.text, /on conflict do nothing/, "the email insert dedupes replays and shared confirmation keys");
   });
 
   it("processing the same message twice issues the same statements twice (the database dedupes)", async () => {
