@@ -28,7 +28,10 @@
  * ── THE AMBIGUOUS CASE ──────────────────────────────────────────────────────
  * If the connection drops after the message body has been sent but before the
  * server's final reply, the message may or may not have been accepted. That is
- * reported as a *transient* `provider_unreachable`; a retry can duplicate. This
+ * reported as a *transient* `provider_unreachable` with `ambiguous: true`; a
+ * retry can duplicate. Failures before the DATA phase carry `ambiguous: false`
+ * because nothing sendable was transmitted, and explicit server rejections
+ * carry `ambiguous: false` because the outcome is known. This
  * is the residual external-delivery risk the decision record documents (§10.3)
  * and is why this adapter reports `idempotency: "none"`.
  */
@@ -242,27 +245,43 @@ function smtpTransaction(t: SmtpTransaction): Promise<void> {
       const reply = await nextReply();
       if (accepted.includes(reply.code)) return reply;
       if (reply.code >= 400 && reply.code < 500) {
-        throw new EmailProviderError("transient", "provider_rejected_transient", `SMTP server deferred the message (${reply.code})`);
+        throw new EmailProviderError("transient", "provider_rejected_transient", `SMTP server deferred the message (${reply.code})`, false);
       }
       if (reply.code >= 500 && reply.code < 600) {
-        throw new EmailProviderError("permanent", "provider_rejected_permanent", `SMTP server rejected the message (${reply.code})`);
+        throw new EmailProviderError("permanent", "provider_rejected_permanent", `SMTP server rejected the message (${reply.code})`, false);
       }
-      throw new EmailProviderError("permanent", "provider_protocol_error", `unexpected SMTP reply (${reply.code})`);
+      throw new EmailProviderError("permanent", "provider_protocol_error", `unexpected SMTP reply (${reply.code})`, false);
     };
 
     socket.on("data", (chunk: string) => {
       buffer += chunk;
       pump();
     });
-    socket.on("timeout", () => finish(new EmailProviderError("transient", "provider_timeout", "SMTP connection timed out")));
-    socket.on("error", () => finish(new EmailProviderError("transient", "provider_unreachable", "SMTP connection failed")));
+    socket.on("timeout", () => {
+      if (confirmed) return;
+      // A timeout before DATA was sent proves nothing was accepted. At or
+      // after DATA the message may have been accepted without the reply
+      // arriving, so the outcome is ambiguous.
+      finish(new EmailProviderError("transient", "provider_timeout", "SMTP connection timed out", dataSent));
+    });
+    socket.on("error", () => {
+      if (confirmed) return;
+      finish(new EmailProviderError("transient", "provider_unreachable", "SMTP connection failed", dataSent));
+    });
     socket.on("close", () => {
       if (confirmed) {
         finish();
         return;
       }
       // Closed before the server confirmed. After the body was sent this is the ambiguous case described in the header.
-      finish(new EmailProviderError("transient", "provider_unreachable", dataSent ? "SMTP connection closed before the server confirmed the message" : "SMTP connection closed unexpectedly"));
+      finish(
+        new EmailProviderError(
+          "transient",
+          "provider_unreachable",
+          dataSent ? "SMTP connection closed before the server confirmed the message" : "SMTP connection closed unexpectedly",
+          dataSent,
+        ),
+      );
     });
 
     const write = (line: string): void => {
@@ -287,7 +306,7 @@ function smtpTransaction(t: SmtpTransaction): Promise<void> {
         // Flush QUIT before closing; destroying the socket straight away would drop it.
         socket.end("QUIT\r\n", () => finish());
       } catch (error) {
-        finish(error instanceof EmailProviderError ? error : new EmailProviderError("transient", "provider_unreachable", "SMTP transaction failed"));
+        finish(error instanceof EmailProviderError ? error : new EmailProviderError("transient", "provider_unreachable", "SMTP transaction failed", false));
       }
     })();
   });

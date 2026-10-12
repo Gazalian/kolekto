@@ -89,8 +89,8 @@ describe("FakeEmailProvider", () => {
       const fake = new FakeEmailProvider();
       fake.enqueue({ type: "transient" }, { type: "permanent", code: "provider_protocol_error" });
 
-      await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_unreachable");
-      await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "permanent" && e.code === "provider_protocol_error");
+      await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_unreachable" && e.ambiguous === false);
+      await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "permanent" && e.code === "provider_protocol_error" && e.ambiguous === false);
       const ok = await fake.send(request("k"));
       assert.match(ok.providerMessageId, /^FAKE_EMAIL_/);
       assert.equal(fake.outbox.length, 1, "failed attempts are not delivered");
@@ -102,6 +102,38 @@ describe("FakeEmailProvider", () => {
       fake.enqueue({ type: "permanent" });
       await assert.rejects(fake.send(request("k", "private.person@example.com")), (e: unknown) => {
         return e instanceof EmailProviderError && !e.message.includes("private.person");
+      });
+    });
+
+    describe("ambiguity classification", () => {
+      it("a refused connection is transient and unambiguous", async () => {
+        const fake = new FakeEmailProvider();
+        fake.enqueue({ type: "transient", code: "provider_unreachable" });
+        await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_unreachable" && e.ambiguous === false);
+      });
+
+      it("a timeout after possible acceptance is transient and ambiguous", async () => {
+        const fake = new FakeEmailProvider();
+        fake.enqueue({ type: "transient", code: "provider_timeout" });
+        await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_timeout" && e.ambiguous === true);
+      });
+
+      it("a permanent provider rejection is permanent and unambiguous", async () => {
+        const fake = new FakeEmailProvider();
+        fake.enqueue({ type: "permanent", code: "provider_rejected_permanent" });
+        await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "permanent" && e.code === "provider_rejected_permanent" && e.ambiguous === false);
+      });
+
+      it("a simulated connection drop after sending is transient and ambiguous", async () => {
+        const fake = new FakeEmailProvider();
+        fake.enqueue({ type: "transient", code: "provider_unreachable", ambiguous: true });
+        await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_unreachable" && e.ambiguous === true);
+      });
+
+      it("an explicit flag overrides the timeout default", async () => {
+        const fake = new FakeEmailProvider();
+        fake.enqueue({ type: "transient", code: "provider_timeout", ambiguous: false });
+        await assert.rejects(fake.send(request("k")), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_timeout" && e.ambiguous === false);
       });
     });
 

@@ -16,6 +16,12 @@ export interface SmtpScript {
   readonly rcptTo?: string;
   /** Reply after the message body. Use null to drop the connection instead. */
   readonly afterData?: string | null;
+  /**
+   * Record the message but send no reply afterwards, so the client's
+   * inactivity timeout fires with the DATA phase already complete. This is
+   * what lets a test prove a post-DATA timeout is reported as ambiguous.
+   */
+  readonly holdAfterData?: boolean;
 }
 
 export interface ReceivedMessage {
@@ -71,6 +77,7 @@ export async function startSmtpServer(script: SmtpScript = {}): Promise<SmtpTest
             socket.destroy();
             return;
           }
+          if (script.holdAfterData === true) return;
           reply(script.afterData ?? "250 2.0.0 Ok: queued");
           continue;
         }

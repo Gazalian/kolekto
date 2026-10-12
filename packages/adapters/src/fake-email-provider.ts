@@ -36,7 +36,18 @@ import {
 } from "./email-provider.ts";
 
 export type FakeEmailOutcome =
-  | { readonly type: "transient"; readonly code?: Extract<EmailErrorCode, "provider_unreachable" | "provider_timeout" | "provider_rejected_transient"> }
+  | {
+      readonly type: "transient";
+      readonly code?: Extract<EmailErrorCode, "provider_unreachable" | "provider_timeout" | "provider_rejected_transient">;
+      /**
+       * Whether the scripted failure happened after the provider may have
+       * accepted the message. Defaults to true for `provider_timeout` (a
+       * timeout never proves the message was not accepted) and to false
+       * otherwise, so a refused connection stays unambiguous unless a test
+       * explicitly scripts a drop after sending.
+       */
+      readonly ambiguous?: boolean;
+    }
   | { readonly type: "permanent"; readonly code?: Extract<EmailErrorCode, "provider_rejected_permanent" | "provider_protocol_error"> };
 
 export interface FakeEmailProviderOptions {
@@ -100,9 +111,11 @@ export class FakeEmailProvider implements EmailProvider {
 
 function failureFor(outcome: FakeEmailOutcome): EmailProviderError {
   if (outcome.type === "transient") {
-    return new EmailProviderError("transient", outcome.code ?? "provider_unreachable", "fake provider: scripted transient failure");
+    const code = outcome.code ?? "provider_unreachable";
+    const ambiguous = outcome.ambiguous ?? code === "provider_timeout";
+    return new EmailProviderError("transient", code, "fake provider: scripted transient failure", ambiguous);
   }
-  return new EmailProviderError("permanent", outcome.code ?? "provider_rejected_permanent", "fake provider: scripted permanent failure");
+  return new EmailProviderError("permanent", outcome.code ?? "provider_rejected_permanent", "fake provider: scripted permanent failure", false);
 }
 
 /**
