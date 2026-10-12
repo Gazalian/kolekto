@@ -30,9 +30,9 @@
 --     officer_invitation.accept and officer_term.end. Anything else returns
 --     eligible = false with skip_reason 'unsupported_event'. In particular
 --     member.reject_join, member.join_via_invite and collection.publish never
---     yield an address here: rejection mail to an unverified supplied address
---     is not approved (decision R-E3 remains open and out of scope), R1 sends
---     no joiner mail, and collection lifecycle is in-app only.
+--     yield an address here: R-E3 is final (no rejection mail to an unverified
+--     supplied address), R1 sends no joiner mail, and collection lifecycle is
+--     in-app only.
 --   · Account path: the address is auth.users.email read at evaluation time,
 --     used only when email_confirmed_at is not null. public.users.email,
 --     members.email and identity_level are never consulted for an account

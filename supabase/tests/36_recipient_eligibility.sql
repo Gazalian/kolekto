@@ -158,7 +158,7 @@ select is(
   'ambiguous_recipient_relationship', 'F: the term must belong to the asserted holder');
 select is(
   (select skip_reason from pg_temp.elig('member.reject_join', 'a8400000-0000-4000-8000-000000000001', null)),
-  'unsupported_event', 'F: rejections yield no address (R-E3 stays open)');
+  'unsupported_event', 'F: rejections yield no address (R-E3 final: no rejection mail)');
 select is(
   (select skip_reason from pg_temp.elig('member.join_via_invite', 'a8400000-0000-4000-8000-000000000001', null)),
   'unsupported_event', 'F: redemptions yield no address (R1)');

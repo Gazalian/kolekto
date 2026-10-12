@@ -144,7 +144,7 @@ describe("what each action does", () => {
     const json = JSON.stringify(payload);
     assert.ok(!json.includes("requester@example.com") && !json.includes("2348099990001"), "no address or phone in the event payload");
     assert.ok(!log.some((r) => r.text.includes("from public.members")), "the deleted member row is not queried");
-    assert.ok(!log.some((r) => r.text.includes("evaluate_email_eligibility")), "rejections are not email-evaluated (R-E3 stays open)");
+    assert.ok(!log.some((r) => r.text.includes("evaluate_email_eligibility")), "rejections are not email-evaluated (R-E3 final: no rejection mail)");
     assert.equal(emailRows(log).length, 0, "no email row for a rejection");
   });
 

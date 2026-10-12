@@ -18,8 +18,8 @@
  *
  *   evaluation: member.create, member.approve_join (E1/E2 confirmations),
  *               officer_invitation.accept, officer_term.end (E4/E5 notices)
- *   no row:     member.reject_join (rejection mail to an unverified supplied
- *               address is not approved; decision R-E3 stays open),
+ *   no row:     member.reject_join (R-E3 final: no rejection mail to an
+ *               unverified supplied address),
  *               member.join_via_invite (R1: no joiner mail, ever),
  *               collection.publish (in-app only by default),
  *               anything unwatched
