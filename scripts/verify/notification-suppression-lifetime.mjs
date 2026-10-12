@@ -15,8 +15,10 @@
  *   3. connection B, a different session: the setting was never visible to it.
  *   4. connection A: a rolled-back transaction that set it leaves nothing behind either.
  *   5. the setting set by hand with is_local = false (a session-level leak) is honoured
- *      only until its own expiry: an already-expired value is ignored, and a value more
- *      than 15 minutes out is ignored. (The 15-minute cap is what bounds a leak.)
+ *      only inside its window: an already-expired value, and a value more than 15 minutes
+ *      out, are reported as LAPSED (well-formed but outside the window). The trigger HOLDS
+ *      events for a lapsed value (migration 20261009120000) rather than notifying or
+ *      honouring it. The 15-minute cap is what bounds a leak.
  *
  * It writes NO audit row, no queue message and no business row: it only reads settings
  * and calls the state parser, so it leaves nothing in the database it runs against.
@@ -88,15 +90,19 @@ try {
 
   // 5. a session-level leak is bounded by the expiry rules.
   const now = Math.floor(Date.now() / 1000);
-  for (const [label, expiry, expectValid] of [
-    ["an already-expired session-level value", now - 30, false],
-    ["a session-level value 16 minutes ahead", now + 960, false],
-    ["a session-level value 5 minutes ahead (still honoured: this is what the cap bounds)", now + 300, true],
+  for (const [label, expiry, expectValid, expectLapsed] of [
+    ["an already-expired session-level value", now - 30, false, true],
+    ["a session-level value 16 minutes ahead", now + 960, false, true],
+    ["a session-level value 5 minutes ahead (still honoured: this is what the cap bounds)", now + 300, true, false],
   ]) {
     await a`select set_config(${SETTING}, ${`v1|${expiry}|leaked value`}, false)`;
     const [s] = await a`select * from app.notification_suppression_state()`;
-    check(s.valid === expectValid, `${label}: valid = ${expectValid}`, JSON.stringify(s));
+    check(s.valid === expectValid && s.lapsed === expectLapsed, `${label}: valid = ${expectValid}, lapsed = ${expectLapsed}`, JSON.stringify(s));
   }
+  // A malformed value is neither valid nor lapsed: it is not an activation attempt (the helper never produces one).
+  await a`select set_config(${SETTING}, ${"v1|abc|leaked value"}, false)`;
+  const [bad] = await a`select * from app.notification_suppression_state()`;
+  check(bad.present === true && bad.valid === false && bad.lapsed === false, "a malformed value is present but neither valid nor lapsed", JSON.stringify(bad));
   await a`select set_config(${SETTING}, '', false)`;
 } finally {
   await a.end({ timeout: 2 });

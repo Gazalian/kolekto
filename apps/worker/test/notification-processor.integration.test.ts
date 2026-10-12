@@ -96,6 +96,14 @@ describe("the processor against the real database", { skip: SKIP }, () => {
             ),
           ).id;
 
+          // A member who is archived before the event is processed (decision record F-3): nothing to tell anyone.
+          const toArchive = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY}::uuid, 'To Archive', '+2348095551004', 'archive.me@example.com') as id`,
+            ),
+          ).id;
+          await asOwner(() => tx`select app.archive_member(${toArchive}::uuid, 'integration test')`);
+
           const token = first(
             await asOwner(
               () => tx<{ token: string }[]>`select token from app.create_invite_link(${COMMUNITY}::uuid, '{}'::uuid[], false, false, true)`,
@@ -110,6 +118,13 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           const toApprove = first(
             await asAnon(
               () => tx<{ member_id: string }[]>`select member_id from app.redeem_invite_link(${token}, 'Approve Me', '+2348095551003', 'approve.me@example.com')`,
+            ),
+          ).member_id;
+
+          // A joiner still awaiting approval when the event is processed: officers MUST still hear someone applied.
+          const toPending = first(
+            await asAnon(
+              () => tx<{ member_id: string }[]>`select member_id from app.redeem_invite_link(${token}, 'Still Pending', '+2348095551005', 'pending@example.com')`,
             ),
           ).member_id;
 
@@ -133,7 +148,7 @@ describe("the processor against the real database", { skip: SKIP }, () => {
 
           assert.deepEqual(
             [...actions].sort(),
-            ["member.approve_join", "member.create", "member.join_via_invite", "member.join_via_invite", "member.reject_join", "officer_term.end"].sort(),
+            ["member.approve_join", "member.create", "member.create", "member.join_via_invite", "member.join_via_invite", "member.join_via_invite", "member.reject_join", "officer_term.end"].sort(),
             "exactly the approved events were queued for this community",
           );
           assert.ok(!messages.some((m) => String(m.message["audit_log_id"]) === silent), "the suppressed repair produced no message");
@@ -155,9 +170,12 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           // The requester who was rejected also has a queued join_via_invite message. By the time it
           // is processed their row is gone, so it is correctly skipped (race rule F-3): no officer is
           // told that someone "joined" who was in fact turned away.
+          const SKIPPED_BY_DESIGN = new Set([`member.join_via_invite:${toReject}`, `member.create:${toArchive}`]);
           assert.equal(outcomes.get(`member.join_via_invite:${toReject}`), "skipped/member_unavailable");
+          assert.equal(outcomes.get(`member.create:${toArchive}`), "skipped/member_unavailable", "an archived member is skipped (F-3)");
+          assert.equal(outcomes.get(`member.join_via_invite:${toPending}`), "processed", "a still-pending joiner is available: officers are told");
           for (const [k, v] of outcomes) {
-            if (k !== `member.join_via_invite:${toReject}`) assert.equal(v, "processed", k);
+            if (!SKIPPED_BY_DESIGN.has(k)) assert.equal(v, "processed", k);
           }
 
           const events = await tx<{ event_type: string; payload: Record<string, unknown> }[]>`
@@ -169,13 +187,13 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           evidence["events"] = events.length;
           evidence["deliveries"] = deliveries.length;
 
-          assert.equal(events.length, 5, "one event per processed message (the rejected joiner's join notice was skipped)");
+          assert.equal(events.length, 6, "one event per processed message (the rejected joiner's join notice and the archived member's create were skipped)");
           assert.ok(deliveries.every((d) => d.channel === "in_app"), "every delivery is in_app");
           assert.equal(deliveries.filter((d) => d.channel === "email").length, 0, "NO email delivery row exists");
 
           // The admin's term was ended before processing, so only the owner still admits members.
           const joined = deliveries.filter((d) => d.event_type === "member.join_via_invite");
-          assert.equal(joined.length, 1, "the one genuine join is told to the one remaining officer who admits members");
+          assert.equal(joined.length, 2, "the approved joiner and the still-pending joiner are each told to the one remaining officer who admits members");
           assert.ok(joined.every((d) => d.recipient_user_id === OWNER), "only an officer is told; never a joiner");
           assert.deepEqual(
             deliveries.filter((d) => d.event_type === "officer_term.end").map((d) => d.recipient_user_id),
