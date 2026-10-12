@@ -13,10 +13,11 @@
  * officer_invitation.accept and officer_term.end.
  *
  * ── WHAT THIS DOES NOT DO ────────────────────────────────────────────────────
- * It writes NO email delivery row. The only channel string in this file is 'in_app'.
- * Who may be emailed is the eligibility engine (P4); the sender and the send limits
- * are P5. Nothing here reads, stores or forwards a contact address except the one
- * narrow field the trigger passes for a rejection, and even that is dropped: the
+ * It contacts no provider and sends nothing. Email rows are created as
+ * `pending` (eligible) or `skipped` (stable reason, no address) from the
+ * centralized eligibility decision (P4); dispatch, leases, retries and rate
+ * limits are the later sender milestone (P5). Nothing here reads, stores or
+ * forwards a contact address except through the eligibility function, and the
  * event payload carries a name, a code and a slug, never an address.
  *
  * Crash safety (QA BUG-4, unchanged): the whole unit runs in one transaction and is
@@ -31,6 +32,12 @@
 
 import type postgres from "postgres";
 
+import {
+  emailDedupeKey,
+  isEmailEvaluationEvent,
+  type EligibilitySkipReason,
+  type EmailOutcome,
+} from "./notification-eligibility.ts";
 import {
   admission,
   buildPayload,
@@ -50,7 +57,7 @@ import {
 type Db = postgres.Sql<Record<string, never>> | postgres.TransactionSql<Record<string, never>>;
 
 export type ProcessOutcome =
-  | { readonly outcome: "processed"; readonly deliveries: number }
+  | { readonly outcome: "processed"; readonly deliveries: number; readonly email: EmailOutcome }
   | { readonly outcome: "skipped"; readonly reason: SkipReason };
 
 const SKIPPED = (reason: SkipReason): ProcessOutcome => ({ outcome: "skipped", reason });
@@ -114,7 +121,7 @@ export async function processNotificationMessage(
     const [event] = await tx<{ id: string }[]>`
       select id from public.notification_events where event_key = ${key}
     `;
-    if (!event) return { outcome: "processed", deliveries: 0 };
+    if (!event) return { outcome: "processed", deliveries: 0, email: { kind: "no_row" } };
 
     const recipients = await resolveRecipients(tx, msg, facts.recipientHints);
 
@@ -144,8 +151,107 @@ export async function processNotificationMessage(
       `;
     }
 
-    return { outcome: "processed", deliveries: recipients.length };
+    // ── P4 email evaluation ────────────────────────────────────────────────
+    // Email-evaluation events always produce an email delivery row (pending or
+    // skipped); every other event produces no email row. The in-app rows above
+    // are untouched by whatever happens here: an email skip never deletes or
+    // prevents a valid in-app delivery. No provider is contacted — dispatch,
+    // leases, retries and rate limits belong to the later sender milestone.
+    const email = await evaluateEmail(tx, msg, facts.recipientHints, event.id);
+
+    return { outcome: "processed", deliveries: recipients.length, email };
   });
+}
+
+// ── Email evaluation (P4) ────────────────────────────────────────────────────
+
+interface EligibilityRow {
+  eligible: boolean;
+  address: string | null;
+  assurance: string | null;
+  skip_reason: string | null;
+}
+
+/**
+ * Evaluate email eligibility for one processed event and record the outcome.
+ * The database function is the authority: it derives the recipient from the
+ * member or officer_term record, checks any asserted user id against it, and
+ * returns either an address with its assurance or a stable skip reason.
+ * This function only files the answer under the existing delivery constraints:
+ * eligible rows carry address + assurance + dedupe key, skipped rows carry a
+ * stable error_code and no address, and non-evaluation events yield no row.
+ */
+async function evaluateEmail(
+  sql: Db,
+  msg: AuditMessage,
+  hints: Facts["recipientHints"],
+  eventId: string,
+): Promise<EmailOutcome> {
+  if (!isEmailEvaluationEvent(msg.action)) return { kind: "no_row" };
+
+  const isMembership = msg.action === "member.create" || msg.action === "member.approve_join";
+  const objectId = isMembership ? (hints.memberId ?? msg.object_id) : msg.object_id;
+  const assertedUserId = isMembership ? (hints.memberUserId ?? null) : (hints.termUserId ?? null);
+
+  const [found] = await sql<EligibilityRow[]>`
+    select eligible, address, assurance, skip_reason
+    from app.evaluate_email_eligibility(${msg.action}, ${objectId}::uuid, ${assertedUserId}::uuid)
+  `;
+  const reason = (found?.skip_reason ?? "unsupported_event") as EligibilitySkipReason;
+
+  // Only ids verified to exist are stored: the member was read above (readFacts
+  // found it, otherwise processing stopped earlier) and the asserted user id
+  // comes from a members.user_id / officer_terms.user_id foreign key.
+  const memberId = isMembership ? (hints.memberId ?? null) : null;
+  const userId = assertedUserId;
+
+  if (found?.eligible === true && found.address !== null && found.assurance !== null) {
+    // The dedupe key is set on eligible rows only: a skipped evaluation must
+    // never block a later eligible one for the same member.
+    const dedupe = emailDedupeKey(msg.action, hints.memberId ?? msg.object_id);
+    await sql`
+      insert into public.notification_deliveries (
+        notification_event_id, community_id,
+        recipient_member_id, recipient_user_id,
+        recipient_address, recipient_address_assurance,
+        channel, status, dedupe_key
+      ) values (
+        ${eventId}::uuid,
+        ${msg.community_id}::uuid,
+        ${memberId}::uuid,
+        ${userId}::uuid,
+        ${found.address},
+        ${found.assurance},
+        'email',
+        'pending',
+        ${dedupe}
+      )
+      -- Bare DO NOTHING covers both uniqueness boundaries: the per-event
+      -- recipient index (replay of this message) and the dedupe-key index
+      -- (creation and approval collapsing to one confirmation). Any conflict
+      -- means an equivalent delivery already exists.
+      on conflict do nothing
+    `;
+    return { kind: "pending" };
+  }
+
+  await sql`
+    insert into public.notification_deliveries (
+      notification_event_id, community_id,
+      recipient_member_id, recipient_user_id,
+      channel, status, error_code
+    ) values (
+      ${eventId}::uuid,
+      ${msg.community_id}::uuid,
+      ${memberId}::uuid,
+      ${userId}::uuid,
+      'email',
+      'skipped',
+      ${reason}
+    )
+    on conflict do nothing
+  `;
+  return { kind: "skipped", reason };
 }
 
 // ── Reading facts ────────────────────────────────────────────────────────────
