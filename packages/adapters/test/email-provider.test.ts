@@ -101,4 +101,16 @@ describe("EmailProviderError", () => {
     assert.equal(e.name, "EmailProviderError");
     assert.ok(e instanceof Error);
   });
+
+  it("defaults to unambiguous so existing call sites keep their meaning", () => {
+    const e = new EmailProviderError("transient", "provider_unreachable", "x");
+    assert.equal(e.ambiguous, false);
+  });
+
+  it("records an explicitly ambiguous outcome", () => {
+    const e = new EmailProviderError("transient", "provider_timeout", "x", true);
+    assert.equal(e.kind, "transient");
+    assert.equal(e.code, "provider_timeout");
+    assert.equal(e.ambiguous, true);
+  });
 });

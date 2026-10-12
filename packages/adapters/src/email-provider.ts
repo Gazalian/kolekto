@@ -19,8 +19,10 @@
  * (decision record §10.3). This interface never claims exactly-once delivery.
  *
  * ── ERRORS ──────────────────────────────────────────────────────────────────
- * Every failure is an `EmailProviderError` carrying a stable Kolekto `code` and
- * a `kind` that decides retry behaviour. Messages are written by us and never
+ * Every failure is an `EmailProviderError` carrying a stable Kolekto `code`, a
+ * `kind` that decides retry behaviour, and an `ambiguous` flag recording
+ * whether the provider may have accepted the message despite the failure.
+ * Messages are written by us and never
  * contain provider response text, recipient addresses or credentials: the
  * delivery table is readable by operators and must not become a place where a
  * provider's echo of someone's address is stored (decision record §9.3).
@@ -85,12 +87,23 @@ export type EmailErrorCode =
 export class EmailProviderError extends Error {
   readonly kind: EmailErrorKind;
   readonly code: EmailErrorCode;
+  /**
+   * True when the provider may have accepted the email but the outcome cannot
+   * be established — a timeout or a connection drop at or after the DATA
+   * phase. Never inferred from message text. The sender (P5) must treat an
+   * ambiguous failure against a provider without idempotency support as
+   * unresolvable rather than as an ordinary transient failure (decision
+   * record section 10.6.2). Defaults to false so existing call sites keep
+   * their unambiguous meaning.
+   */
+  readonly ambiguous: boolean;
 
-  constructor(kind: EmailErrorKind, code: EmailErrorCode, message: string) {
+  constructor(kind: EmailErrorKind, code: EmailErrorCode, message: string, ambiguous = false) {
     super(message);
     this.name = "EmailProviderError";
     this.kind = kind;
     this.code = code;
+    this.ambiguous = ambiguous;
   }
 }
 

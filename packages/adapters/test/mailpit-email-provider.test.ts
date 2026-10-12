@@ -167,50 +167,74 @@ describe("MailpitEmailProvider: injection and validation happen before any conne
 });
 
 describe("MailpitEmailProvider: failure classification", () => {
-  it("a 4xx reply is transient", async () => {
+  it("a 4xx reply is transient and unambiguous", async () => {
     const p = await provider({ rcptTo: "451 4.3.0 try later" });
-    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_rejected_transient");
+    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_rejected_transient" && e.ambiguous === false);
   });
 
-  it("a 5xx reply is permanent, and the server's text and the address are not in our error", async () => {
+  it("a 5xx reply is permanent and unambiguous, and the server's text and the address are not in our error", async () => {
     const p = await provider({ rcptTo: "550 5.1.1 <ada@example.com> user unknown" });
     await assert.rejects(p.send(req()), (e: unknown) => {
       return (
         e instanceof EmailProviderError &&
         e.kind === "permanent" &&
         e.code === "provider_rejected_permanent" &&
+        e.ambiguous === false &&
         !e.message.includes("ada@example.com") &&
         !e.message.includes("user unknown")
       );
     });
   });
 
-  it("a 5xx after the body is permanent", async () => {
+  it("a 5xx after the body is permanent and unambiguous: the outcome is known", async () => {
     const p = await provider({ afterData: "554 5.7.1 rejected" });
-    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "permanent");
+    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "permanent" && e.ambiguous === false);
   });
 
-  it("an unexpected reply code is a permanent protocol error", async () => {
+  it("an unexpected reply code is a permanent and unambiguous protocol error", async () => {
     const p = await provider({ mailFrom: "300 what" });
-    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.code === "provider_protocol_error" && e.kind === "permanent");
+    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.code === "provider_protocol_error" && e.kind === "permanent" && e.ambiguous === false);
   });
 
-  it("a refused connection is transient and unreachable", async () => {
+  it("a refused connection is transient and unambiguous", async () => {
     const port = await closedPort();
     const p = new MailpitEmailProvider({ host: "127.0.0.1", port, from: FROM, timeoutMs: 1_000 });
-    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_unreachable");
+    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_unreachable" && e.ambiguous === false);
   });
 
-  it("a server that never greets times out as transient", async () => {
+  it("a server that never greets times out as transient and unambiguous: nothing sendable was transmitted", async () => {
     const p = await provider({ greeting: "" }, 150);
-    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_timeout");
+    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_timeout" && e.ambiguous === false);
   });
 
-  it("a drop after the body is sent is transient: the ambiguous case is reported, never hidden", async () => {
+  it("a drop after the body is sent is transient and ambiguous: the ambiguous case is reported, never hidden", async () => {
     const p = await provider({ afterData: null });
     await assert.rejects(p.send(req()), (e: unknown) => {
-      return e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_unreachable" && /before the server confirmed/.test(e.message);
+      return e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_unreachable" && e.ambiguous === true && /before the server confirmed/.test(e.message);
     });
     assert.equal(server!.messages.length, 1, "the server did receive it — which is why a retry can duplicate");
+  });
+
+  it("a timeout after the body is sent is transient and ambiguous", async () => {
+    const p = await provider({ holdAfterData: true }, 150);
+    await assert.rejects(p.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.code === "provider_timeout" && e.ambiguous === true);
+    assert.equal(server!.messages.length, 1, "the server did receive it — which is why a retry can duplicate");
+  });
+
+  it("a QUIT-phase transport error after confirmed acceptance stays a success", async () => {
+    const p = await provider({ resetOnQuit: true });
+    const result = await p.send(req());
+    assert.match(result.providerMessageId, /^[0-9a-f]{32}@kolekto\.invalid$/);
+    assert.equal(server!.messages.length, 1, "the server accepted exactly one message");
+    await quitSeen(server!);
+    assert.ok(server!.commands.includes("QUIT"), "the client reached the QUIT phase");
+  });
+
+  it("not every transient failure is ambiguous", async () => {
+    const deferred = await provider({ rcptTo: "451 4.3.0 try later" });
+    await assert.rejects(deferred.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.ambiguous === false);
+    const port = await closedPort();
+    const refused = new MailpitEmailProvider({ host: "127.0.0.1", port, from: FROM, timeoutMs: 1_000 });
+    await assert.rejects(refused.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.ambiguous === false);
   });
 });
