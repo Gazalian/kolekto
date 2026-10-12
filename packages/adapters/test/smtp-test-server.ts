@@ -17,6 +17,12 @@ export interface SmtpScript {
   /** Reply after the message body. Use null to drop the connection instead. */
   readonly afterData?: string | null;
   /**
+   * On QUIT, reset the connection instead of replying, so the client sees a
+   * QUIT-phase transport error after the message was already accepted. This
+   * is what lets a test prove a confirmed acceptance survives QUIT noise.
+   */
+  readonly resetOnQuit?: boolean;
+  /**
    * Record the message but send no reply afterwards, so the client's
    * inactivity timeout fires with the DATA phase already complete. This is
    * what lets a test prove a post-DATA timeout is reported as ambiguous.
@@ -100,6 +106,10 @@ export async function startSmtpServer(script: SmtpScript = {}): Promise<SmtpTest
           reply("354 End data with <CR><LF>.<CR><LF>");
           inData = true;
         } else if (verb === "QUIT") {
+          if (script.resetOnQuit === true) {
+            socket.resetAndDestroy();
+            return;
+          }
           reply("221 Bye");
           socket.end();
         } else reply("502 5.5.2 Command not recognized");

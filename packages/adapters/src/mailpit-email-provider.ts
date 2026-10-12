@@ -258,14 +258,24 @@ function smtpTransaction(t: SmtpTransaction): Promise<void> {
       pump();
     });
     socket.on("timeout", () => {
-      if (confirmed) return;
+      // The server already accepted the message; QUIT is courtesy, so QUIT
+      // noise settles the confirmed success instead of hanging or failing.
+      if (confirmed) {
+        finish();
+        return;
+      }
       // A timeout before DATA was sent proves nothing was accepted. At or
       // after DATA the message may have been accepted without the reply
       // arriving, so the outcome is ambiguous.
       finish(new EmailProviderError("transient", "provider_timeout", "SMTP connection timed out", dataSent));
     });
     socket.on("error", () => {
-      if (confirmed) return;
+      // As above: acceptance is already confirmed, so a QUIT-phase transport
+      // error cannot reclassify the outcome as a failure.
+      if (confirmed) {
+        finish();
+        return;
+      }
       finish(new EmailProviderError("transient", "provider_unreachable", "SMTP connection failed", dataSent));
     });
     socket.on("close", () => {

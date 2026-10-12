@@ -221,6 +221,15 @@ describe("MailpitEmailProvider: failure classification", () => {
     assert.equal(server!.messages.length, 1, "the server did receive it — which is why a retry can duplicate");
   });
 
+  it("a QUIT-phase transport error after confirmed acceptance stays a success", async () => {
+    const p = await provider({ resetOnQuit: true });
+    const result = await p.send(req());
+    assert.match(result.providerMessageId, /^[0-9a-f]{32}@kolekto\.invalid$/);
+    assert.equal(server!.messages.length, 1, "the server accepted exactly one message");
+    await quitSeen(server!);
+    assert.ok(server!.commands.includes("QUIT"), "the client reached the QUIT phase");
+  });
+
   it("not every transient failure is ambiguous", async () => {
     const deferred = await provider({ rcptTo: "451 4.3.0 try later" });
     await assert.rejects(deferred.send(req()), (e: unknown) => e instanceof EmailProviderError && e.kind === "transient" && e.ambiguous === false);
