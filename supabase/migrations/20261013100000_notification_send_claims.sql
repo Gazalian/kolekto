@@ -341,9 +341,13 @@ begin
 
   -- The lease alone never proves delivery (decision record §10.3); it only
   -- proves THIS worker holds the current claim. Expired, replaced (the
-  -- stored token differs) or missing leases change nothing.
+  -- stored token differs) or missing leases change nothing. The NULL check
+  -- on the *supplied* token comes first and is explicit: `stored <> NULL`
+  -- yields NULL, which an IF chain would treat as pass, so without it a
+  -- NULL token would fail open and resolve any live claim.
   if v_row.id is null
      or v_row.status <> 'sending'
+     or p_lease_token is null
      or v_row.send_lease_token is null
      or v_row.send_lease_token <> p_lease_token
      or v_row.send_lease_expires_at is null

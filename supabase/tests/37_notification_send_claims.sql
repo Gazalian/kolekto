@@ -31,7 +31,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(57);
+select plan(59);
 
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -206,6 +206,16 @@ select is(
 select is(
   (select status from public.notification_deliveries where id = 'c9300000-0000-4000-8000-000000000001'),
   'sending', 'E: the row a wrong token targeted is untouched');
+select is(
+  (select reason from app.resolve_notification_claim(
+    'c9300000-0000-4000-8000-000000000001', null, 'sent', null, 'FAKE_EMAIL_NULL', null)),
+  'invalid_or_expired_lease', 'E: a NULL token settles nothing (fail closed)');
+select ok(
+  (select status from public.notification_deliveries where id = 'c9300000-0000-4000-8000-000000000001') = 'sending'
+  and (select send_lease_token from public.notification_deliveries where id = 'c9300000-0000-4000-8000-000000000001') = (select token from pg_temp.lease)
+  and (select send_lease_expires_at from public.notification_deliveries where id = 'c9300000-0000-4000-8000-000000000001') = (select expires from pg_temp.lease)
+  and (select attempt_count from public.notification_deliveries where id = 'c9300000-0000-4000-8000-000000000001') = 1,
+  'E: the row a NULL token targeted keeps its status, lease, expiry and attempt');
 
 
 -- ── F. Expiry, recovery and the recovery race ────────────────────────────────
