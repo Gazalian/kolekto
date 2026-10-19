@@ -27,6 +27,7 @@ const APP_SEGMENTS = new Set([
   "welcome",
   "setup",
   "account",
+  "notifications",
   "invite",
   "accept-invite",
   "auth",

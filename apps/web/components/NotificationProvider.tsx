@@ -22,12 +22,18 @@ interface NotificationContextValue {
   notifications: NotificationRow[];
   unreadCount: number;
   loading: boolean;
-  refresh: () => void;
+  /** Set when the last fetch failed. The bell keeps showing the last good data
+   * rather than a false "all caught up", and the panel offers a retry. */
+  error: boolean;
+  refresh: () => Promise<void>;
 }
 
 const NotificationContext = createContext<NotificationContextValue | null>(null);
 
 const POLL_INTERVAL_MS = 15_000;
+
+/** The inbox holds the most recent slice; the full history lives at /notifications. */
+const INBOX_LIMIT = 30;
 
 /**
  * A single polling loop for the whole shell. Both the desktop (sidebar) and
@@ -40,11 +46,19 @@ const POLL_INTERVAL_MS = 15_000;
  * history view, so the personal bell must not rely on RLS alone to isolate the
  * inbox. The unread count is a separate COUNT query, not a slice of the first
  * page (QA BUG-8).
+ *
+ * A failed fetch is never shown as success (brief: "Do not ... show a
+ * successful state when the backend operation failed"). On error the last good
+ * snapshot is kept and `error` is raised so the panel can show a retry instead
+ * of an empty "all caught up" that would mislead. Polling also pauses while the
+ * tab is hidden and refreshes once on return, so a backgrounded dashboard does
+ * not keep two bells hammering the stack.
  */
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<NotificationRow[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
   const userIdRef = useRef<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -59,40 +73,79 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
     if (!userId) {
       setNotifications([]);
       setUnreadCount(0);
+      setError(false);
       setLoading(false);
       return;
     }
 
-    const { data: rows } = await supabase
-      .from("notification_deliveries")
-      .select(
-        "id, notification_event_id, community_id, channel, status, read_at, created_at, notification_events(event_type, payload, actor_user_id)",
-      )
-      .eq("channel", "in_app")
-      .eq("recipient_user_id", userId)
-      .order("created_at", { ascending: false })
-      .limit(30);
+    try {
+      const { data: rows, error: rowsError } = await supabase
+        .from("notification_deliveries")
+        .select(
+          "id, notification_event_id, community_id, channel, status, read_at, created_at, notification_events(event_type, payload, actor_user_id)",
+        )
+        .eq("channel", "in_app")
+        .eq("recipient_user_id", userId)
+        .order("created_at", { ascending: false })
+        .limit(INBOX_LIMIT);
 
-    const { count } = await supabase
-      .from("notification_deliveries")
-      .select("id", { count: "exact", head: true })
-      .eq("channel", "in_app")
-      .eq("recipient_user_id", userId)
-      .is("read_at", null);
+      const { count, error: countError } = await supabase
+        .from("notification_deliveries")
+        .select("id", { count: "exact", head: true })
+        .eq("channel", "in_app")
+        .eq("recipient_user_id", userId)
+        .is("read_at", null);
 
-    setNotifications((rows as NotificationRow[] | null) ?? []);
-    setUnreadCount(count ?? 0);
-    setLoading(false);
+      if (rowsError || countError) {
+        // Keep the last good snapshot; do not blank the inbox or the badge.
+        setError(true);
+        setLoading(false);
+        return;
+      }
+
+      // postgrest's generic typing widens the to-one `notification_events`
+      // embed to an array; the runtime shape is a single object. Cast via unknown.
+      setNotifications((rows as unknown as NotificationRow[] | null) ?? []);
+      setUnreadCount(count ?? 0);
+      setError(false);
+      setLoading(false);
+    } catch {
+      // Network/transport failure: show the error, keep the last good snapshot.
+      setError(true);
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    refresh();
-    const interval = setInterval(refresh, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
+    let cancelled = false;
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      void refresh();
+    };
+
+    // Initial inbox fetch on mount. `refresh` only setStates after an await, so
+    // this does not cascade synchronously; the lint rule can't see across the
+    // async boundary.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void refresh();
+    const interval = setInterval(tick, POLL_INTERVAL_MS);
+
+    function onVisible() {
+      if (!cancelled && typeof document !== "undefined" && !document.hidden) {
+        void refresh();
+      }
+    }
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refresh]);
 
   return (
-    <NotificationContext.Provider value={{ notifications, unreadCount, loading, refresh }}>
+    <NotificationContext.Provider value={{ notifications, unreadCount, loading, error, refresh }}>
       {children}
     </NotificationContext.Provider>
   );

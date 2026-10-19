@@ -2,35 +2,58 @@
 
 import { cn } from "@kolekto/ui";
 import { Bell } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { useNotifications } from "./NotificationProvider.tsx";
 import { NotificationPanel } from "./NotificationPanel.tsx";
 
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
-  const { notifications, unreadCount, loading, refresh } = useNotifications();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelId = useId();
+  const { notifications, unreadCount, loading, error, refresh } = useNotifications();
+
+  function close(returnFocus = false) {
+    setOpen(false);
+    if (returnFocus) buttonRef.current?.focus();
+  }
 
   useEffect(() => {
+    if (!open) return;
+
     function handleClickOutside(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
         setOpen(false);
       }
     }
-    if (open) {
-      document.addEventListener("mousedown", handleClickOutside);
-      return () => document.removeEventListener("mousedown", handleClickOutside);
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        close(true);
+      }
     }
+    document.addEventListener("mousedown", handleClickOutside);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handleClickOutside);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
   }, [open]);
 
   return (
     <div ref={ref} className="relative">
       <button
+        ref={buttonRef}
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ""}`}
+        aria-haspopup="true"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
         className={cn(
-          "relative rounded-[var(--radius-sm)] p-2 text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]",
+          "relative rounded-[var(--radius-sm)] p-2 text-[var(--color-text-muted)] transition-colors",
+          "hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]",
+          "focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none",
           open && "bg-[var(--color-bg)] text-[var(--color-text)]",
         )}
       >
@@ -44,10 +67,12 @@ export function NotificationBell() {
 
       {open && (
         <NotificationPanel
+          id={panelId}
           notifications={notifications}
           loading={loading}
+          error={error}
           onRefresh={refresh}
-          onClose={() => setOpen(false)}
+          onClose={() => close()}
         />
       )}
     </div>
