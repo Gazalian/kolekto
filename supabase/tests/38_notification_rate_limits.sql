@@ -23,7 +23,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(48);
+select plan(47);
 
 
 -- ── Fixtures ────────────────────────────────────────────────────────────────
@@ -90,8 +90,16 @@ values
 -- Pre-inserted ledger rows for boundary testing.
 -- 3 rows for `old@...` from 24 h + 1 s ago (D section: must NOT count in L1).
 -- 4 rows for community 02 within the last hour (F section: L2 pre-fill).
--- 5 rows for community 04 within the last hour (H section: L2-hit pre-fill).
 -- 1 row from 49 h ago (J section: purge target).
+--
+-- NOTE: community 04's 5 in-window ledger rows (H section: L2-hit pre-fill)
+-- are intentionally NOT inserted here. L2 and L3 share the same 1-hour window,
+-- so rows that pre-fill community 04's L2 budget also count platform-wide (L3).
+-- Inserting them up-front would push the L3 platform count to 9 before section C
+-- even runs, and the first granted reservation would then trip the L3 override
+-- (10), cascading into the L1/L2/L3 sections that are meant to be tested in
+-- isolation. They are inserted just before section H instead, which is the only
+-- section that depends on them. See the fixture block at the H heading.
 insert into public.notification_send_attempts
   (delivery_id, community_id, address_key, attempted_at)
 values
@@ -102,11 +110,6 @@ values
   ('ca300000-0000-4000-8000-000000000007', 'ca100000-0000-4000-8000-000000000002', 'l2pre2@p52.example.test', now() - interval '30 minutes'),
   ('ca300000-0000-4000-8000-000000000007', 'ca100000-0000-4000-8000-000000000002', 'l2pre3@p52.example.test', now() - interval '30 minutes'),
   ('ca300000-0000-4000-8000-000000000007', 'ca100000-0000-4000-8000-000000000002', 'l2pre4@p52.example.test', now() - interval '30 minutes'),
-  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre1@p52.example.test', now() - interval '30 minutes'),
-  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre2@p52.example.test', now() - interval '30 minutes'),
-  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre3@p52.example.test', now() - interval '30 minutes'),
-  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre4@p52.example.test', now() - interval '30 minutes'),
-  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre5@p52.example.test', now() - interval '30 minutes'),
   ('ca300000-0000-4000-8000-000000000001', 'ca100000-0000-4000-8000-000000000001', 'purge@p52.example.test', now() - interval '49 hours');
 
 -- Helper: try a statement under a client role.
@@ -270,7 +273,19 @@ select is(pg_temp.claim_and_reserve('ca300000-0000-4000-8000-000000000010'),
 
 
 -- ── H. Backlog cap (overridden to 3) ────────────────────────────────────────
--- Community 04 has 5 pre-inserted ledger rows (L2 = 5 → hit).
+-- Community 04's 5 in-window ledger rows are inserted HERE, not up-front, so
+-- they fill community 04's L2 budget (5 → hit) without inflating the platform
+-- L3 count during sections C-G (L2 and L3 share the 1-hour window).
+insert into public.notification_send_attempts
+  (delivery_id, community_id, address_key, attempted_at)
+values
+  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre1@p52.example.test', now() - interval '30 minutes'),
+  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre2@p52.example.test', now() - interval '30 minutes'),
+  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre3@p52.example.test', now() - interval '30 minutes'),
+  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre4@p52.example.test', now() - interval '30 minutes'),
+  ('ca300000-0000-4000-8000-000000000011', 'ca100000-0000-4000-8000-000000000004', 'bkpre5@p52.example.test', now() - interval '30 minutes');
+
+-- Community 04 now has 5 in-window ledger rows (L2 = 5 → hit).
 -- D12-D14 are pending with next_retry_at (3 deferred rows = backlog cap).
 -- D11 → L2 hit → backlog check → 3 >= 3 → backlog_full.
 select is(pg_temp.claim_and_reserve('ca300000-0000-4000-8000-000000000011'),
