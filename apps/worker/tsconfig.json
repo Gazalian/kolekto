@@ -8,5 +8,5 @@
     "emitDeclarationOnly": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "references": [{ "path": "../../packages/config" }, { "path": "../../packages/db" }, { "path": "../../packages/domain" }]
+  "references": [{ "path": "../../packages/adapters" }, { "path": "../../packages/config" }, { "path": "../../packages/db" }, { "path": "../../packages/domain" }]
 }
