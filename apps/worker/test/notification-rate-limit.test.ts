@@ -86,6 +86,19 @@ describe("reserveEmailAttempt", () => {
     assert.equal(result.reservation, "backlog_full");
   });
 
+  it("maps an address_suppressed result (P9-1)", async () => {
+    const { sql, log } = fakeDb((text) =>
+      text.includes("from app.reserve_email_attempt")
+        ? [{ reservation: "address_suppressed", retry_at: null }]
+        : [],
+    );
+    const result = await reserveEmailAttempt(sql, DELIVERY);
+    assert.equal(result.reservation, "address_suppressed");
+    assert.equal(result.retryAt, null);
+    // Still ids-only; the module never sees or forwards the address.
+    assert.doesNotMatch(log.join("\n"), /@/);
+  });
+
   it("throws when the function returns no row", async () => {
     const { sql } = fakeDb(() => []);
     await assert.rejects(

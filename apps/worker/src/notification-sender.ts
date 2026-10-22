@@ -118,7 +118,9 @@ export async function sendOneClaimed(sql: BaseSql, opts: SenderOptions): Promise
     if (reservation === "community_deferred") {
       return { outcome: "deferred", deliveryId, reservation, retryAt };
     }
-    // address_limited / backlog_full: row is skipped with a stable code.
+    // address_suppressed (P9-1) / address_limited / backlog_full: row is
+    // skipped with a stable code. The caller surfaces `reservation` so the
+    // health snapshot can count each cause separately via skipped_by_code.
     return { outcome: "skipped", deliveryId, reservation };
   }
 

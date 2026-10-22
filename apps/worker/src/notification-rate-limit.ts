@@ -28,8 +28,18 @@ import type postgres from "postgres";
 
 type Db = postgres.Sql<Record<string, never>> | postgres.TransactionSql<Record<string, never>>;
 
+/**
+ * P9-1 adds `address_suppressed`: the delivery was skipped BEFORE any rate
+ * limit was consulted because `app.is_address_suppressed` returned true for
+ * the recipient. The database function has already set the delivery to
+ * skipped/`address_suppressed`, erased the recipient address and undone the
+ * attempt counter. The sender treats it exactly like `address_limited` from
+ * the outside — a terminal skip, no retry — and surfaces the stable code so
+ * the health snapshot can report it separately.
+ */
 export type ReservationOutcome =
   | "granted"
+  | "address_suppressed"
   | "address_limited"
   | "community_deferred"
   | "backlog_full";
