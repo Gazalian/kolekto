@@ -100,6 +100,30 @@ export async function runWrite<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/**
+ * Runs `fn` inside a transaction on the base connection with NO role switch
+ * applied — i.e. as the connection's owner role. `current_setting('role',
+ * true)` returns the empty string, which every operator-only `app.*` function
+ * in this codebase treats as `none` (`coalesce(nullif(current_setting('role',
+ * true), ''), 'none')` is the single idiom used by every setter).
+ *
+ * The ONLY intended callers are server-side handlers for inbound provider
+ * webhooks (SES/SNS event ingestion, M13.2 P9-2) that need to invoke
+ * operator-level entry points after authenticating the request. Every other
+ * write goes through `withCallerContext` so the acting user's permissions
+ * and RLS apply. A caller that reaches for this helper for anything else is
+ * writing a bug.
+ *
+ * SERVER ONLY. `loadDatabaseUrl()` throws in the browser.
+ */
+export async function withOwnerConnection<T>(
+  fn: (sql: postgres.TransactionSql) => Promise<T>,
+): Promise<T> {
+  // Narrow the postgres.js generic return type the same way withCallerContext
+  // does, for the same reason.
+  return getClient().begin(async (tx) => fn(tx)) as Promise<T>;
+}
+
 /** Test/dev only: closes the pool so a script can exit. Never called from request-handling code. */
 export async function closeClient(): Promise<void> {
   await client?.end();

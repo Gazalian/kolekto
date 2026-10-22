@@ -6,10 +6,14 @@ import { ConfigError, type KolektoEnvironment } from "../src/env.ts";
 import {
   createEmailSecret,
   describeEmailConfig,
+  describeSesIngestionConfig,
   evaluateEmailConfig,
+  evaluateSesIngestionConfig,
   loadEmailConfig,
+  loadSesIngestionConfig,
   REAL_EMAIL_PROVIDERS,
   type RealEmailConfig,
+  type SesIngestionConfig,
 } from "../src/email.ts";
 
 const SENTINEL = "not-a-real-key-not-a-real-key"; // deliberately dummy and low-entropy (secret scanners)
@@ -212,5 +216,114 @@ describe("7. loadEmailConfig reads process.env", () => {
       for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
       Object.assign(process.env, saved);
     }
+  });
+});
+
+// ── SES ingestion configuration (M13.2 P9-2) ─────────────────────────────────
+
+const SES_REGION = "eu-west-1";
+const SES_ARN = `arn:aws:sns:${SES_REGION}:123456789012:kolekto-ses-feedback`;
+
+describe("8. SES ingestion configuration", () => {
+  it("returns null when neither EMAIL_AWS_REGION nor EMAIL_AWS_SNS_TOPIC_ARN is set", () => {
+    assert.equal(evaluateSesIngestionConfig({}), null);
+  });
+
+  it("returns the validated shape when both are set and consistent", () => {
+    const result = evaluateSesIngestionConfig({ EMAIL_AWS_REGION: SES_REGION, EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN });
+    assert.notEqual(result, null);
+    const config = result as SesIngestionConfig;
+    assert.equal(config.region, SES_REGION);
+    assert.equal(config.topicArn, SES_ARN);
+  });
+
+  it("refuses a half-configured deploy (only one variable set)", () => {
+    refuses(() => evaluateSesIngestionConfig({ EMAIL_AWS_REGION: SES_REGION }), /half configured/);
+    refuses(() => evaluateSesIngestionConfig({ EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN }), /half configured/);
+  });
+
+  it("refuses a malformed region", () => {
+    refuses(() => evaluateSesIngestionConfig({ EMAIL_AWS_REGION: "INVALID", EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN }), /EMAIL_AWS_REGION/);
+  });
+
+  it("refuses a malformed topic ARN", () => {
+    refuses(
+      () => evaluateSesIngestionConfig({ EMAIL_AWS_REGION: SES_REGION, EMAIL_AWS_SNS_TOPIC_ARN: "not-an-arn" }),
+      /EMAIL_AWS_SNS_TOPIC_ARN/,
+    );
+  });
+
+  it("refuses an ARN whose region segment disagrees with EMAIL_AWS_REGION", () => {
+    refuses(
+      () =>
+        evaluateSesIngestionConfig({
+          EMAIL_AWS_REGION: SES_REGION,
+          EMAIL_AWS_SNS_TOPIC_ARN: "arn:aws:sns:us-east-1:123456789012:x",
+        }),
+      /region segment/,
+    );
+  });
+
+  it("refuses a NEXT_PUBLIC_* variable that mentions AWS/SES/SNS", () => {
+    refuses(
+      () =>
+        evaluateSesIngestionConfig({
+          EMAIL_AWS_REGION: SES_REGION,
+          EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN,
+          NEXT_PUBLIC_AWS_REGION: SES_REGION,
+        }),
+      /NEXT_PUBLIC_/,
+    );
+    refuses(
+      () =>
+        evaluateSesIngestionConfig({
+          EMAIL_AWS_REGION: SES_REGION,
+          EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN,
+          NEXT_PUBLIC_SNS_URL: "https://x",
+        }),
+      /NEXT_PUBLIC_/,
+    );
+  });
+
+  it("tolerates NEXT_PUBLIC_* variables that do not mention AWS/SES/SNS", () => {
+    const r = evaluateSesIngestionConfig({
+      EMAIL_AWS_REGION: SES_REGION,
+      EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN,
+      NEXT_PUBLIC_SUPABASE_URL: "https://x",
+    });
+    assert.notEqual(r, null);
+  });
+
+  it("describeSesIngestionConfig does not leak secrets (the ARN is not a secret)", () => {
+    const config = evaluateSesIngestionConfig({ EMAIL_AWS_REGION: SES_REGION, EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN }) as SesIngestionConfig;
+    const described = describeSesIngestionConfig(config);
+    assert.ok(described.includes(SES_REGION));
+    assert.ok(described.includes(SES_ARN));
+  });
+
+  it("loadSesIngestionConfig reads process.env", () => {
+    const saved = { ...process.env };
+    try {
+      delete process.env.EMAIL_AWS_REGION;
+      delete process.env.EMAIL_AWS_SNS_TOPIC_ARN;
+      assert.equal(loadSesIngestionConfig(), null);
+      process.env.EMAIL_AWS_REGION = SES_REGION;
+      process.env.EMAIL_AWS_SNS_TOPIC_ARN = SES_ARN;
+      const result = loadSesIngestionConfig();
+      assert.notEqual(result, null);
+      assert.equal((result as SesIngestionConfig).region, SES_REGION);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+  });
+});
+
+describe("9. Fake and Mailpit workflows still work without any AWS variables", () => {
+  it("evaluateEmailConfig for fake does not demand AWS variables", () => {
+    assert.equal(evaluate(LOCAL_FAKE, "local").provider, "fake");
+  });
+  it("evaluateEmailConfig for mailpit does not demand AWS variables", () => {
+    assert.equal(evaluate(LOCAL_MAILPIT, "local").provider, "mailpit");
   });
 });
