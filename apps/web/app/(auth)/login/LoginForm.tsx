@@ -9,7 +9,6 @@ import { safeRedirectPath } from "../../../lib/safe-redirect.ts";
 import { createClient } from "../../../lib/supabase/browser.ts";
 
 type Mode = "password" | "otp";
-type OtpChannel = "email" | "phone";
 
 export function LoginForm() {
   const router = useRouter();
@@ -21,8 +20,9 @@ export function LoginForm() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  // OTP state
-  const [otpChannel, setOtpChannel] = useState<OtpChannel>("email");
+  // OTP state. Email channel only: phone OTP is inert without an SMS provider
+  // (DEC-17), and signup stores the phone on public.users, not auth.users, so
+  // signInWithOtp({ phone }) could never match an email+password account.
   const [otpIdentifier, setOtpIdentifier] = useState("");
   const [otpSent, setOtpSent] = useState(false);
   const [otpCode, setOtpCode] = useState("");
@@ -53,10 +53,10 @@ export function LoginForm() {
     setLoading(true);
     setError(null);
     const supabase = createClient();
-    const { error: sendError } =
-      otpChannel === "email"
-        ? await supabase.auth.signInWithOtp({ email: otpIdentifier, options: { shouldCreateUser: false } })
-        : await supabase.auth.signInWithOtp({ phone: otpIdentifier, options: { shouldCreateUser: false } });
+    const { error: sendError } = await supabase.auth.signInWithOtp({
+      email: otpIdentifier.trim(),
+      options: { shouldCreateUser: false },
+    });
     setLoading(false);
     if (sendError) {
       setError(mapAuthError(sendError.message));
@@ -69,10 +69,11 @@ export function LoginForm() {
     setLoading(true);
     setError(null);
     const supabase = createClient();
-    const { error: verifyError } =
-      otpChannel === "email"
-        ? await supabase.auth.verifyOtp({ email: otpIdentifier, token: otpCode, type: "email" })
-        : await supabase.auth.verifyOtp({ phone: otpIdentifier, token: otpCode, type: "sms" });
+    const { error: verifyError } = await supabase.auth.verifyOtp({
+      email: otpIdentifier.trim(),
+      token: otpCode,
+      type: "email",
+    });
     setLoading(false);
     if (verifyError) {
       setError(mapAuthError(verifyError.message));
@@ -116,7 +117,7 @@ export function LoginForm() {
             setError(null);
           }}
         >
-          Use a different {otpChannel === "email" ? "email address" : "phone number"}
+          Use a different email address
         </Button>
       </form>
     );
@@ -132,47 +133,14 @@ export function LoginForm() {
           void sendOtpCode();
         }}
       >
-        <div className="flex gap-1 rounded-[var(--radius-md)] border border-[var(--color-border)] p-1 text-sm">
-          {(["email", "phone"] as const).map((option) => (
-            <button
-              key={option}
-              type="button"
-              onClick={() => {
-                setOtpChannel(option);
-                setOtpIdentifier("");
-                setError(null);
-              }}
-              className={
-                "flex-1 rounded-[var(--radius-sm)] py-1.5 font-medium transition-colors " +
-                (otpChannel === option
-                  ? "bg-[var(--color-primary)] text-[var(--color-primary-fg)]"
-                  : "text-[var(--color-text-muted)]")
-              }
-            >
-              {option === "email" ? "Email" : "Phone"}
-            </button>
-          ))}
-        </div>
-        {otpChannel === "email" ? (
-          <TextField
-            label="Email address"
-            type="email"
-            autoComplete="email"
-            value={otpIdentifier}
-            onChange={(event) => setOtpIdentifier(event.target.value)}
-            required
-          />
-        ) : (
-          <TextField
-            label="Phone number"
-            type="tel"
-            placeholder="+2348012345678"
-            autoComplete="tel"
-            value={otpIdentifier}
-            onChange={(event) => setOtpIdentifier(event.target.value)}
-            required
-          />
-        )}
+        <TextField
+          label="Email address"
+          type="email"
+          autoComplete="email"
+          value={otpIdentifier}
+          onChange={(event) => setOtpIdentifier(event.target.value)}
+          required
+        />
         {error && <Banner tone="danger">{error}</Banner>}
         <Button type="submit" loading={loading}>
           Send code
@@ -188,7 +156,7 @@ export function LoginForm() {
           Sign in with password
         </button>
         <p className="text-center text-sm text-[var(--color-text-muted)]">
-          Don't have an account?{" "}
+          Don&apos;t have an account?{" "}
           <Link href="/signup" className="font-medium text-[var(--color-primary)] hover:underline">
             Create account
           </Link>
@@ -246,7 +214,7 @@ export function LoginForm() {
         Sign in with OTP
       </Button>
       <p className="text-center text-sm text-[var(--color-text-muted)]">
-        Don't have an account?{" "}
+        Don&apos;t have an account?{" "}
         <Link href="/signup" className="font-medium text-[var(--color-primary)] hover:underline">
           Create account
         </Link>
