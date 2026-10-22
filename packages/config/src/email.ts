@@ -292,3 +292,102 @@ export function loadEmailConfig(environment: KolektoEnvironment): EmailConfig {
 export function describeEmailConfig(config: EmailConfig | RealEmailConfig): string {
   return `email provider=${config.provider} from=${config.from} baseUrl=${config.appBaseUrl}`;
 }
+
+// ── SES/SNS ingestion configuration (M13.2 P9-2) ─────────────────────────────
+//
+// The webhook route accepts SES delivery feedback via SNS. These two variables
+// configure WHERE events are expected to come from. They are server-only (no
+// NEXT_PUBLIC_* permitted, same guard as the sending config); nothing here
+// adds AWS credentials — SNS signature verification uses the signed envelope
+// plus a cert fetched from a strict hostname allowlist, and never a shared
+// secret. "Fail closed": when the route is enabled and either variable is
+// missing or malformed, the loader throws rather than returning a partial
+// shape, so a misconfigured deploy cannot silently accept forged events.
+
+/** Narrow regexes for the two SES ingestion variables. Reused by evaluator and tests. */
+const AWS_REGION_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+const SNS_TOPIC_ARN_PATTERN = /^arn:aws(?:-cn|-us-gov)?:sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]+$/;
+
+export interface SesIngestionConfig {
+  readonly region: string;
+  readonly topicArn: string;
+}
+
+function assertNoPublicAwsVariables(env: Env): void {
+  for (const name of Object.keys(env)) {
+    if (!name.startsWith("NEXT_PUBLIC_")) continue;
+    if (/(AWS|SES|SNS)/i.test(name)) {
+      throw new ConfigError(
+        `REFUSING TO START: ${name} is an AWS/SES/SNS setting exposed through the NEXT_PUBLIC_ prefix. ` +
+          `AWS configuration is server-only; NEXT_PUBLIC_* values are shipped to browsers.`,
+      );
+    }
+  }
+}
+
+/**
+ * Validate SES ingestion configuration against the environment it will run in.
+ * Pure: reads only its arguments, so every rule is testable without touching
+ * process.env.
+ *
+ * Returns null when NEITHER variable is set — the ingestion endpoint is
+ * disabled in that process and must refuse to serve requests. Returns the
+ * validated shape when BOTH are set and consistent. Throws when exactly one
+ * is set (half-configured), when the values are malformed, when the ARN's
+ * region segment disagrees with EMAIL_AWS_REGION, or when a credential-like
+ * NEXT_PUBLIC_* exists for an AWS setting.
+ */
+export function evaluateSesIngestionConfig(env: Env): SesIngestionConfig | null {
+  assertNoPublicAwsVariables(env);
+
+  const region = value(env, "EMAIL_AWS_REGION");
+  const topicArn = value(env, "EMAIL_AWS_SNS_TOPIC_ARN");
+
+  if (region === undefined && topicArn === undefined) {
+    return null;
+  }
+  if (region === undefined || topicArn === undefined) {
+    throw new ConfigError(
+      "REFUSING TO START: SES ingestion variables are only half configured. " +
+        "Set BOTH EMAIL_AWS_REGION and EMAIL_AWS_SNS_TOPIC_ARN, or unset both to disable the ingestion endpoint.",
+    );
+  }
+
+  if (!AWS_REGION_PATTERN.test(region)) {
+    throw new ConfigError("EMAIL_AWS_REGION is not a well-formed AWS region string (expected e.g. eu-west-1).");
+  }
+  if (!SNS_TOPIC_ARN_PATTERN.test(topicArn)) {
+    throw new ConfigError("EMAIL_AWS_SNS_TOPIC_ARN is not a well-formed AWS SNS Topic ARN.");
+  }
+  // The ARN's region segment MUST match the configured region. Two independent
+  // settings that have to agree — a mistyped or copy-pasted value fails here.
+  const arnRegion = topicArn.split(":")[3];
+  if (arnRegion !== region) {
+    throw new ConfigError(
+      "REFUSING TO START: EMAIL_AWS_SNS_TOPIC_ARN's region segment does not match EMAIL_AWS_REGION.",
+    );
+  }
+
+  return Object.freeze({ region, topicArn });
+}
+
+/**
+ * Load SES ingestion config from process.env. Server-only.
+ *
+ * Returns null (ingestion disabled) when neither variable is set. The webhook
+ * route uses this directly: a null result means refuse 503 at the route, not
+ * silently accept.
+ */
+export function loadSesIngestionConfig(): SesIngestionConfig | null {
+  if (typeof window !== "undefined") {
+    throw new ConfigError(
+      "loadSesIngestionConfig() was called in a browser context. SES ingestion configuration is server-only.",
+    );
+  }
+  return evaluateSesIngestionConfig(process.env);
+}
+
+/** A log-safe description. Names the region and ARN tail; the ARN itself is not a secret. */
+export function describeSesIngestionConfig(config: SesIngestionConfig): string {
+  return `ses ingestion region=${config.region} topic=${config.topicArn}`;
+}
