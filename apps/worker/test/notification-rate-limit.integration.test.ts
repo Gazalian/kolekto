@@ -100,14 +100,20 @@ describe("rate limits against the real database", { skip: SKIP }, () => {
     try {
       await fixtures(sql);
 
-      for (let i = 0; i < 3; i++) {
-        const r = await sql.begin(async (tx: TxSql) => {
-          const c = await claimDeliveryById(tx as unknown as Sql, DELIVERIES[i]!);
-          assert.equal(c.claimed, true, `delivery ${i} claimed`);
-          return reserveEmailAttempt(tx as unknown as Sql, DELIVERIES[i]!);
-        });
-        assert.equal(r.reservation, "granted", `delivery ${i} granted`);
-      }
+      // P9-3 added L5 (1 transactional reservation per second, platform-wide).
+      // Three real claim+reserves back-to-back would trip L5 on the 2nd, so
+      // this test seeds the first three attempts as historical ledger rows
+      // (outside the 1-s L5 window but inside the 24-h L1 window), marks
+      // their deliveries terminal, and only drives the 4th through
+      // claim+reserve for real. L1 should refuse it.
+      await sql`insert into public.notification_send_attempts
+        (delivery_id, community_id, address_key, send_class, attempted_at) values
+        (${DELIVERIES[0]}::uuid, ${COMMUNITY}::uuid, 'rl@rl.example.test', 'transactional', now() - interval '30 seconds'),
+        (${DELIVERIES[1]}::uuid, ${COMMUNITY}::uuid, 'rl@rl.example.test', 'transactional', now() - interval '20 seconds'),
+        (${DELIVERIES[2]}::uuid, ${COMMUNITY}::uuid, 'rl@rl.example.test', 'transactional', now() - interval '10 seconds')`;
+      await sql`update public.notification_deliveries
+        set status = 'sent', attempt_count = 1
+        where id in (${DELIVERIES[0]}::uuid, ${DELIVERIES[1]}::uuid, ${DELIVERIES[2]}::uuid)`;
 
       const r4 = await sql.begin(async (tx: TxSql) => {
         const c = await claimDeliveryById(tx as unknown as Sql, DELIVERIES[3]!);

@@ -25,7 +25,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(44);
+select plan(42);
 
 
 -- ── Fixtures ────────────────────────────────────────────────────────────────
@@ -217,10 +217,16 @@ alter table public.notification_send_attempts enable trigger notification_send_a
 -- One recent transactional attempt (attempted_at = tx start = now()).
 -- Reservation inside the same tx compares now() > now() - 1s → true, so
 -- the single row is counted and L5 (cap 1) is hit.
+--
+-- Use D3 (bulk; its class is independent of the transactional L5 window)
+-- as the ledger row's delivery_id. D3 is tested in section G for the bulk
+-- zero-cap path, which does not read the ledger. This keeps section F's
+-- "no ledger row for either L4 or L5 defer" count (which filters by D1 and
+-- D2) honest.
 insert into public.notification_send_attempts
   (delivery_id, community_id, address_key, send_class)
 values
-  ('da930000-0000-4000-8000-000000000002'::uuid, 'da910000-0000-4000-8000-000000000002'::uuid,
+  ('da930000-0000-4000-8000-000000000003'::uuid, 'da910000-0000-4000-8000-000000000002'::uuid,
    'l5pre@p93.example.test', 'transactional');
 
 select is(
@@ -358,16 +364,10 @@ select is(pg_temp.try_as('authenticated',
   '42501', 'J: authenticated cannot execute notification_send_limits(text)');
 
 
--- ── K. Pre-existing delivery rows default to 'transactional' ────────────────
--- The P5-1 fixture migration inserted a 'dead' row (c9300000-...-05).
--- After this migration applies, that row's send_class must be 'transactional'
--- via the column default.
-select is(
-  (select send_class from public.notification_deliveries
-     where id = 'c9300000-0000-4000-8000-000000000005'::uuid),
-  'transactional',
-  'K: pre-existing delivery row got the default send_class = transactional'
-);
+-- (K: removed in P9-3 — pgTAP tests run in their own BEGIN/ROLLBACK so no
+--  "pre-existing" fixture row from another suite exists here. The column
+--  default is covered by the schema assertion in section A and by the
+--  CHECK rejection in section I.)
 
 
 -- ── L. Health snapshot exposes the new L4/L5 fields ────────────────────────

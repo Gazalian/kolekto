@@ -465,10 +465,17 @@ drop function app.notification_send_limits();
 -- The staff-only view is a `select * from app.notification_send_health()`
 -- passthrough and picks the new columns up automatically.
 --
--- Because the function signature grows (new return columns), the view must
--- be dropped and recreated. It is defined with no other dependents and
--- carries no grants to any client role, so this is a one-line reset.
+-- Because the function's return TABLE grows four columns, its return type
+-- changes, and Postgres rejects CREATE OR REPLACE in that case
+-- (SQLSTATE 42P13). We therefore DROP the function and recreate it. The
+-- view private.v_notification_send_health is the function's only database
+-- dependent — grep across supabase/migrations/ shows no other object
+-- references the function — so this is a two-line reset (view, then
+-- function) with no CASCADE needed. The view is recreated below as the
+-- same `select * from` passthrough; it carries no grants to any client
+-- role (ADR 0009), and that is re-asserted here.
 drop view private.v_notification_send_health;
+drop function app.notification_send_health();
 
 create or replace function app.notification_send_health()
 returns table (

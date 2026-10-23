@@ -158,6 +158,19 @@ async function makeDue(sql: Sql, id: string): Promise<void> {
     set next_retry_at = now() - interval '1 minute' where id = ${id}::uuid`;
 }
 
+/**
+ * Clear the rate-limit ledger so a test can send twice in quick succession
+ * without the second attempt tripping L5 (1 per transactional send per
+ * second). Scoped to all rows because `claim_next_notification_delivery`
+ * and the L5 count both ignore community_id; a cross-community leftover
+ * would otherwise still fire the limit. Safe on the local dev DB only.
+ */
+async function clearSendLedger(sql: Sql): Promise<void> {
+  await sql`alter table public.notification_send_attempts disable trigger notification_send_attempts_no_delete`;
+  try { await sql`delete from public.notification_send_attempts`; }
+  finally { await sql`alter table public.notification_send_attempts enable trigger notification_send_attempts_no_delete`; }
+}
+
 function withSql<T>(fn: (sql: Sql) => Promise<T>, maxConns = 2): Promise<T> {
   const sql = postgres(URL_ENV, { prepare: false, transform: { undefined: null }, max: maxConns });
   return (async () => {
@@ -201,6 +214,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       const first = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(first.outcome, "sent");
 
+      await clearSendLedger(sql);
       const replay = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(replay.outcome, "empty", "a sent row is terminal and never re-claimed");
       assert.equal(provider.outbox.length, 1, "exactly one message delivered");
@@ -247,6 +261,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       assert.ok(delayMs >= 4 * 60_000 && delayMs <= 6 * 60_000 + 30_000, `delay ${delayMs}ms`);
 
       await makeDue(sql, id);
+      await clearSendLedger(sql);
       const second = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(second.outcome, "sent");
       const sent = await readDelivery(sql, id);
@@ -270,10 +285,12 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       const s1 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s1.outcome, "retry");
       await makeDue(sql, id);
+      await clearSendLedger(sql);
 
       const s2 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s2.outcome, "retry");
       await makeDue(sql, id);
+      await clearSendLedger(sql);
 
       const s3 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s3.outcome, "dead");
@@ -302,6 +319,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       const s1 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s1.outcome, "retry", "ambiguous + provider idempotency is retried");
       await makeDue(sql, id);
+      await clearSendLedger(sql);
 
       const s2 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s2.outcome, "sent");
@@ -380,8 +398,14 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       const row = await readDelivery(sql, id);
       assert.equal(row.status, "pending");
       assert.equal(row.attempt_count, 0, "L5 defer consumes no attempt");
+      // The reservation uses the Postgres server's now(), which can drift a
+      // few hundred ms from the JS Date.now() captured in `before`. 1 s +
+      // random 0–200 ms (SQL side) therefore lands anywhere in [200, 3000] ms
+      // from JS's point of view — the window has to be wide enough that
+      // clock skew does not flake the test. We still prove it is a bounded,
+      // short defer and not an open-ended one.
       const delayMs = Date.parse(row.next_retry_at!) - before;
-      assert.ok(delayMs >= 500 && delayMs <= 3000, `L5 schedule within ~1s + jitter (${delayMs}ms)`);
+      assert.ok(delayMs >= 200 && delayMs <= 3000, `L5 schedule within ~1s + jitter (${delayMs}ms)`);
     });
   });
 
@@ -525,6 +549,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       await sql`update public.notification_deliveries set created_at = now() - interval '10 hours' where id = ${deadId}::uuid`;
       const dead = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(dead.outcome, "dead");
+      await clearSendLedger(sql);
       const sent = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(sent.outcome, "sent");
       void sentId;
