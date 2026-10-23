@@ -31,7 +31,7 @@ export type SesNormalizedEventType =
   | "rendering_failure"
   | "other";
 
-export interface InsertEmailDeliveryEventInput {
+export interface RecordSesNotificationInput {
   readonly provider: "ses";
   readonly providerEventId: string;
   readonly providerEventType: string;
@@ -44,40 +44,49 @@ export interface InsertEmailDeliveryEventInput {
   readonly snsTopicArn: string | null;
 }
 
-export interface InsertEmailDeliveryEventResult {
-  /** True when this call inserted a new row; false when the (provider, provider_event_id) conflict silently absorbed a duplicate. */
+export interface RecordSesNotificationResult {
+  /** The ledger row id. Stable across retries of the same (provider, provider_event_id). */
+  readonly eventId: string;
+  /** True when this call inserted a new row; false when a prior call already created the row (SNS redelivery or in-process concurrency). */
   readonly inserted: boolean;
+  /** True when the existing row has already been marked `succeeded`. The route uses this to short-circuit duplicate deliveries without re-applying side effects. */
+  readonly previouslySucceeded: boolean;
+  /** How many times the route has attempted the side effect so far. Zero on insert; the counter advances inside the mark-{succeeded,failed} calls. */
+  readonly processingAttempts: number;
 }
 
 /**
- * Insert a single authenticated event row. Idempotent on
- * (provider, provider_event_id): a repeated event conflicts on the unique
- * index and this function returns `inserted: false` without changing side
- * effects. The route uses that flag to skip the suppression / delivery
- * updates on duplicates (which would otherwise be no-ops anyway, but
- * reasserting "no side effect on duplicate" at the route layer is cheaper
- * than relying on each downstream call to be idempotent).
+ * Insert the authenticated Notification row, OR return the existing row's
+ * identity and processing state so the route can decide whether to retry
+ * the side effect (M13.2 P9-2.1).
+ *
+ * Replaces the earlier `insertEmailDeliveryEvent` helper: the old helper
+ * returned only `inserted` and left the "has the side effect run?" question
+ * to the application layer, which in practice meant a swallowed exception
+ * acknowledged a notification that had never actually been actioned. This
+ * helper always surfaces the two facts the route needs to decide: did we
+ * insert, and has the row already been marked succeeded?
+ *
+ * Idempotent on (provider, provider_event_id): a replayed SNS Notification
+ * conflicts on the unique index and returns `inserted: false` with the
+ * existing row's state.
  */
-export async function insertEmailDeliveryEvent(
-  input: InsertEmailDeliveryEventInput,
-): Promise<InsertEmailDeliveryEventResult> {
+export async function recordSesNotification(
+  input: RecordSesNotificationInput,
+): Promise<RecordSesNotificationResult> {
   return runWrite(() =>
     withOwnerConnection(async (tx) => {
       const payloadJson = JSON.stringify(input.payload);
-      const rows = await tx<{ id: string }[]>`
-        insert into public.email_delivery_events (
-          provider,
-          provider_event_id,
-          provider_event_type,
-          normalized_event_type,
-          payload,
-          signature_verified,
-          recipient_address_key,
-          ses_feedback_id,
-          provider_message_id,
-          sns_topic_arn
-        ) values (
-          ${input.provider},
+      const rows = await tx<
+        {
+          event_id: string;
+          inserted: boolean;
+          previously_succeeded: boolean;
+          processing_attempts: number | string;
+        }[]
+      >`
+        select *
+        from app.record_ses_notification(
           ${input.providerEventId},
           ${input.providerEventType},
           ${input.normalizedEventType},
@@ -88,12 +97,58 @@ export async function insertEmailDeliveryEvent(
           ${input.providerMessageId},
           ${input.snsTopicArn}
         )
-        on conflict (provider, provider_event_id) do nothing
-        returning id
       `;
-      return { inserted: rows.length === 1 };
+      const row = rows[0]!;
+      const attempts =
+        typeof row.processing_attempts === "number"
+          ? row.processing_attempts
+          : Number.parseInt(row.processing_attempts, 10);
+      return {
+        eventId: row.event_id,
+        inserted: row.inserted,
+        previouslySucceeded: row.previously_succeeded,
+        processingAttempts: Number.isFinite(attempts) ? attempts : 0,
+      };
     }),
   );
+}
+
+/**
+ * Mark a notification's ledger row as `succeeded`. Idempotent — a second
+ * call for a row already in `succeeded` is a no-op. Returns the number of
+ * rows updated (0 or 1).
+ */
+export async function markSesNotificationSucceeded(eventId: string): Promise<number> {
+  const updated = await runWrite(() =>
+    withOwnerConnection(async (tx) => {
+      const rows = await tx<{ updated: string | number }[]>`
+        select app.mark_ses_notification_succeeded(${eventId}::uuid) as updated
+      `;
+      const raw = rows[0]?.updated ?? 0;
+      return typeof raw === "number" ? raw : Number.parseInt(raw, 10);
+    }),
+  );
+  return Number.isFinite(updated) ? updated : 0;
+}
+
+/**
+ * Mark a notification's ledger row as `failed` with a stable snake_case
+ * error_code. Never downgrades a `succeeded` row.
+ */
+export async function markSesNotificationFailed(input: {
+  readonly eventId: string;
+  readonly errorCode: string;
+}): Promise<number> {
+  const updated = await runWrite(() =>
+    withOwnerConnection(async (tx) => {
+      const rows = await tx<{ updated: string | number }[]>`
+        select app.mark_ses_notification_failed(${input.eventId}::uuid, ${input.errorCode}) as updated
+      `;
+      const raw = rows[0]?.updated ?? 0;
+      return typeof raw === "number" ? raw : Number.parseInt(raw, 10);
+    }),
+  );
+  return Number.isFinite(updated) ? updated : 0;
 }
 
 /**

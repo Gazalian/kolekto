@@ -66,12 +66,21 @@ step's completion in the P9 operator checklist.
 
 ## 3. Kolekto configuration (per deploy)
 
-Two new server-only environment variables. Set both or neither. Setting
-one without the other refuses startup.
+Two required server-only environment variables. Set both or neither.
+Setting one without the other refuses startup.
 
 ```
 EMAIL_AWS_REGION=eu-west-1
 EMAIL_AWS_SNS_TOPIC_ARN=arn:aws:sns:eu-west-1:123456789012:kolekto-ses-feedback
+```
+
+One optional variable, M13.2 P9-2.1:
+
+```
+# Opt in to accepting SignatureVersion 1 (RSA-SHA1) in addition to
+# SignatureVersion 2 (RSA-SHA256). Default is v2 only. Must be exactly
+# "true" or "false" (or unset).
+EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1=false
 ```
 
 Validation (performed by `evaluateSesIngestionConfig` at startup):
@@ -80,12 +89,27 @@ Validation (performed by `evaluateSesIngestionConfig` at startup):
 - `EMAIL_AWS_SNS_TOPIC_ARN` matches
   `^arn:aws(?:-cn|-us-gov)?:sns:[a-z0-9-]+:\d{12}:[A-Za-z0-9_-]+$`.
 - The ARN's region segment MUST equal `EMAIL_AWS_REGION`.
+- `EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1`, when set, must be the literal
+  string `"true"` or `"false"`. Any other value refuses to start — no
+  silent coercion.
 - Neither value may be exposed through a `NEXT_PUBLIC_*` variable. A
   `NEXT_PUBLIC_AWS_*` or `NEXT_PUBLIC_SNS_*` on the deploy refuses to
   start, same guard that already protects `EMAIL_API_KEY`.
 
 No shared secret is used; SNS signature verification is the sole
 authentication mechanism.
+
+### SignatureVersion posture
+
+The adapter defaults to accepting SignatureVersion 2 (RSA-SHA256) only.
+AWS recommends enabling v2 on every topic ([verify-signature docs]).
+When creating a new SNS topic for Kolekto, enable SignatureVersion 2
+and leave `EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1` unset. If an existing
+topic you cannot reconfigure still uses v1, set
+`EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1=true` to expand the accepted set to
+`["1", "2"]`.
+
+[verify-signature docs]: https://docs.aws.amazon.com/sns/latest/dg/sns-verify-signature-of-message.html
 
 ### Local development
 

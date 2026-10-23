@@ -55,8 +55,10 @@ import {
   type EmailWebhookRejection,
 } from "@kolekto/adapters";
 import {
-  insertEmailDeliveryEvent,
+  markSesNotificationFailed,
+  markSesNotificationSucceeded,
   recordSesDeliveryEvent,
+  recordSesNotification,
   recordSesSuppression,
   type SesSuppressionReason,
 } from "@kolekto/db";
@@ -89,25 +91,24 @@ export async function POST(request: Request): Promise<Response> {
     return problem(415, "unsupported_content_type");
   }
 
-  // Early size check from Content-Length header. Not authoritative — the
-  // body is re-checked after reading — but it avoids CPU on huge requests.
+  // Early size check from Content-Length header. Not authoritative on its
+  // own (a chunked request may omit it), but it short-circuits any body
+  // that honestly declares its size.
   const declaredLength = request.headers.get("content-length");
   if (declaredLength !== null) {
     const n = Number.parseInt(declaredLength, 10);
     if (Number.isFinite(n) && n > MAX_BODY_BYTES) return problem(413, "payload_too_large");
   }
 
-  // Read raw bytes exactly as received. arrayBuffer() preserves the exact
-  // bytes AWS signed over; a re-serialised JSON would change them and break
-  // the hash.
-  let rawBody: Uint8Array;
-  try {
-    const buf = await request.arrayBuffer();
-    if (buf.byteLength > MAX_BODY_BYTES) return problem(413, "payload_too_large");
-    rawBody = new Uint8Array(buf);
-  } catch {
-    return problem(400, "body_read_failed");
-  }
+  // Read raw bytes exactly as received, with a streaming byte-counter so a
+  // chunked body without a Content-Length cannot blow past the cap. The
+  // signature is verified over the exact bytes the client sent, so nothing
+  // is re-serialised between here and `adapter.authenticate`.
+  const bodyRead = await readLimitedBody(request, MAX_BODY_BYTES);
+  if (bodyRead === "too_large") return problem(413, "payload_too_large");
+  if (bodyRead === "no_body") return problem(400, "body_read_failed");
+  if (bodyRead === "read_error") return problem(400, "body_read_failed");
+  const rawBody: Uint8Array = bodyRead;
 
   // Collect headers (lower-cased) to pass through to the adapter. We copy a
   // small, named set — Content-Type and the SNS header set — to avoid
@@ -154,8 +155,11 @@ export async function POST(request: Request): Promise<Response> {
     return ack("subscription_confirmed", envelope.type);
   }
 
-  // Notification. Classify, store the event ledger row, then apply the
-  // matching side effect.
+  // Notification. Classify, record (or reuse) the ledger row, then apply
+  // the matching side effect under the row's processing-state tracking.
+  // M13.2 P9-2.1: a side-effect failure now marks the row `failed` and
+  // returns 500 so SNS redelivers — the previous phase swallowed the
+  // failure and acked 200, losing the side effect silently.
   let classified: ClassifiedSesEvent;
   try {
     classified = adapter.classifyEvent(envelope);
@@ -166,9 +170,9 @@ export async function POST(request: Request): Promise<Response> {
   const recipientAddressKey =
     classified.recipientAddresses.length > 0 ? classified.recipientAddresses[0]! : null;
 
-  let inserted: boolean;
+  let ledger: { eventId: string; inserted: boolean; previouslySucceeded: boolean };
   try {
-    const result = await insertEmailDeliveryEvent({
+    const result = await recordSesNotification({
       provider: "ses",
       providerEventId: envelope.identity.providerEventId,
       providerEventType: classified.providerEventType,
@@ -180,23 +184,49 @@ export async function POST(request: Request): Promise<Response> {
       providerMessageId: classified.providerMessageId,
       snsTopicArn: envelope.identity.snsTopicArn,
     });
-    inserted = result.inserted;
+    ledger = result;
   } catch {
-    // Any insert failure is observed by the deploy's logs through the
-    // runtime handler; the body never carries detail that could leak.
+    // Insert itself failed; nothing durable happened, SNS redelivery
+    // will try again. 500 so SNS retries.
     return problem(500, "ledger_write_failed");
   }
 
-  // Duplicate (SNS retried before we acknowledged, or a replay): nothing to
-  // do downstream. The event row already exists and its side effect was
-  // applied the first time (or will be, by a different concurrent request
-  // that just inserted).
-  if (!inserted) {
+  // SNS redelivered an event we already processed. Short-circuit without
+  // re-applying — side effects are idempotent, but reasserting at this
+  // layer makes the "no duplicate side effect on duplicate delivery"
+  // guarantee visible in the route and skips the DB round trip.
+  if (ledger.previouslySucceeded) {
     return ack("duplicate", envelope.type);
   }
 
-  const outcome = await applySideEffect(classified);
-  return ack(outcome, envelope.type);
+  // Apply the side effect. On success, mark the row succeeded (ack 200).
+  // On failure, mark the row failed with a stable error_code (ack 500 so
+  // SNS retries). The outcome is a tuple of (effect-outcome, errorCode).
+  const sideEffect = await applySideEffect(classified);
+
+  if (sideEffect.outcome === "failure") {
+    try {
+      await markSesNotificationFailed({ eventId: ledger.eventId, errorCode: sideEffect.errorCode });
+    } catch {
+      // Marker write itself failed; the ledger row stays `pending`, which
+      // the next SNS redelivery will retry. Return 500 so SNS keeps trying.
+    }
+    return problem(500, sideEffect.errorCode);
+  }
+
+  // Side effect succeeded (or was deliberately a no-op for a classification
+  // that does not act on the row, e.g. transient_bounce / rejection / other).
+  try {
+    await markSesNotificationSucceeded(ledger.eventId);
+  } catch {
+    // The ledger row stays `pending`, SNS retries, and the next attempt
+    // sees previously_succeeded = false and re-runs the (idempotent) side
+    // effect. Return 500 so SNS retries sooner rather than later.
+    return problem(500, "mark_succeeded_failed");
+  }
+
+  // sideEffect.outcome is narrowed to non-"failure" by the branch above.
+  return ack(sideEffect.outcome, envelope.type);
 }
 
 /** Return 405 for every HTTP verb other than POST, with the Allow header set. */
@@ -225,16 +255,37 @@ function methodNotAllowed(): Response {
 
 // ── Side-effect dispatch ────────────────────────────────────────────────────
 
-type SideEffectOutcome = "suppression_recorded" | "delivery_recorded" | "no_op" | "no_recipient";
+/**
+ * The side-effect outcome vocabulary. A `success` outcome lets the route
+ * mark the ledger row `succeeded` and return 200; a `failure` outcome
+ * marks the row `failed` with the stable error_code and returns 500 so
+ * SNS retries. `no_op` is a success-shaped outcome for classifications
+ * that record the event but take no further action.
+ */
+type SideEffectOutcome =
+  | { readonly outcome: "suppression_recorded"; readonly errorCode?: undefined }
+  | { readonly outcome: "delivery_recorded"; readonly errorCode?: undefined }
+  | { readonly outcome: "no_op"; readonly errorCode?: undefined }
+  | { readonly outcome: "no_recipient"; readonly errorCode?: undefined }
+  | { readonly outcome: "failure"; readonly errorCode: string };
 
 async function applySideEffect(classified: ClassifiedSesEvent): Promise<SideEffectOutcome> {
   switch (classified.normalizedEventType) {
     case "bounce_permanent":
     case "complaint": {
-      if (classified.recipientAddresses.length === 0) return "no_recipient";
+      if (classified.recipientAddresses.length === 0) {
+        // The event carries no recipient address. We still want the ledger
+        // row marked succeeded (there is nothing to retry), so return a
+        // success-shaped outcome. Operators can inspect the row by hand.
+        return { outcome: "no_recipient" };
+      }
       const reason: SesSuppressionReason =
         classified.normalizedEventType === "complaint" ? "complaint" : "hard_bounce";
       // SES can carry multiple recipients inside one event — suppress each.
+      // If ANY per-address write throws, the overall side effect is a
+      // failure: the row stays unprocessed and SNS retries. Suppression is
+      // idempotent (set_email_suppression is a no-op when the row already
+      // exists), so retrying is safe even if some addresses already landed.
       for (const address of classified.recipientAddresses) {
         try {
           await recordSesSuppression({
@@ -244,27 +295,26 @@ async function applySideEffect(classified: ClassifiedSesEvent): Promise<SideEffe
             providerMessageId: classified.providerMessageId,
           });
         } catch {
-          // One malformed address inside a batch must not stop the rest.
-          // The event ledger still carries the full payload for operator
-          // investigation. A per-address failure is swallowed here on
-          // purpose; it is observable at the database layer.
+          return { outcome: "failure", errorCode: "suppression_write_failed" };
         }
       }
-      return "suppression_recorded";
+      return { outcome: "suppression_recorded" };
     }
     case "delivery": {
-      if (classified.providerMessageId === null) return "no_op";
+      if (classified.providerMessageId === null) {
+        // Nothing to correlate on. The ledger has the row for operator
+        // visibility; mark it succeeded (no retry would help).
+        return { outcome: "no_op" };
+      }
       try {
         await recordSesDeliveryEvent({
           providerMessageId: classified.providerMessageId,
           deliveredAt: classified.deliveredAt,
         });
       } catch {
-        // Same reasoning as above: a Delivery event that fails to apply does
-        // not undo the ledger insert. The row remains visible and operators
-        // can replay by hand later if needed.
+        return { outcome: "failure", errorCode: "delivery_write_failed" };
       }
-      return "delivery_recorded";
+      return { outcome: "delivery_recorded" };
     }
     case "bounce_transient":
     case "rejection":
@@ -275,8 +325,55 @@ async function applySideEffect(classified: ClassifiedSesEvent): Promise<SideEffe
       // and a later milestone may introduce transient_bounce_capped logic
       // (M13.2 §10.4 reserved reason). Rendering_failure and rejection are
       // operator-signal events (misconfiguration), not recipient-signal.
-      return "no_op";
+      return { outcome: "no_op" };
   }
+}
+
+// ── Streaming body read with hard byte cap ──────────────────────────────────
+
+/**
+ * Read the request body into a single Uint8Array, aborting once the byte
+ * counter exceeds `maxBytes`. Returns `"too_large"` on cap breach,
+ * `"no_body"` if the request has no body stream, `"read_error"` on any
+ * stream error. The cap is enforced per chunk so a chunked body without a
+ * Content-Length header cannot buffer more than `maxBytes` + one chunk's
+ * worth before we cancel the stream.
+ */
+async function readLimitedBody(
+  request: Request,
+  maxBytes: number,
+): Promise<Uint8Array | "too_large" | "no_body" | "read_error"> {
+  const stream = request.body;
+  if (stream === null) return "no_body";
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // Ignore cancel errors — the response is already decided.
+        }
+        return "too_large";
+      }
+      chunks.push(value);
+    }
+  } catch {
+    return "read_error";
+  }
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
 }
 
 // ── Response helpers ────────────────────────────────────────────────────────

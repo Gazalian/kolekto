@@ -311,6 +311,18 @@ const SNS_TOPIC_ARN_PATTERN = /^arn:aws(?:-cn|-us-gov)?:sns:[a-z0-9-]+:\d{12}:[A
 export interface SesIngestionConfig {
   readonly region: string;
   readonly topicArn: string;
+  /**
+   * The SNS SignatureVersion values the adapter will accept. The webhook
+   * route refuses anything else as `unsupported_signature_version`.
+   *
+   * Default is `["2"]` only — SignatureVersion 2 (RSA-SHA256) is AWS's
+   * current recommendation and the default for new topics. Operators who
+   * need to accept SignatureVersion 1 for a legacy topic they cannot
+   * reconfigure can set `EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1=true` to expand
+   * the accepted set to `["1", "2"]`. The runbook explains the operational
+   * posture.
+   */
+  readonly acceptedSignatureVersions: readonly string[];
 }
 
 function assertNoPublicAwsVariables(env: Env): void {
@@ -368,7 +380,27 @@ export function evaluateSesIngestionConfig(env: Env): SesIngestionConfig | null 
     );
   }
 
-  return Object.freeze({ region, topicArn });
+  // SignatureVersion policy (M13.2 P9-2.1 / issue #17). Default: v2 only.
+  // Operators who need v1 for a legacy topic opt in explicitly.
+  const allowV1Raw = value(env, "EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1");
+  let acceptedSignatureVersions: readonly string[];
+  if (allowV1Raw === undefined) {
+    acceptedSignatureVersions = ["2"];
+  } else if (allowV1Raw === "true") {
+    acceptedSignatureVersions = ["1", "2"];
+  } else if (allowV1Raw === "false") {
+    acceptedSignatureVersions = ["2"];
+  } else {
+    throw new ConfigError(
+      'EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1 must be the literal string "true" or "false", or unset for the default v2-only policy.',
+    );
+  }
+
+  return Object.freeze({
+    region,
+    topicArn,
+    acceptedSignatureVersions: Object.freeze([...acceptedSignatureVersions]),
+  });
 }
 
 /**

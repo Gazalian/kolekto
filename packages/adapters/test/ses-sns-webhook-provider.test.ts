@@ -212,6 +212,8 @@ function makeAdapter(overrides: Partial<ConstructorParameters<typeof SesSnsWebho
   return new SesSnsWebhookProvider({
     region: REGION,
     expectedTopicArn: TOPIC,
+    // v2 only by default — mirrors the production default in packages/config.
+    acceptedSignatureVersions: ["2"],
     fetchCertificate: async (url) => {
       if (url !== CERT_URL) throw new Error("test only serves one cert URL");
       return certPem;
@@ -225,17 +227,52 @@ function makeAdapter(overrides: Partial<ConstructorParameters<typeof SesSnsWebho
 
 describe("SesSnsWebhookProvider — construction guards", () => {
   it("refuses a malformed region", () => {
-    assert.throws(() => new SesSnsWebhookProvider({ region: "INVALID", expectedTopicArn: TOPIC } as never), /region/i);
+    assert.throws(
+      () => new SesSnsWebhookProvider({ region: "INVALID", expectedTopicArn: TOPIC, acceptedSignatureVersions: ["2"] } as never),
+      /region/i,
+    );
   });
 
   it("refuses a malformed topic ARN", () => {
-    assert.throws(() => new SesSnsWebhookProvider({ region: REGION, expectedTopicArn: "not-an-arn" } as never), /ARN/i);
+    assert.throws(
+      () => new SesSnsWebhookProvider({ region: REGION, expectedTopicArn: "not-an-arn", acceptedSignatureVersions: ["2"] } as never),
+      /ARN/i,
+    );
   });
 
   it("refuses an ARN whose region segment disagrees with the configured region", () => {
     assert.throws(
-      () => new SesSnsWebhookProvider({ region: "eu-west-1", expectedTopicArn: "arn:aws:sns:us-east-1:123456789012:x" } as never),
+      () =>
+        new SesSnsWebhookProvider({
+          region: "eu-west-1",
+          expectedTopicArn: "arn:aws:sns:us-east-1:123456789012:x",
+          acceptedSignatureVersions: ["2"],
+        } as never),
       /region/i,
+    );
+  });
+
+  it("refuses an empty acceptedSignatureVersions list", () => {
+    assert.throws(
+      () =>
+        new SesSnsWebhookProvider({
+          region: REGION,
+          expectedTopicArn: TOPIC,
+          acceptedSignatureVersions: [],
+        } as never),
+      /acceptedSignatureVersions/i,
+    );
+  });
+
+  it("refuses an unknown SignatureVersion value", () => {
+    assert.throws(
+      () =>
+        new SesSnsWebhookProvider({
+          region: REGION,
+          expectedTopicArn: TOPIC,
+          acceptedSignatureVersions: ["3"],
+        } as never),
+      /SignatureVersion/i,
     );
   });
 });
@@ -402,6 +439,77 @@ describe("SesSnsWebhookProvider — certificate cache", () => {
       assert.equal(r.outcome, "authentic");
     }
     assert.equal(calls, 1);
+  });
+});
+
+describe("SesSnsWebhookProvider — certificate validity dates (M13.2 P9-2.1 / #16)", () => {
+  // The test cert is built with validFrom ≈ realNow - 24h, validTo ≈ realNow + 365d.
+  // Shifting the adapter's clock lets us land outside the window without
+  // issuing a new cert.
+  it("refuses a signature when the clock is past validTo (expired cert)", async () => {
+    const realNow = Date.now();
+    const adapter = makeAdapter({ now: () => realNow + 366 * 24 * 60 * 60 * 1000 });
+    const env = freshNotification();
+    // Keep the timestamp inside the (shifted) skew window so we hit the cert
+    // check, not the timestamp check.
+    env.Timestamp = new Date(realNow + 366 * 24 * 60 * 60 * 1000).toISOString();
+    env.Signature = signEnvelope(env);
+    const r = await adapter.authenticate({ rawBody: toRawBody(env) });
+    assert.equal(r.outcome, "rejected");
+    if (r.outcome === "rejected") assert.equal(r.rejection.reason, "cert_fetch_failed");
+  });
+
+  it("refuses a signature when the clock is before validFrom (not-yet-valid)", async () => {
+    const realNow = Date.now();
+    const adapter = makeAdapter({ now: () => realNow - 25 * 60 * 60 * 1000 });
+    const env = freshNotification();
+    env.Timestamp = new Date(realNow - 25 * 60 * 60 * 1000).toISOString();
+    env.Signature = signEnvelope(env);
+    const r = await adapter.authenticate({ rawBody: toRawBody(env) });
+    assert.equal(r.outcome, "rejected");
+    if (r.outcome === "rejected") assert.equal(r.rejection.reason, "cert_fetch_failed");
+  });
+});
+
+describe("SesSnsWebhookProvider — SignatureVersion policy (M13.2 P9-2.1 / #17)", () => {
+  function signV1(env: Record<string, string>): string {
+    return createSign("RSA-SHA1").update(canonical(env), "utf8").sign(privateKey).toString("base64");
+  }
+
+  it("default v2-only adapter refuses a SignatureVersion 1 envelope", async () => {
+    const adapter = makeAdapter({ acceptedSignatureVersions: ["2"] });
+    const env = freshNotification();
+    env.SignatureVersion = "1";
+    env.Signature = signV1(env);
+    const r = await adapter.authenticate({ rawBody: toRawBody(env) });
+    assert.equal(r.outcome, "rejected");
+    if (r.outcome === "rejected") {
+      assert.equal(r.rejection.reason, "unsupported_signature_version");
+      if (r.rejection.reason === "unsupported_signature_version") {
+        assert.equal(r.rejection.version, "1");
+      }
+    }
+  });
+
+  it("opt-in adapter accepts a SignatureVersion 1 envelope when the signature is valid", async () => {
+    const adapter = makeAdapter({ acceptedSignatureVersions: ["1", "2"] });
+    const env = freshNotification();
+    env.SignatureVersion = "1";
+    env.Signature = signV1(env);
+    const r = await adapter.authenticate({ rawBody: toRawBody(env) });
+    assert.equal(r.outcome, "authentic");
+  });
+
+  it("opt-in adapter still refuses a wrongly signed v1 envelope", async () => {
+    const adapter = makeAdapter({ acceptedSignatureVersions: ["1", "2"] });
+    const env = freshNotification();
+    env.SignatureVersion = "1";
+    env.Signature = signV1(env);
+    // Tamper with the Message after signing.
+    env.Message = JSON.stringify({ eventType: "Delivery", mail: { messageId: "TAMPERED" } });
+    const r = await adapter.authenticate({ rawBody: toRawBody(env) });
+    assert.equal(r.outcome, "rejected");
+    if (r.outcome === "rejected") assert.equal(r.rejection.reason, "bad_signature");
   });
 });
 
