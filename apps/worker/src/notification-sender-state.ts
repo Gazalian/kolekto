@@ -67,6 +67,11 @@ export interface SendHealth {
   readonly l2UtilisationPct: number;
   readonly l3LastHour: number;
   readonly l3UtilisationPct: number;
+  /** L4 and L5 counts and utilisation by send class (P9-3). */
+  readonly l4Last24hByClass: Record<string, number>;
+  readonly l4UtilisationPctByClass: Record<string, number | null>;
+  readonly l5LastSecondByClass: Record<string, number>;
+  readonly l5UtilisationPctByClass: Record<string, number | null>;
   readonly sent24h: number;
   readonly dead24h: number;
   readonly skipped24h: number;
@@ -89,6 +94,10 @@ interface SendHealthRow {
   l2_utilisation_pct: string | number | null;
   l3_last_hour: string | number;
   l3_utilisation_pct: string | number | null;
+  l4_last_24h_by_class: Record<string, number> | null;
+  l4_utilisation_pct_by_class: Record<string, number | null> | null;
+  l5_last_second_by_class: Record<string, number> | null;
+  l5_utilisation_pct_by_class: Record<string, number | null> | null;
   sent_24h: string | number;
   dead_24h: string | number;
   skipped_24h: string | number;
@@ -120,6 +129,10 @@ export async function readSendHealth(sql: Db): Promise<SendHealth> {
     l2UtilisationPct: Number(row.l2_utilisation_pct ?? 0),
     l3LastHour: Number(row.l3_last_hour),
     l3UtilisationPct: Number(row.l3_utilisation_pct ?? 0),
+    l4Last24hByClass: row.l4_last_24h_by_class ?? {},
+    l4UtilisationPctByClass: row.l4_utilisation_pct_by_class ?? {},
+    l5LastSecondByClass: row.l5_last_second_by_class ?? {},
+    l5UtilisationPctByClass: row.l5_utilisation_pct_by_class ?? {},
     sent24h: Number(row.sent_24h),
     dead24h: Number(row.dead_24h),
     skipped24h: Number(row.skipped_24h),

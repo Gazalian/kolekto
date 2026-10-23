@@ -158,6 +158,19 @@ async function makeDue(sql: Sql, id: string): Promise<void> {
     set next_retry_at = now() - interval '1 minute' where id = ${id}::uuid`;
 }
 
+/**
+ * Clear the rate-limit ledger so a test can send twice in quick succession
+ * without the second attempt tripping L5 (1 per transactional send per
+ * second). Scoped to all rows because `claim_next_notification_delivery`
+ * and the L5 count both ignore community_id; a cross-community leftover
+ * would otherwise still fire the limit. Safe on the local dev DB only.
+ */
+async function clearSendLedger(sql: Sql): Promise<void> {
+  await sql`alter table public.notification_send_attempts disable trigger notification_send_attempts_no_delete`;
+  try { await sql`delete from public.notification_send_attempts`; }
+  finally { await sql`alter table public.notification_send_attempts enable trigger notification_send_attempts_no_delete`; }
+}
+
 function withSql<T>(fn: (sql: Sql) => Promise<T>, maxConns = 2): Promise<T> {
   const sql = postgres(URL_ENV, { prepare: false, transform: { undefined: null }, max: maxConns });
   return (async () => {
@@ -201,6 +214,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       const first = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(first.outcome, "sent");
 
+      await clearSendLedger(sql);
       const replay = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(replay.outcome, "empty", "a sent row is terminal and never re-claimed");
       assert.equal(provider.outbox.length, 1, "exactly one message delivered");
@@ -247,6 +261,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       assert.ok(delayMs >= 4 * 60_000 && delayMs <= 6 * 60_000 + 30_000, `delay ${delayMs}ms`);
 
       await makeDue(sql, id);
+      await clearSendLedger(sql);
       const second = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(second.outcome, "sent");
       const sent = await readDelivery(sql, id);
@@ -270,10 +285,12 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       const s1 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s1.outcome, "retry");
       await makeDue(sql, id);
+      await clearSendLedger(sql);
 
       const s2 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s2.outcome, "retry");
       await makeDue(sql, id);
+      await clearSendLedger(sql);
 
       const s3 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s3.outcome, "dead");
@@ -302,6 +319,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       const s1 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s1.outcome, "retry", "ambiguous + provider idempotency is retried");
       await makeDue(sql, id);
+      await clearSendLedger(sql);
 
       const s2 = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(s2.outcome, "sent");
@@ -355,6 +373,75 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       assert.equal(row.status, "pending");
       assert.ok(row.next_retry_at, "deferred rows carry a next_retry_at");
       assert.equal(row.attempt_count, 0, "a deferral consumes no attempt");
+    });
+  });
+
+  it("L5 defers a per-second-cap breach with a short retry and no provider call (P9-3)", async () => {
+    await withSql(async (sql) => {
+      await base(sql);
+      const id = await addDelivery(sql, { address: "l5@sender.example.test" });
+
+      // One recent transactional reservation fills L5 (cap 1/s/class).
+      await sql`insert into public.notification_send_attempts
+        (delivery_id, community_id, address_key, send_class, attempted_at)
+        values (${id}::uuid, ${COMMUNITY}::uuid, 'l5-filler@sender.example.test',
+                'transactional', now())`;
+
+      const provider = new FakeEmailProvider();
+      const before = Date.now();
+      const step = await sendOneClaimed(sql, senderOpts(provider));
+      assert.equal(step.outcome, "deferred");
+      assert.equal(step.outcome === "deferred" && step.reservation, "provider_rate_limited");
+      assert.ok(step.outcome === "deferred" && step.retryAt, "L5 defer sets a retry time");
+      assert.equal(provider.attempts, 0, "no provider call on L5 defer");
+
+      const row = await readDelivery(sql, id);
+      assert.equal(row.status, "pending");
+      assert.equal(row.attempt_count, 0, "L5 defer consumes no attempt");
+      // The reservation uses the Postgres server's now(), which can drift a
+      // few hundred ms from the JS Date.now() captured in `before`. 1 s +
+      // random 0–200 ms (SQL side) therefore lands anywhere in [200, 3000] ms
+      // from JS's point of view — the window has to be wide enough that
+      // clock skew does not flake the test. We still prove it is a bounded,
+      // short defer and not an open-ended one.
+      const delayMs = Date.parse(row.next_retry_at!) - before;
+      assert.ok(delayMs >= 200 && delayMs <= 3000, `L5 schedule within ~1s + jitter (${delayMs}ms)`);
+    });
+  });
+
+  it("L4 defers a per-class daily-cap breach, keeping the address (P9-3)", async () => {
+    await withSql(async (sql) => {
+      await base(sql);
+      const id = await addDelivery(sql, { address: "l4@sender.example.test" });
+
+      // Fill L4 (cap 180/24h/transactional). Spread across 23h so L2 (same
+      // community, 1h window) and L3 (platform, 1h window) stay well under
+      // their own caps.
+      await sql`insert into public.notification_send_attempts
+        (delivery_id, community_id, address_key, send_class, attempted_at)
+        select ${id}::uuid, ${COMMUNITY}::uuid, 'l4-filler-' || g || '@sender.example.test',
+               'transactional', now() - make_interval(mins => (g * 23 * 60 / 180))
+        from generate_series(1, 180) as g`;
+
+      const provider = new FakeEmailProvider();
+      const before = Date.now();
+      const step = await sendOneClaimed(sql, senderOpts(provider));
+      assert.equal(step.outcome, "deferred");
+      assert.equal(step.outcome === "deferred" && step.reservation, "provider_daily_limited");
+
+      const row = await readDelivery(sql, id);
+      assert.equal(row.status, "pending");
+      assert.equal(row.attempt_count, 0, "L4 defer consumes no attempt");
+      const [addr] = await sql<{ recipient_address: string | null }[]>`
+        select recipient_address from public.notification_deliveries where id = ${id}::uuid`;
+      assert.equal(addr!.recipient_address, "l4@sender.example.test",
+        "L4 defer keeps the recipient address (it is only waiting its turn)");
+      const delayMs = Date.parse(row.next_retry_at!) - before;
+      // next_retry_at should be approximately oldest_counted + 24h. The oldest
+      // attempt was inserted at now() - 23h, so the deferral lands about 1h away.
+      assert.ok(delayMs >= 30 * 60_000 && delayMs <= 90 * 60_000,
+        `L4 schedules in ~1h (${delayMs}ms)`);
+      assert.equal(provider.attempts, 0, "no provider call on L4 defer");
     });
   });
 
@@ -462,6 +549,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       await sql`update public.notification_deliveries set created_at = now() - interval '10 hours' where id = ${deadId}::uuid`;
       const dead = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(dead.outcome, "dead");
+      await clearSendLedger(sql);
       const sent = await sendOneClaimed(sql, senderOpts(provider));
       assert.equal(sent.outcome, "sent");
       void sentId;

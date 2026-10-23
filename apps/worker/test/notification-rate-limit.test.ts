@@ -99,6 +99,28 @@ describe("reserveEmailAttempt", () => {
     assert.doesNotMatch(log.join("\n"), /@/);
   });
 
+  it("maps a provider_daily_limited result (P9-3 L4)", async () => {
+    const { sql } = fakeDb((text) =>
+      text.includes("from app.reserve_email_attempt")
+        ? [{ reservation: "provider_daily_limited", retry_at: "2026-10-25T13:00:00Z" }]
+        : [],
+    );
+    const result = await reserveEmailAttempt(sql, DELIVERY);
+    assert.equal(result.reservation, "provider_daily_limited");
+    assert.equal(result.retryAt, "2026-10-25T13:00:00Z");
+  });
+
+  it("maps a provider_rate_limited result (P9-3 L5)", async () => {
+    const { sql } = fakeDb((text) =>
+      text.includes("from app.reserve_email_attempt")
+        ? [{ reservation: "provider_rate_limited", retry_at: new Date("2026-10-24T12:00:01.123Z") }]
+        : [],
+    );
+    const result = await reserveEmailAttempt(sql, DELIVERY);
+    assert.equal(result.reservation, "provider_rate_limited");
+    assert.equal(result.retryAt, "2026-10-24T12:00:01.123Z");
+  });
+
   it("throws when the function returns no row", async () => {
     const { sql } = fakeDb(() => []);
     await assert.rejects(
@@ -109,8 +131,8 @@ describe("reserveEmailAttempt", () => {
 });
 
 describe("getSendLimits", () => {
-  it("maps the approved configuration values", async () => {
-    const { sql } = fakeDb((text) =>
+  it("maps the approved transactional configuration values", async () => {
+    const { sql, log } = fakeDb((text) =>
       text.includes("from app.notification_send_limits")
         ? [{
             l1_address: 3,
@@ -119,26 +141,54 @@ describe("getSendLimits", () => {
             l2_window_hours: 1,
             l3_platform: 1000,
             l3_window_hours: 1,
+            l4_daily: 180,
+            l4_window_hours: 24,
+            l5_per_second: 1,
+            l5_window_seconds: 1,
             backlog_max: 500,
             max_attempts: 3,
           }]
         : [],
     );
-    const limits = await getSendLimits(sql);
+    const limits = await getSendLimits(sql, "transactional");
     assert.equal(limits.l1Address, 3);
     assert.equal(limits.l1WindowHours, 24);
     assert.equal(limits.l2Community, 100);
     assert.equal(limits.l2WindowHours, 1);
     assert.equal(limits.l3Platform, 1000);
     assert.equal(limits.l3WindowHours, 1);
+    assert.equal(limits.l4Daily, 180);
+    assert.equal(limits.l4WindowHours, 24);
+    assert.equal(limits.l5PerSecond, 1);
+    assert.equal(limits.l5WindowSeconds, 1);
     assert.equal(limits.backlogMax, 500);
     assert.equal(limits.maxAttempts, 3);
+    // The class is passed as a bound parameter, not interpolated.
+    assert.match(log.join("\n"), /"transactional"/);
+  });
+
+  it("maps the zero bulk caps", async () => {
+    const { sql } = fakeDb((text) =>
+      text.includes("from app.notification_send_limits")
+        ? [{
+            l1_address: 3, l1_window_hours: 24,
+            l2_community: 100, l2_window_hours: 1,
+            l3_platform: 1000, l3_window_hours: 1,
+            l4_daily: 0, l4_window_hours: 24,
+            l5_per_second: 0, l5_window_seconds: 1,
+            backlog_max: 500, max_attempts: 3,
+          }]
+        : [],
+    );
+    const limits = await getSendLimits(sql, "bulk");
+    assert.equal(limits.l4Daily, 0);
+    assert.equal(limits.l5PerSecond, 0);
   });
 
   it("throws when the function returns no row", async () => {
     const { sql } = fakeDb(() => []);
     await assert.rejects(
-      () => getSendLimits(sql),
+      () => getSendLimits(sql, "transactional"),
       { message: /returned no row/ },
     );
   });

@@ -36,12 +36,20 @@ type Db = postgres.Sql<Record<string, never>> | postgres.TransactionSql<Record<s
  * attempt counter. The sender treats it exactly like `address_limited` from
  * the outside — a terminal skip, no retry — and surfaces the stable code so
  * the health snapshot can report it separately.
+ *
+ * P9-3 adds `provider_daily_limited` and `provider_rate_limited`: the
+ * delivery was deferred because the per-class daily (L4) or per-second (L5)
+ * cap had no room. Both keep the address, undo the attempt and set
+ * `next_retry_at` on the delivery row, matching the `community_deferred`
+ * pattern. They are deferrals, not retries — `attempt_count` is unchanged.
  */
 export type ReservationOutcome =
   | "granted"
   | "address_suppressed"
   | "address_limited"
   | "community_deferred"
+  | "provider_daily_limited"
+  | "provider_rate_limited"
   | "backlog_full";
 
 export interface EmailReservation {
@@ -56,9 +64,16 @@ export interface SendLimits {
   readonly l2WindowHours: number;
   readonly l3Platform: number;
   readonly l3WindowHours: number;
+  readonly l4Daily: number;
+  readonly l4WindowHours: number;
+  readonly l5PerSecond: number;
+  readonly l5WindowSeconds: number;
   readonly backlogMax: number;
   readonly maxAttempts: number;
 }
+
+/** The send classes the limits function understands. P9-3. */
+export type SendClass = "transactional" | "bulk";
 
 /**
  * Reserve an email attempt inside the claim transaction. The database
@@ -85,10 +100,11 @@ export async function reserveEmailAttempt(
 }
 
 /**
- * Read the configured rate-limit and backlog values. Standalone call;
- * does not require a surrounding transaction.
+ * Read the configured rate-limit, quota and backlog values for one send
+ * class. Standalone call; does not require a surrounding transaction.
+ * P9-3 added the required `sendClass` argument.
  */
-export async function getSendLimits(sql: Db): Promise<SendLimits> {
+export async function getSendLimits(sql: Db, sendClass: SendClass): Promise<SendLimits> {
   const [row] = await sql<{
     l1_address: number;
     l1_window_hours: number;
@@ -96,12 +112,17 @@ export async function getSendLimits(sql: Db): Promise<SendLimits> {
     l2_window_hours: number;
     l3_platform: number;
     l3_window_hours: number;
+    l4_daily: number;
+    l4_window_hours: number;
+    l5_per_second: number;
+    l5_window_seconds: number;
     backlog_max: number;
     max_attempts: number;
   }[]>`
     select l1_address, l1_window_hours, l2_community, l2_window_hours,
-           l3_platform, l3_window_hours, backlog_max, max_attempts
-    from app.notification_send_limits()
+           l3_platform, l3_window_hours, l4_daily, l4_window_hours,
+           l5_per_second, l5_window_seconds, backlog_max, max_attempts
+    from app.notification_send_limits(${sendClass})
   `;
   if (!row) throw new Error("notification_send_limits returned no row");
   return {
@@ -111,6 +132,10 @@ export async function getSendLimits(sql: Db): Promise<SendLimits> {
     l2WindowHours: row.l2_window_hours,
     l3Platform: row.l3_platform,
     l3WindowHours: row.l3_window_hours,
+    l4Daily: row.l4_daily,
+    l4WindowHours: row.l4_window_hours,
+    l5PerSecond: row.l5_per_second,
+    l5WindowSeconds: row.l5_window_seconds,
     backlogMax: row.backlog_max,
     maxAttempts: row.max_attempts,
   };

@@ -5,7 +5,9 @@
 --
 --   A. The notification_send_attempts ledger table, its indexes, RLS and
 --      deny-all policy exist.
---   B. app.notification_send_limits() returns the approved numbers.
+--   B. app.notification_send_limits('transactional') returns the approved
+--      L1/L2/L3/backlog numbers (unchanged from P5-2 approvals; L4/L5 are
+--      covered in suite 44).
 --   C. L1 per-address limit: 3 granted, 4th address_limited (skipped,
 --      address erased, attempt undone).
 --   D. Rolling window: attempts older than 24 h do not count.
@@ -168,26 +170,35 @@ select ok(
 
 
 -- ── B. Configuration ────────────────────────────────────────────────────────
-select is((select l1_address     from app.notification_send_limits()), 3,    'B: L1 per-address = 3');
-select is((select l1_window_hours from app.notification_send_limits()), 24,   'B: L1 window = 24 h');
-select is((select l2_community   from app.notification_send_limits()), 100,  'B: L2 per-community = 100');
-select is((select l2_window_hours from app.notification_send_limits()), 1,    'B: L2 window = 1 h');
-select is((select l3_platform    from app.notification_send_limits()), 1000, 'B: L3 platform = 1000');
-select is((select l3_window_hours from app.notification_send_limits()), 1,    'B: L3 window = 1 h');
-select is((select backlog_max    from app.notification_send_limits()), 500,  'B: backlog cap = 500');
-select is((select max_attempts   from app.notification_send_limits()), 3,    'B: max attempts = 3');
+-- P9-3 replaced the no-arg signature with notification_send_limits(p_class).
+-- Section B still asserts the L1/L2/L3/backlog numbers for the transactional
+-- class (unchanged from P5-2 approvals); L4/L5 defaults have their own
+-- assertions in suite 44.
+select is((select l1_address     from app.notification_send_limits('transactional')), 3,    'B: L1 per-address = 3');
+select is((select l1_window_hours from app.notification_send_limits('transactional')), 24,   'B: L1 window = 24 h');
+select is((select l2_community   from app.notification_send_limits('transactional')), 100,  'B: L2 per-community = 100');
+select is((select l2_window_hours from app.notification_send_limits('transactional')), 1,    'B: L2 window = 1 h');
+select is((select l3_platform    from app.notification_send_limits('transactional')), 1000, 'B: L3 platform = 1000');
+select is((select l3_window_hours from app.notification_send_limits('transactional')), 1,    'B: L3 window = 1 h');
+select is((select backlog_max    from app.notification_send_limits('transactional')), 500,  'B: backlog cap = 500');
+select is((select max_attempts   from app.notification_send_limits('transactional')), 3,    'B: max attempts = 3');
 
 
 -- Override limits to small testable values.
--- L1 stays at 3; L2 = 5, L3 = 10, backlog = 3.
--- The boundary tests below exercise the same logic the real limits use;
--- section B proves the real numbers.
-create or replace function app.notification_send_limits()
+-- L1 stays at 3; L2 = 5, L3 = 10, backlog = 3. L4 and L5 are set to very
+-- large values so they never bind in sections C–K of this suite (they
+-- have their own boundary assertions in suite 44).
+-- The signature here must match the P9-3 per-class signature exactly
+-- (same return columns in the same order) so `create or replace` does
+-- not trip SQLSTATE 42P13.
+create or replace function app.notification_send_limits(p_class text)
 returns table (l1_address int, l1_window_hours int, l2_community int,
                l2_window_hours int, l3_platform int, l3_window_hours int,
+               l4_daily int, l4_window_hours int,
+               l5_per_second int, l5_window_seconds int,
                backlog_max int, max_attempts int)
 language sql stable security definer set search_path = '' as $$
-  select 3, 24, 5, 1, 10, 1, 3, 3;
+  select 3, 24, 5, 1, 10, 1, 100000, 24, 100000, 1, 3, 3;
 $$;
 
 
@@ -348,10 +359,10 @@ select is(pg_temp.try_as('authenticated',
   $$select app.reserve_email_attempt('ca300000-0000-4000-8000-000000000001')$$),
   '42501', 'L: authenticated cannot execute reserve_email_attempt');
 select is(pg_temp.try_as('anon',
-  'select app.notification_send_limits()'),
+  $$select app.notification_send_limits('transactional')$$),
   '42501', 'L: anon cannot execute notification_send_limits');
 select is(pg_temp.try_as('authenticated',
-  'select app.notification_send_limits()'),
+  $$select app.notification_send_limits('transactional')$$),
   '42501', 'L: authenticated cannot execute notification_send_limits');
 select is(pg_temp.try_as('anon',
   'select app.purge_stale_send_attempts()'),

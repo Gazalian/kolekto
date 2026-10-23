@@ -214,7 +214,7 @@ async function evaluateEmail(
         notification_event_id, community_id,
         recipient_member_id, recipient_user_id,
         recipient_address, recipient_address_assurance,
-        channel, status, dedupe_key
+        channel, status, dedupe_key, send_class
       ) values (
         ${eventId}::uuid,
         ${msg.community_id}::uuid,
@@ -224,7 +224,8 @@ async function evaluateEmail(
         ${found.assurance},
         'email',
         'pending',
-        ${dedupe}
+        ${dedupe},
+        'transactional'
       )
       -- Bare DO NOTHING covers both uniqueness boundaries: the per-event
       -- recipient index (replay of this message) and the dedupe-key index
@@ -239,7 +240,7 @@ async function evaluateEmail(
     insert into public.notification_deliveries (
       notification_event_id, community_id,
       recipient_member_id, recipient_user_id,
-      channel, status, error_code
+      channel, status, error_code, send_class
     ) values (
       ${eventId}::uuid,
       ${msg.community_id}::uuid,
@@ -247,7 +248,8 @@ async function evaluateEmail(
       ${userId}::uuid,
       'email',
       'skipped',
-      ${reason}
+      ${reason},
+      'transactional'
     )
     on conflict do nothing
   `;
