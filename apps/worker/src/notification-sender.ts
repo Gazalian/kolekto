@@ -43,6 +43,7 @@ import { reserveEmailAttempt, purgeStaleSendAttempts, type ReservationOutcome } 
 import {
   claimNextDelivery,
   recoverExpiredLease,
+  resolveLeaseAmbiguous,
   settleDelivery,
   MAX_DELIVERY_ATTEMPTS,
   SEND_LEASE_SECONDS,
@@ -173,11 +174,34 @@ export async function sendOneClaimed(sql: BaseSql, opts: SenderOptions): Promise
 }
 
 /**
- * Recover every `sending` row whose lease has expired. Each recovery is its own
- * short transaction (the database re-checks the lease under a row lock), so a
- * row a live worker still holds is refused, not stolen. Bounded per call.
+ * The two counts a recovery sweep can produce (P9-4): `recovered` lands a row
+ * back in `pending` (safe for idempotent providers that de-dupe on replay);
+ * `resolvedAmbiguous` lands a row in `dead/outcome_unknown` (safe for
+ * non-idempotent providers like SES, where a retry risks a second send).
  */
-export async function recoverExpiredLeases(sql: BaseSql, limit = 100): Promise<number> {
+export interface RecoveryCounts {
+  readonly recovered: number;
+  readonly resolvedAmbiguous: number;
+}
+
+/**
+ * Recover every `sending` row whose lease has expired. Each recovery is its
+ * own short transaction (the database re-checks the lease under a row lock),
+ * so a row a live worker still holds is refused, not stolen. Bounded per
+ * call. The destination state is chosen by `providerIdempotency`:
+ *
+ *   · `"provider"` → `app.recover_expired_notification_lease` → `pending`.
+ *                     The same idempotency key reused on the retry lets the
+ *                     provider dedupe (§10.6.2 ambiguous+idempotent).
+ *   · `"none"`     → `app.resolve_lease_ambiguous` → `dead/outcome_unknown`.
+ *                     A crash-after-accept against a non-idempotent provider
+ *                     (SES) must never silently retry (Q-DUP, §10.6.4).
+ */
+export async function recoverExpiredLeases(
+  sql: BaseSql,
+  providerIdempotency: "provider" | "none",
+  limit = 100,
+): Promise<RecoveryCounts> {
   const rows = await sql<{ id: string }[]>`
     select id
     from public.notification_deliveries
@@ -188,11 +212,17 @@ export async function recoverExpiredLeases(sql: BaseSql, limit = 100): Promise<n
     limit ${limit}
   `;
   let recovered = 0;
+  let resolvedAmbiguous = 0;
   for (const row of rows) {
-    const out = await recoverExpiredLease(sql, row.id);
-    if (out.recovered) recovered += 1;
+    if (providerIdempotency === "provider") {
+      const out = await recoverExpiredLease(sql, row.id);
+      if (out.recovered) recovered += 1;
+    } else {
+      const out = await resolveLeaseAmbiguous(sql, row.id);
+      if (out.resolved) resolvedAmbiguous += 1;
+    }
   }
-  return recovered;
+  return { recovered, resolvedAmbiguous };
 }
 
 export interface TickOptions extends SenderOptions {
@@ -223,6 +253,8 @@ export interface TickResult {
   readonly paused: boolean;
   readonly maintenanceRan: boolean;
   readonly recovered: number;
+  /** P9-4: expired-lease rows resolved as dead/outcome_unknown. */
+  readonly resolvedAmbiguous: number;
   readonly expired: number;
   readonly purged: number;
   readonly steps: readonly SendStep[];
@@ -237,13 +269,19 @@ export interface TickResult {
  */
 export async function runSenderTick(sql: BaseSql, opts: TickOptions): Promise<TickResult> {
   let recovered = 0;
+  let resolvedAmbiguous = 0;
   let expired = 0;
   let purged = 0;
 
   // Maintenance is the work the pause switch must NOT stop: recover crashed
-  // leases, age out deliveries past 72 hours, purge the stale ledger.
+  // leases, age out deliveries past 72 hours, purge the stale ledger. The
+  // provider's declared idempotency decides whether expired-lease rows go
+  // back to pending (idempotent, safe to replay) or terminal as
+  // dead/outcome_unknown (non-idempotent, Q-DUP: never silently replay).
   if (opts.runMaintenance) {
-    recovered = await recoverExpiredLeases(sql);
+    const counts = await recoverExpiredLeases(sql, opts.provider.idempotency);
+    recovered = counts.recovered;
+    resolvedAmbiguous = counts.resolvedAmbiguous;
     expired = await expireStaleDeliveries(sql);
     purged = await purgeStaleSendAttempts(sql);
   }
@@ -272,13 +310,14 @@ export async function runSenderTick(sql: BaseSql, opts: TickOptions): Promise<Ti
   let health: SendHealth | null = null;
   if (opts.runMaintenance) {
     health = await readSendHealth(sql);
-    opts.log(healthLogLine(health, { recovered, expired, purged }));
+    opts.log(healthLogLine(health, { recovered, resolvedAmbiguous, expired, purged }));
   }
 
   return {
     paused: !enabled,
     maintenanceRan: opts.runMaintenance,
     recovered,
+    resolvedAmbiguous,
     expired,
     purged,
     steps,
@@ -290,7 +329,7 @@ export async function runSenderTick(sql: BaseSql, opts: TickOptions): Promise<Ti
 /** The once-a-minute structured health line. Ids/counts/codes only, no PII. */
 export function healthLogLine(
   health: SendHealth,
-  maintenance: { recovered: number; expired: number; purged: number },
+  maintenance: { recovered: number; resolvedAmbiguous: number; expired: number; purged: number },
 ): Record<string, unknown> {
   return {
     msg: "notification_send_health",
@@ -318,6 +357,7 @@ export function healthLogLine(
     dead_by_code: health.deadByCode,
     skipped_by_code: health.skippedByCode,
     recovered_this_tick: maintenance.recovered,
+    resolved_ambiguous_this_tick: maintenance.resolvedAmbiguous,
     expired_this_tick: maintenance.expired,
     purged_this_tick: maintenance.purged,
   };
