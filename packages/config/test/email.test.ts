@@ -235,6 +235,55 @@ describe("8. SES ingestion configuration", () => {
     const config = result as SesIngestionConfig;
     assert.equal(config.region, SES_REGION);
     assert.equal(config.topicArn, SES_ARN);
+    // Default SignatureVersion policy is v2 only (M13.2 P9-2.1 / #17).
+    assert.deepEqual([...config.acceptedSignatureVersions], ["2"]);
+  });
+
+  it("defaults EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1 to false (v2 only)", () => {
+    const config = evaluateSesIngestionConfig({
+      EMAIL_AWS_REGION: SES_REGION,
+      EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN,
+    }) as SesIngestionConfig;
+    assert.deepEqual([...config.acceptedSignatureVersions], ["2"]);
+  });
+
+  it("accepts EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1=true as the opt-in to v1+v2", () => {
+    const config = evaluateSesIngestionConfig({
+      EMAIL_AWS_REGION: SES_REGION,
+      EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN,
+      EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1: "true",
+    }) as SesIngestionConfig;
+    assert.deepEqual([...config.acceptedSignatureVersions], ["1", "2"]);
+  });
+
+  it("treats EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1=false as the explicit default (v2 only)", () => {
+    const config = evaluateSesIngestionConfig({
+      EMAIL_AWS_REGION: SES_REGION,
+      EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN,
+      EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1: "false",
+    }) as SesIngestionConfig;
+    assert.deepEqual([...config.acceptedSignatureVersions], ["2"]);
+  });
+
+  it("refuses any other value for EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1 (no silent coercion)", () => {
+    refuses(
+      () =>
+        evaluateSesIngestionConfig({
+          EMAIL_AWS_REGION: SES_REGION,
+          EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN,
+          EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1: "yes",
+        }),
+      /EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1/,
+    );
+    refuses(
+      () =>
+        evaluateSesIngestionConfig({
+          EMAIL_AWS_REGION: SES_REGION,
+          EMAIL_AWS_SNS_TOPIC_ARN: SES_ARN,
+          EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1: "1",
+        }),
+      /EMAIL_AWS_SNS_ALLOW_SIGNATURE_V1/,
+    );
   });
 
   it("refuses a half-configured deploy (only one variable set)", () => {

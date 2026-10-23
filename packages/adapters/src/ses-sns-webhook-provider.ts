@@ -47,6 +47,36 @@
  * on entry count and a bound on age; a cache miss triggers one fetch under a
  * short timeout.
  *
+ * ── CERT TRUST MODEL (issue #16, M13.2 P9-2.1) ─────────────────────────────
+ *
+ * AWS's verify-signature guidance says to "check that the certificate is
+ * issued by Amazon SNS" and "confirm that the certificate's chain of trust
+ * is valid." AWS does NOT publish a stable root CA bundle for SNS signing
+ * certs, a stable subject CN, or a stable issuer. Every AWS SDK validator
+ * we checked (aws-sns-validator, boto3's internal verifier) stops at the
+ * two gates below and does NOT walk an offline X.509 chain. We therefore
+ * deliberately refuse to invent a chain walk against unspecified roots.
+ * The task's "stop and report" rule applies to that specific sub-check:
+ * see docs/product/M13.2-P9-2.1-SES-INGESTION-HARDENING.md §C for the
+ * explicit decision record.
+ *
+ * The adapter's chain of trust is therefore the composition of:
+ *
+ *   1. HOSTNAME PIN. The SigningCertURL must sit on
+ *      `sns.<EMAIL_AWS_REGION>.amazonaws.com[.cn]`, HTTPS, default port,
+ *      no credentials, no fragment. No redirects (fetch is called with
+ *      `redirect: "error"`).
+ *   2. TLS CHAIN AT FETCH. The HTTPS fetch validates the server's own TLS
+ *      certificate chain against Node's bundled trust store (default
+ *      `fetch` behaviour; we do NOT disable this). Whatever cert that
+ *      trusted server serves is then the signing cert for this envelope.
+ *   3. VALIDITY WINDOW ON THE SIGNING CERT. We parse the PEM with
+ *      `node:crypto.X509Certificate` and refuse the message if the signing
+ *      cert's validFrom/validTo bracket does not include `now()`. An
+ *      expired, not-yet-valid or date-unparseable cert is `cert_fetch_failed`.
+ *   4. SIGNATURE VERIFICATION. The signature is verified with the cert's
+ *      public key against the AWS canonical message.
+ *
  * ── NO LIVE AWS CALL IS MADE AT MODULE LOAD ────────────────────────────────
  *
  * Nothing fetched or validated at import. The adapter is a plain class that
@@ -80,6 +110,14 @@ export interface SesSnsWebhookOptions {
   readonly region: string;
   /** The exact SNS Topic ARN the handler expects. A different ARN inside a signed envelope is still rejected. */
   readonly expectedTopicArn: string;
+  /**
+   * SNS SignatureVersion values this adapter will accept. The route-side
+   * configuration decides whether that is `["2"]` (recommended default,
+   * M13.2 P9-2.1 / issue #17) or `["1", "2"]` (operator opt-in for a
+   * legacy topic). Must be non-empty; every value must be either "1" or
+   * "2". An unexpected set at construction time refuses to start.
+   */
+  readonly acceptedSignatureVersions: readonly string[];
   /** Injectable network boundary for tests. The default uses `fetch` with a short timeout; nothing else uses the network. */
   readonly fetchCertificate?: (url: string) => Promise<string>;
   /** Injectable GET for the SubscribeURL step. Same reason — testable without a real network. */
@@ -104,8 +142,8 @@ const DEFAULT_CERT_MAX_BYTES = 32 * 1024;
 const DEFAULT_CERT_CACHE_MAX = 32;
 const DEFAULT_CERT_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-/** Only SignatureVersion values AWS has published. "1" is RSA-SHA1 (legacy, still issued); "2" is RSA-SHA256. */
-const SUPPORTED_SIGNATURE_VERSIONS = new Set(["1", "2"]);
+/** The two SignatureVersion values AWS documents today. "1" is RSA-SHA1 (legacy); "2" is RSA-SHA256 (recommended). */
+const AWS_KNOWN_SIGNATURE_VERSIONS = new Set(["1", "2"]);
 
 // Letters, digits, hyphens; starts and ends with alphanumeric. Mirrors AWS's own region naming.
 const REGION_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
@@ -137,6 +175,7 @@ export class SesSnsWebhookProvider implements EmailWebhookProvider {
 
   readonly #region: string;
   readonly #expectedTopicArn: string;
+  readonly #acceptedSignatureVersions: ReadonlySet<string>;
   readonly #fetchCertificate: (url: string) => Promise<string>;
   readonly #confirmSubscription: (url: string) => Promise<SubscriptionConfirmationResult>;
   readonly #maxTimestampSkewMs: number;
@@ -159,8 +198,17 @@ export class SesSnsWebhookProvider implements EmailWebhookProvider {
     if (arnRegion !== options.region) {
       throw new Error("SesSnsWebhookProvider: expectedTopicArn region does not match configured region");
     }
+    if (options.acceptedSignatureVersions.length === 0) {
+      throw new Error("SesSnsWebhookProvider: acceptedSignatureVersions must not be empty");
+    }
+    for (const v of options.acceptedSignatureVersions) {
+      if (!AWS_KNOWN_SIGNATURE_VERSIONS.has(v)) {
+        throw new Error(`SesSnsWebhookProvider: acceptedSignatureVersions contains ${JSON.stringify(v)} which is not an AWS-published SignatureVersion`);
+      }
+    }
     this.#region = options.region;
     this.#expectedTopicArn = options.expectedTopicArn;
+    this.#acceptedSignatureVersions = new Set(options.acceptedSignatureVersions);
     this.#maxTimestampSkewMs = options.maxTimestampSkewMs ?? DEFAULT_MAX_SKEW_MS;
     this.#certificateFetchTimeoutMs = options.certificateFetchTimeoutMs ?? DEFAULT_CERT_TIMEOUT_MS;
     this.#maxCertificateBytes = options.maxCertificateBytes ?? DEFAULT_CERT_MAX_BYTES;
@@ -197,7 +245,7 @@ export class SesSnsWebhookProvider implements EmailWebhookProvider {
     if (signature === null) return reject({ reason: "missing_signature" });
 
     const signatureVersion = stringField(envelope, "SignatureVersion");
-    if (signatureVersion === null || !SUPPORTED_SIGNATURE_VERSIONS.has(signatureVersion)) {
+    if (signatureVersion === null || !this.#acceptedSignatureVersions.has(signatureVersion)) {
       return reject({ reason: "unsupported_signature_version", version: signatureVersion ?? "" });
     }
 
@@ -243,6 +291,27 @@ export class SesSnsWebhookProvider implements EmailWebhookProvider {
       cert = new X509Certificate(pem);
     } catch (error) {
       return reject({ reason: "cert_fetch_failed", detail: error instanceof Error ? error.name : "bad_cert" });
+    }
+
+    // Validity window. A cert outside its validity dates is an invalid chain
+    // of trust regardless of HTTPS-at-fetch — AWS could serve one by mistake,
+    // or we could pull a stale cached entry whose issuer rotated. On Node 22
+    // X509Certificate exposes validFrom/validTo as strings; we parse them with
+    // the standard Date constructor.
+    const nowMs = this.#now();
+    const notBefore = Date.parse(cert.validFrom);
+    const notAfter = Date.parse(cert.validTo);
+    if (!Number.isFinite(notBefore) || !Number.isFinite(notAfter)) {
+      return reject({ reason: "cert_fetch_failed", detail: "cert_dates_unparseable" });
+    }
+    if (nowMs < notBefore) {
+      // Clock skew — our clock is behind the cert's validFrom. The cert may
+      // be legitimate; refusing is still correct because the signature would
+      // be computed by a cert the verifier should not yet trust.
+      return reject({ reason: "cert_fetch_failed", detail: "cert_not_yet_valid" });
+    }
+    if (nowMs > notAfter) {
+      return reject({ reason: "cert_fetch_failed", detail: "cert_expired" });
     }
 
     const algorithm = signatureVersion === "1" ? "RSA-SHA1" : "RSA-SHA256";

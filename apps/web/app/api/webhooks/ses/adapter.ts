@@ -45,6 +45,7 @@ export function getSesWebhookAdapter(): EmailWebhookProvider | null {
   cachedAdapter = new SesSnsWebhookProvider({
     region: ingestion.region,
     expectedTopicArn: ingestion.topicArn,
+    acceptedSignatureVersions: ingestion.acceptedSignatureVersions,
   });
   return cachedAdapter;
 }
