@@ -65,6 +65,9 @@ export const DEFAULT_SEND_BATCH = 20;
 /** The result of attempting one claimed delivery. Ids, codes and counts only. */
 export type SendStep =
   | { readonly outcome: "empty" }
+  // community_deferred, provider_daily_limited (L4) and provider_rate_limited
+  // (L5) all land here: the row is pending with next_retry_at set, no
+  // provider call was made, no attempt consumed.
   | { readonly outcome: "deferred"; readonly deliveryId: string; readonly reservation: ReservationOutcome; readonly retryAt: string | null }
   | { readonly outcome: "skipped"; readonly deliveryId: string; readonly reservation: ReservationOutcome }
   | { readonly outcome: "sent"; readonly deliveryId: string; readonly providerMessageId: string }
@@ -115,7 +118,14 @@ export async function sendOneClaimed(sql: BaseSql, opts: SenderOptions): Promise
 
   // ── Non-granted: the reserve function already settled the row in-tx. ───────
   if (reservation !== "granted") {
-    if (reservation === "community_deferred") {
+    // Three deferral outcomes keep the address and set next_retry_at:
+    // community_deferred (L2/L3), provider_daily_limited (L4), and
+    // provider_rate_limited (L5). All are smoothing, not abuse controls.
+    if (
+      reservation === "community_deferred" ||
+      reservation === "provider_daily_limited" ||
+      reservation === "provider_rate_limited"
+    ) {
       return { outcome: "deferred", deliveryId, reservation, retryAt };
     }
     // address_suppressed (P9-1) / address_limited / backlog_full: row is
@@ -298,6 +308,10 @@ export function healthLogLine(
     l2_utilisation_pct: health.l2UtilisationPct,
     l3_last_hour: health.l3LastHour,
     l3_utilisation_pct: health.l3UtilisationPct,
+    l4_last_24h_by_class: health.l4Last24hByClass,
+    l4_utilisation_pct_by_class: health.l4UtilisationPctByClass,
+    l5_last_second_by_class: health.l5LastSecondByClass,
+    l5_utilisation_pct_by_class: health.l5UtilisationPctByClass,
     sent_24h: health.sent24h,
     dead_24h: health.dead24h,
     skipped_24h: health.skipped24h,

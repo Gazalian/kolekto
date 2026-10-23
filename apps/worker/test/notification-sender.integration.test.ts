@@ -358,6 +358,69 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
     });
   });
 
+  it("L5 defers a per-second-cap breach with a short retry and no provider call (P9-3)", async () => {
+    await withSql(async (sql) => {
+      await base(sql);
+      const id = await addDelivery(sql, { address: "l5@sender.example.test" });
+
+      // One recent transactional reservation fills L5 (cap 1/s/class).
+      await sql`insert into public.notification_send_attempts
+        (delivery_id, community_id, address_key, send_class, attempted_at)
+        values (${id}::uuid, ${COMMUNITY}::uuid, 'l5-filler@sender.example.test',
+                'transactional', now())`;
+
+      const provider = new FakeEmailProvider();
+      const before = Date.now();
+      const step = await sendOneClaimed(sql, senderOpts(provider));
+      assert.equal(step.outcome, "deferred");
+      assert.equal(step.outcome === "deferred" && step.reservation, "provider_rate_limited");
+      assert.ok(step.outcome === "deferred" && step.retryAt, "L5 defer sets a retry time");
+      assert.equal(provider.attempts, 0, "no provider call on L5 defer");
+
+      const row = await readDelivery(sql, id);
+      assert.equal(row.status, "pending");
+      assert.equal(row.attempt_count, 0, "L5 defer consumes no attempt");
+      const delayMs = Date.parse(row.next_retry_at!) - before;
+      assert.ok(delayMs >= 500 && delayMs <= 3000, `L5 schedule within ~1s + jitter (${delayMs}ms)`);
+    });
+  });
+
+  it("L4 defers a per-class daily-cap breach, keeping the address (P9-3)", async () => {
+    await withSql(async (sql) => {
+      await base(sql);
+      const id = await addDelivery(sql, { address: "l4@sender.example.test" });
+
+      // Fill L4 (cap 180/24h/transactional). Spread across 23h so L2 (same
+      // community, 1h window) and L3 (platform, 1h window) stay well under
+      // their own caps.
+      await sql`insert into public.notification_send_attempts
+        (delivery_id, community_id, address_key, send_class, attempted_at)
+        select ${id}::uuid, ${COMMUNITY}::uuid, 'l4-filler-' || g || '@sender.example.test',
+               'transactional', now() - make_interval(mins => (g * 23 * 60 / 180))
+        from generate_series(1, 180) as g`;
+
+      const provider = new FakeEmailProvider();
+      const before = Date.now();
+      const step = await sendOneClaimed(sql, senderOpts(provider));
+      assert.equal(step.outcome, "deferred");
+      assert.equal(step.outcome === "deferred" && step.reservation, "provider_daily_limited");
+
+      const row = await readDelivery(sql, id);
+      assert.equal(row.status, "pending");
+      assert.equal(row.attempt_count, 0, "L4 defer consumes no attempt");
+      const [addr] = await sql<{ recipient_address: string | null }[]>`
+        select recipient_address from public.notification_deliveries where id = ${id}::uuid`;
+      assert.equal(addr!.recipient_address, "l4@sender.example.test",
+        "L4 defer keeps the recipient address (it is only waiting its turn)");
+      const delayMs = Date.parse(row.next_retry_at!) - before;
+      // next_retry_at should be approximately oldest_counted + 24h. The oldest
+      // attempt was inserted at now() - 23h, so the deferral lands about 1h away.
+      assert.ok(delayMs >= 30 * 60_000 && delayMs <= 90 * 60_000,
+        `L4 schedules in ~1h (${delayMs}ms)`);
+      assert.equal(provider.attempts, 0, "no provider call on L4 defer");
+    });
+  });
+
   it("recovers a crashed worker's expired lease back to pending", async () => {
     await withSql(async (sql) => {
       await base(sql);
