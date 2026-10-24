@@ -37,9 +37,13 @@ function evaluate(env: Record<string, string>, environment: KolektoEnvironment, 
   return evaluateEmailConfig(env, environment, real ? REAL : {});
 }
 
-describe("1. no real provider exists yet", () => {
-  it("REAL_EMAIL_PROVIDERS is empty until P9", () => {
-    assert.deepEqual([...REAL_EMAIL_PROVIDERS], []);
+describe("1. the registered real-provider set (P9-4: ses only)", () => {
+  it("REAL_EMAIL_PROVIDERS registers exactly ses and nothing else", () => {
+    // P9-4 added "ses"; a future addition is a reviewed migration + its
+    // own adapter + its own release gates (decision record §10.6.4). This
+    // assertion fails loudly if an unrelated provider is accidentally
+    // added to the allowlist.
+    assert.deepEqual([...REAL_EMAIL_PROVIDERS], ["ses"]);
   });
 
   it("production cannot start email at all", () => {
@@ -193,7 +197,11 @@ describe("6. nothing email-related may be public", () => {
   });
 
   it("refuses a NEXT_PUBLIC_* variable that carries the API key value", () => {
-    refuses(() => evaluate({ ...HOSTED_REAL, NEXT_PUBLIC_RANDOM_NAME: SENTINEL }, "staging", true), /same value as EMAIL_API_KEY/);
+    // P9-4 generalised the error message so it covers every email
+    // credential (EMAIL_API_KEY, EMAIL_AWS_SECRET_ACCESS_KEY,
+    // EMAIL_AWS_SESSION_TOKEN) with one phrase. The underlying guard
+    // still refuses the leak — that's the security invariant.
+    refuses(() => evaluate({ ...HOSTED_REAL, NEXT_PUBLIC_RANDOM_NAME: SENTINEL }, "staging", true), /same value as an email credential/);
   });
 
   it("ignores unrelated NEXT_PUBLIC_* variables", () => {
