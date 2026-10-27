@@ -162,6 +162,60 @@ test("mobile: the bell and panel work at 390px", async ({ page }) => {
   expect(overflow, "horizontal overflow at 390px").toBeLessThanOrEqual(1);
 });
 
+// ─── AuthenticatedTopBar coverage ────────────────────────────────────────────
+// The three authenticated pages outside the community shell (/communities,
+// /account, /notifications) mount an `AuthenticatedTopBar` with its own
+// `NotificationProvider` + `NotificationBell`. The specs below prove the bell
+// is actually rendered on each of those pages, reflects the seeded unread count,
+// and opens the panel — the gap that made notifications invisible to a signed-in
+// user who had not yet clicked into a specific community.
+
+test("the bell is visible on /communities (outside the community shell)", async ({ page }) => {
+  const ctx = await setUp(page, "e2e-notif-communities");
+  await seedNotifications(ctx, [
+    { eventType: "collection.publish", payload: { community_slug: ctx.communitySlug, collection_name: "Communities Page Item" } },
+  ]);
+
+  await page.goto("/communities");
+  await expect(bell(page)).toHaveAttribute("aria-label", /\(1 unread\)/);
+
+  await bell(page).click();
+  const panel = page.getByRole("region", { name: "Notifications" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText("Communities Page Item is now live")).toBeVisible();
+});
+
+test("the bell is visible on /account", async ({ page }) => {
+  const ctx = await setUp(page, "e2e-notif-account");
+  await seedNotifications(ctx, [
+    { eventType: "member.approve_join", payload: { community_slug: ctx.communitySlug } },
+  ]);
+
+  await page.goto("/account");
+  await expect(bell(page)).toHaveAttribute("aria-label", /\(1 unread\)/);
+
+  await bell(page).click();
+  const panel = page.getByRole("region", { name: "Notifications" });
+  await expect(panel).toBeVisible();
+  await expect(panel.getByText("Your membership has been approved")).toBeVisible();
+});
+
+test("the bell is visible on /notifications and does not duplicate the inbox count", async ({ page }) => {
+  const ctx = await setUp(page, "e2e-notif-notifications-page");
+  await seedNotifications(ctx, [
+    { eventType: "collection.publish", payload: { community_slug: ctx.communitySlug, collection_name: "Page Item A" } },
+    { eventType: "collection.publish", payload: { community_slug: ctx.communitySlug, collection_name: "Page Item B" } },
+  ]);
+
+  await page.goto("/notifications");
+
+  // The top bar bell and the page's own header both agree there are two unread —
+  // but the page lists the items only once, not duplicated by the bar's provider.
+  await expect(bell(page)).toHaveAttribute("aria-label", /\(2 unread\)/);
+  await expect(page.getByText("2 unread")).toBeVisible();
+  await expect(page.locator("[data-notification-item]")).toHaveCount(2);
+});
+
 test("the inbox is scoped to the recipient, not the community", async ({ page }) => {
   const ctx = await setUp(page, "e2e-notif-isolation");
 
