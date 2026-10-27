@@ -141,6 +141,49 @@ test("full page shows an error and recovers on retry", async ({ page }) => {
   await expect(page.getByText("Recovered is now live")).toBeVisible();
 });
 
+test("panel stays on screen when the bell sits bottom-left (sidebar) and closes cleanly", async ({ page }) => {
+  // The sidebar bell renders at the bottom-left of the viewport inside a wide
+  // relative wrapper; the previous `absolute right-0 top-full` placement sent
+  // the panel ~140px off the left and past the viewport bottom. The fix is
+  // viewport-fixed positioning with a vertical flip when below runs out of
+  // room (NotificationBell.computePanelCoords).
+  const ctx = await setUp(page, "e2e-notif-layout");
+  await seedNotifications(ctx, [
+    { eventType: "collection.publish", payload: { community_slug: ctx.communitySlug, collection_name: "Layout Dues" } },
+  ]);
+
+  await page.goto(`/c/${ctx.communitySlug}`);
+  await expect(bell(page)).toHaveAttribute("aria-label", /\(1 unread\)/);
+
+  await bell(page).click();
+  const panel = page.getByRole("region", { name: "Notifications" });
+  await expect(panel).toBeVisible();
+
+  // The panel must sit inside the viewport on every edge.
+  const geom = await page.evaluate(() => {
+    const p = document.querySelector('[role="region"][aria-label="Notifications"]') as HTMLElement | null;
+    if (!p) return null;
+    const r = p.getBoundingClientRect();
+    return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, w: r.width, h: r.height, vw: innerWidth, vh: innerHeight };
+  });
+  expect(geom, "panel not rendered").not.toBeNull();
+  expect(geom!.x, "panel left edge off-screen").toBeGreaterThanOrEqual(0);
+  expect(geom!.right, "panel right edge off-screen").toBeLessThanOrEqual(geom!.vw);
+  expect(geom!.y, "panel top above viewport").toBeGreaterThanOrEqual(0);
+  expect(geom!.bottom, "panel bottom below viewport").toBeLessThanOrEqual(geom!.vh);
+
+  // Pressing Escape closes it and returns focus to the bell.
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await expect(bell(page)).toBeFocused();
+
+  // Opening then clicking outside also closes.
+  await bell(page).click();
+  await expect(panel).toBeVisible();
+  await page.locator("main").first().click({ position: { x: 50, y: 50 } });
+  await expect(panel).toHaveCount(0);
+});
+
 test("mobile: the bell and panel work at 390px", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   const ctx = await setUp(page, "e2e-notif-mobile");
