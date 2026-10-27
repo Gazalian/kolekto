@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { AuthenticatedTopBar } from "../../components/AuthenticatedTopBar.tsx";
 import { requireUser } from "../../lib/auth.ts";
 import { NotificationsPageClient } from "./NotificationsPageClient.tsx";
 
@@ -15,6 +16,7 @@ export default async function NotificationsPage() {
 
   return (
     <div className="min-h-screen">
+      <AuthenticatedTopBar />
       <div className="mx-auto max-w-2xl px-6 pt-6">
         <Link href="/communities" className="text-sm font-medium text-[var(--color-text-muted)] hover:underline">
           ← All communities
