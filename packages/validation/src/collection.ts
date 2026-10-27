@@ -277,6 +277,24 @@ export const transitionCollectionStatusSchema = z.object({
 
 export type TransitionCollectionStatusInput = z.infer<typeof transitionCollectionStatusSchema>;
 
+/**
+ * Host-facing publish schema (M13.3). `notify` controls whether the audit
+ * trigger enqueues a notification: true writes `collection.publish`, false
+ * writes `collection.publish_silent` (which is not in the trigger's watched
+ * list). The database only accepts draft → active/scheduled through this
+ * path; other transitions use `transitionCollectionStatusSchema`.
+ */
+export const publishCollectionSchema = z.object({
+  collectionId: z.string().uuid(),
+  /** The status the caller believes the collection is in. Must be 'draft'. */
+  expected: z.literal("draft"),
+  /** When true, every eligible audience member with an account is notified. */
+  notify: z.boolean(),
+  reason: z.string().trim().max(500).optional(),
+});
+
+export type PublishCollectionInput = z.infer<typeof publishCollectionSchema>;
+
 // ── Obligations ─────────────────────────────────────────────────────────────
 
 export const assignObligationsSchema = z.object({

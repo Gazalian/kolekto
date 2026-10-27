@@ -15,7 +15,7 @@ import type {
 import { Badge, Banner, Button, Card, CardBody, Dialog } from "@kolekto/ui";
 import { Copy, ExternalLink, Share2 } from "lucide-react";
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   AMOUNT_MODEL_LABEL,
   CATEGORY_LABEL,
@@ -29,7 +29,7 @@ import {
   type CollectionStatus,
 } from "../../../../../lib/collection-display.ts";
 import { formatDistanceToNow } from "../../../../../lib/format.ts";
-import { transitionCollectionStatusAction } from "../actions.ts";
+import { previewPublishRecipientsAction, publishCollectionAction, transitionCollectionStatusAction } from "../actions.ts";
 import { ObligationsPanel } from "./ObligationsPanel.tsx";
 import { CheckInPanel, type CheckInPerson } from "./CheckInPanel.tsx";
 import { ExportPanel } from "./ExportPanel.tsx";
@@ -181,21 +181,85 @@ export function CollectionDetailClient({
   const [pendingTarget, setPendingTarget] = useState<CollectionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  /**
+   * M13.3: the host's publish-time notification choice. Always 'all' by
+   * default — the previous behaviour. 'none' writes `collection.publish_silent`
+   * so the audit trigger does not enqueue. Preview counts come from
+   * `app.count_collection_audience` via the server action.
+   */
+  const [notifyMode, setNotifyMode] = useState<"all" | "none">("all");
+  const [recipientPreview, setRecipientPreview] = useState<
+    | { kind: "idle" }
+    | { kind: "loading" }
+    | { kind: "ready"; eligible: number; with_obligation: number; awaiting: number }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
 
   const status = collection.status as CollectionStatus;
   const publicUrl = typeof window === "undefined" ? "" : `${window.location.origin}${collectionPath(communitySlug, collection.slug)}`;
   const isLive = status === "active" || status === "paused" || status === "closed" || status === "scheduled";
+  const isPublishDialog = pendingTarget === "active" && status === "draft";
+
+  // Fetch the recipient preview when the publish dialog opens, so the host
+  // sees who would be notified before confirming. The reset path lives in
+  // `closePendingDialog` below (called from Cancel / Dialog onClose) so this
+  // effect only runs an async fetch — a `setRecipientPreview` here would
+  // trip react-hooks/set-state-in-effect. `loading` is set synchronously by
+  // closePendingDialog's inverse — opening — which runs the fetch next tick.
+  useEffect(() => {
+    if (!isPublishDialog) return;
+    let cancelled = false;
+    (async () => {
+      const result = await previewPublishRecipientsAction(collection.id);
+      if (cancelled) return;
+      if ("error" in result) {
+        setRecipientPreview({ kind: "error", message: result.error });
+      } else {
+        setRecipientPreview({ kind: "ready", ...result });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isPublishDialog, collection.id]);
+
+  function openPendingDialog(target: CollectionStatus): void {
+    setPendingTarget(target);
+    // Opening the publish dialog resets the host's choice back to the default
+    // (notify everyone) and shows a loading state until the preview fetch
+    // completes. Setting state in an event handler is allowed — only the
+    // effect-body setState would trip the lint rule.
+    if (target === "active" && status === "draft") {
+      setNotifyMode("all");
+      setRecipientPreview({ kind: "loading" });
+    }
+  }
+
+  function closePendingDialog(): void {
+    setPendingTarget(null);
+    setRecipientPreview({ kind: "idle" });
+    setNotifyMode("all");
+  }
 
   function runTransition(target: CollectionStatus): void {
     setError(null);
     startTransition(async () => {
-      const result = await transitionCollectionStatusAction(slug, collection.slug, {
-        collectionId: collection.id,
-        expected: collection.status,
-        target,
-      });
+      // Publishing from draft goes through the host-facing publish action so
+      // the notify choice is honoured; every other transition uses the
+      // ordinary status-transition path (no notification side effect).
+      const result = target === "active" && status === "draft"
+        ? await publishCollectionAction(slug, collection.slug, {
+            collectionId: collection.id,
+            expected: "draft" as const,
+            notify: notifyMode === "all",
+          })
+        : await transitionCollectionStatusAction(slug, collection.slug, {
+            collectionId: collection.id,
+            expected: collection.status,
+            target,
+          });
       if (result.error) setError(result.error);
-      setPendingTarget(null);
+      closePendingDialog();
     });
   }
 
@@ -217,7 +281,7 @@ export function CollectionDetailClient({
                   key={action.target}
                   variant={action.variant ?? "primary"}
                   disabled={isPending}
-                  onClick={() => setPendingTarget(action.target)}
+                  onClick={() => openPendingDialog(action.target)}
                 >
                   {action.label}
                 </Button>
@@ -514,12 +578,12 @@ export function CollectionDetailClient({
       {pendingTarget && (
         <Dialog
           open
-          onClose={() => setPendingTarget(null)}
+          onClose={closePendingDialog}
           title={TRANSITION_COPY[pendingTarget]?.title ?? "Change status"}
           description={TRANSITION_COPY[pendingTarget]?.body ?? ""}
         >
           <div className="flex flex-col gap-4">
-            {pendingTarget === "active" && status === "draft" && (
+            {isPublishDialog && (
               <dl className="divide-y divide-[var(--color-border)] rounded-[var(--radius-md)] border border-[var(--color-border)]">
                 <Row label="Name" value={collection.name} />
                 <Row label="Contribution" value={describeAmount(collection)} />
@@ -528,8 +592,16 @@ export function CollectionDetailClient({
                 <Row label="Address" value={collectionPath(communitySlug, collection.slug)} />
               </dl>
             )}
+            {isPublishDialog && (
+              <PublishNotifyControls
+                mode={notifyMode}
+                onChange={setNotifyMode}
+                preview={recipientPreview}
+                disabled={isPending}
+              />
+            )}
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => setPendingTarget(null)} disabled={isPending}>
+              <Button variant="ghost" onClick={closePendingDialog} disabled={isPending}>
                 Cancel
               </Button>
               <Button
@@ -553,6 +625,110 @@ function Row({ label, value }: { label: string; value: string }) {
       <dt className="text-sm text-[var(--color-text-muted)]">{label}</dt>
       <dd className="text-sm font-medium text-[var(--color-text)]">{value}</dd>
     </div>
+  );
+}
+
+/**
+ * Publish-time notification controls (M13.3).
+ *
+ * The host decides whether an in-app notification fires on publish. The
+ * recipient preview comes from `app.count_collection_audience` — never a
+ * fabricated category: `eligible` is the full audience, `with_obligation`
+ * counts who already has an obligation record (used elsewhere as the
+ * "already set up" cohort), `awaiting` is eligible-with-no-obligation (what
+ * the "newly eligible" prompt also counts).
+ *
+ * "Email" is not an option here on purpose: `email_sending_enabled` is off
+ * in every environment and no mail is sent until the operator release gates
+ * close (M13.2 decision record §11.2). The dialog is explicit about this so
+ * a host does not expect email to go out.
+ */
+type RecipientPreview =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | { kind: "ready"; eligible: number; with_obligation: number; awaiting: number }
+  | { kind: "error"; message: string };
+
+function PublishNotifyControls({
+  mode,
+  onChange,
+  preview,
+  disabled,
+}: {
+  mode: "all" | "none";
+  onChange: (next: "all" | "none") => void;
+  preview: RecipientPreview;
+  disabled: boolean;
+}) {
+  const eligible = preview.kind === "ready" ? preview.eligible : null;
+
+  return (
+    <fieldset className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
+      <legend className="px-1 text-sm font-medium text-[var(--color-text)]">
+        Notify members on publish
+      </legend>
+      <p className="text-xs text-[var(--color-text-muted)]">
+        An in-app notification appears in each recipient&apos;s notification bell. Email is not sent in this environment.
+      </p>
+      <label className="flex items-start gap-3">
+        <input
+          type="radio"
+          name="notify-mode"
+          value="all"
+          checked={mode === "all"}
+          onChange={() => onChange("all")}
+          disabled={disabled}
+          className="mt-1"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium text-[var(--color-text)]">Notify every eligible member</span>
+          <span className="text-xs text-[var(--color-text-muted)]">
+            <PreviewCount preview={preview} count={eligible} suffix="eligible member" />
+            {" will see this collection in their notification bell. Members without an account are not reached in-app."}
+          </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-3">
+        <input
+          type="radio"
+          name="notify-mode"
+          value="none"
+          checked={mode === "none"}
+          onChange={() => onChange("none")}
+          disabled={disabled}
+          className="mt-1"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium text-[var(--color-text)]">Publish without notifying</span>
+          <span className="text-xs text-[var(--color-text-muted)]">
+            The collection goes live immediately; no notification is sent. You can share the link yourself.
+          </span>
+        </span>
+      </label>
+      {preview.kind === "ready" && (
+        <p className="text-xs text-[var(--color-text-faint)]">
+          Audience: {preview.eligible} eligible — {preview.with_obligation} already have an obligation,{" "}
+          {preview.awaiting} are awaiting one.
+        </p>
+      )}
+      {preview.kind === "error" && (
+        <p className="text-xs text-[var(--color-danger)]" role="alert">
+          Could not load the recipient preview: {preview.message}
+        </p>
+      )}
+    </fieldset>
+  );
+}
+
+function PreviewCount({ preview, count, suffix }: { preview: RecipientPreview; count: number | null; suffix: string }) {
+  if (preview.kind === "loading") return <span>Counting recipients…</span>;
+  if (preview.kind === "error") return <span>Unknown number of</span>;
+  if (count === null) return <span>Every</span>;
+  return (
+    <strong className="font-semibold text-[var(--color-text)]">
+      {count} {suffix}
+      {count === 1 ? "" : "s"}
+    </strong>
   );
 }
 

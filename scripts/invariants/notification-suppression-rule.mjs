@@ -33,6 +33,11 @@
 const DOMAIN_FUNCTIONS = [
   "create_member", "approve_pending_member", "reject_pending_member", "redeem_invite_link",
   "end_officer_term", "accept_officer_invitation", "transition_collection_status",
+  // M13.3: host-facing publish. Writes `collection.publish` when p_notify=true
+  // (watched) and `collection.publish_silent` when false (NOT watched). A
+  // maintenance script that calls it with p_notify defaulted still ends up
+  // writing a watched action, so it belongs on the list.
+  "publish_collection",
 ];
 
 const HELPER = /begin_notification_suppression/;

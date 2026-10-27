@@ -523,6 +523,28 @@ export async function transitionCollectionStatus(
   return row!.status;
 }
 
+/**
+ * Host-facing publish with an explicit notify choice (M13.3).
+ *
+ * `notify = true` writes audit action `collection.publish` (the audit trigger
+ * enqueues to pgmq and the worker fans out in-app notifications to every
+ * audience member with an account). `notify = false` writes action
+ * `collection.publish_silent` — not in the trigger's watched list, so no
+ * enqueue happens. Business state (status, published_at, published_by) is
+ * identical in both cases. Narrow by design: only draft → active/scheduled.
+ */
+export async function publishCollection(
+  caller: CallerContext,
+  input: { collectionId: string; expected: CollectionStatus; notify: boolean; reason?: string | undefined },
+): Promise<CollectionStatus> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ status: CollectionStatus }[]>`select app.publish_collection(
+      ${input.collectionId}, ${input.expected}, ${input.reason ?? null}, ${input.notify}
+    ) as status`,
+  );
+  return row!.status;
+}
+
 // ── Collection audience (20260920150000) ───────────────────────────────────
 //
 // Audience is configuration; an obligation is a record. These two never merge:
