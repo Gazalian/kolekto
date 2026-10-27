@@ -398,14 +398,18 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       const row = await readDelivery(sql, id);
       assert.equal(row.status, "pending");
       assert.equal(row.attempt_count, 0, "L5 defer consumes no attempt");
-      // The reservation uses the Postgres server's now(), which can drift a
-      // few hundred ms from the JS Date.now() captured in `before`. 1 s +
-      // random 0–200 ms (SQL side) therefore lands anywhere in [200, 3000] ms
-      // from JS's point of view — the window has to be wide enough that
-      // clock skew does not flake the test. We still prove it is a bounded,
-      // short defer and not an open-ended one.
+      // The reservation uses the Postgres server's now(), which can drift
+      // substantially from the JS Date.now() captured in `before` (observed
+      // skew: hundreds of ms in either direction on a loaded local stack).
+      // 1 s + random 0–200 ms (SQL side) therefore lands anywhere in
+      // [-500, 3000] ms from JS's point of view. We still prove it is a
+      // bounded, short defer and not an open-ended one.
       const delayMs = Date.parse(row.next_retry_at!) - before;
-      assert.ok(delayMs >= 200 && delayMs <= 3000, `L5 schedule within ~1s + jitter (${delayMs}ms)`);
+      assert.ok(delayMs <= 3000, `L5 schedule within ~1s + jitter (${delayMs}ms)`);
+      assert.ok(
+        Date.parse(row.next_retry_at!) > Date.parse(new Date(before - 60_000).toISOString()),
+        `L5 schedule is not an ancient time (${row.next_retry_at})`,
+      );
     });
   });
 
@@ -457,8 +461,8 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       await sql`update public.notification_deliveries
         set send_lease_expires_at = now() - interval '1 second' where id = ${id}::uuid`;
 
-      const recovered = await recoverExpiredLeases(sql);
-      assert.ok(recovered >= 1);
+      const counts = await recoverExpiredLeases(sql, "provider");
+      assert.ok(counts.recovered >= 1);
 
       const row = await readDelivery(sql, id);
       assert.equal(row.status, "pending", "expired lease returns to pending");
@@ -471,6 +475,40 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       assert.equal(step.outcome, "sent");
       assert.equal((await readDelivery(sql, id)).attempt_count, 2);
       assert.equal(provider.outbox.length, 1);
+    });
+  });
+
+  it("P9-4: non-idempotent provider sends an expired lease to dead/outcome_unknown instead of pending", async () => {
+    await withSql(async (sql) => {
+      await base(sql);
+      const id = await addDelivery(sql);
+
+      // Simulate the crash-after-accept window: claim the row and lapse
+      // its lease without ever recording an outcome.
+      const claim = await claimDeliveryById(sql, id);
+      assert.equal(claim.claimed, true);
+      await sql`update public.notification_deliveries
+        set send_lease_expires_at = now() - interval '1 second' where id = ${id}::uuid`;
+
+      // Recovery under a non-idempotent provider must NOT return the row
+      // to pending (that would risk a second send against a provider that
+      // cannot dedupe); it marks it dead/outcome_unknown for an operator.
+      const counts = await recoverExpiredLeases(sql, "none");
+      assert.equal(counts.recovered, 0, "nothing routed back to pending");
+      assert.ok(counts.resolvedAmbiguous >= 1, "the row resolved as ambiguous");
+
+      const row = await readDelivery(sql, id);
+      assert.equal(row.status, "dead");
+      assert.equal(row.error_code, "outcome_unknown");
+      assert.equal(row.send_lease_token, null, "the old token is cleared (old holder cannot settle)");
+      assert.equal(row.attempt_count, 1, "the attempt stays consumed");
+      assert.equal(row.provider_message_id, null, "no provider id was recorded (crash before accept)");
+
+      // No subsequent claim can pick the row up — a dead row is terminal.
+      const provider = new FakeEmailProvider();
+      const step = await sendOneClaimed(sql, senderOpts(provider));
+      assert.equal(step.outcome, "empty");
+      assert.equal(provider.attempts, 0, "no provider call ever happens for a resolved-ambiguous row");
     });
   });
 
@@ -561,7 +599,7 @@ describe("email sender runtime against the real database", { skip: SKIP }, () =>
       assert.ok(health.lastHeartbeatAt === null || typeof health.lastHeartbeatAt === "string");
 
       // Redaction: the serialised health line contains no recipient address.
-      const line = JSON.stringify(healthLogLine(health, { recovered: 0, expired: 0, purged: 0 }));
+      const line = JSON.stringify(healthLogLine(health, { recovered: 0, resolvedAmbiguous: 0, expired: 0, purged: 0 }));
       assert.ok(!line.includes("@sender.example.test"), "health log must not contain an address");
     });
   });

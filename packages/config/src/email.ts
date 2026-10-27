@@ -40,11 +40,13 @@ const INSPECT_CUSTOM = Symbol.for("nodejs.util.inspect.custom");
 export type LocalEmailProviderName = "fake" | "mailpit";
 
 /**
- * Real providers, i.e. ones that can deliver to a real mailbox. EMPTY ON PURPOSE:
- * none is selected or implemented. Adding a name here is the P9 change and must
- * come with its adapter, its own tests and the approvals listed in §14.
+ * Real providers, i.e. ones that can deliver to a real mailbox. P9-4 adds
+ * "ses"; the adapter still refuses to start until GetAccount's
+ * ProductionAccessEnabled matches the environment and L4/L5 sit strictly
+ * below SES's own quotas, and the sender pause switch remains false until
+ * the operator release gates in §10.6.4 are met.
  */
-export const REAL_EMAIL_PROVIDERS: readonly string[] = [];
+export const REAL_EMAIL_PROVIDERS: readonly string[] = ["ses"];
 
 const LOCAL_PROVIDERS: readonly LocalEmailProviderName[] = ["fake", "mailpit"];
 const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
@@ -88,14 +90,31 @@ export interface MailpitEmailConfig extends EmailConfigBase {
   readonly smtpPort: number;
 }
 
+/**
+ * SES sending config (P9-4). The access key / secret / optional session
+ * token come from the operator's secret store, never from a committed file.
+ * The adapter still runs its own GetAccount reconciliation at startup
+ * (§3.3 of the P9-4 design); this shape is only what config loading
+ * produces.
+ */
+export interface SesEmailConfig extends EmailConfigBase {
+  readonly provider: "ses";
+  readonly region: string;
+  readonly accessKeyId: string;
+  readonly secretAccessKey: EmailSecret;
+  readonly sessionToken?: EmailSecret;
+  readonly configurationSetName?: string;
+  readonly httpTimeoutMs?: number;
+}
+
 /** A provider that can reach real mailboxes. No such provider exists yet; this shape is for P9. */
 export interface RealEmailConfig extends EmailConfigBase {
   readonly provider: string;
   readonly apiKey: EmailSecret;
 }
 
-/** What `loadEmailConfig` returns today. Real providers are structurally impossible until P9. */
-export type EmailConfig = FakeEmailConfig | MailpitEmailConfig;
+/** What `loadEmailConfig` returns today. */
+export type EmailConfig = FakeEmailConfig | MailpitEmailConfig | SesEmailConfig;
 
 type Env = Readonly<Record<string, string | undefined>>;
 
@@ -126,20 +145,24 @@ function requiredVar(env: Env, name: string): string {
 const HAS_CONTROL = /[\u0000-\u001f\u007f]/;
 const PLAIN_ADDRESS = /^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$/;
 
-function assertNoPublicEmailVariables(env: Env, apiKey: string | undefined): void {
+function assertNoPublicEmailVariables(env: Env, secrets: readonly string[]): void {
   for (const [name, raw] of Object.entries(env)) {
     if (!name.startsWith("NEXT_PUBLIC_")) continue;
-    if (/(EMAIL|SMTP|MAIL)/i.test(name)) {
+    if (/(EMAIL|SMTP|MAIL|AWS|SES)/i.test(name)) {
       throw new ConfigError(
-        `REFUSING TO START: ${name} is an email setting exposed through the NEXT_PUBLIC_ prefix. ` +
+        `REFUSING TO START: ${name} is an email / AWS / SES setting exposed through the NEXT_PUBLIC_ prefix. ` +
           `Email configuration is server-only; NEXT_PUBLIC_* values are shipped to browsers.`,
       );
     }
-    if (apiKey !== undefined && raw !== undefined && raw.trim() === apiKey) {
-      throw new ConfigError(
-        `REFUSING TO START: ${name} holds the same value as EMAIL_API_KEY. A credential must never be ` +
-          `exposed through a NEXT_PUBLIC_* variable.`,
-      );
+    const trimmed = raw?.trim();
+    if (trimmed === undefined || trimmed === "") continue;
+    for (const secret of secrets) {
+      if (trimmed === secret) {
+        throw new ConfigError(
+          `REFUSING TO START: ${name} holds the same value as an email credential. A credential must never be ` +
+            `exposed through a NEXT_PUBLIC_* variable.`,
+        );
+      }
     }
   }
 }
@@ -187,8 +210,13 @@ export function evaluateEmailConfig(
 ): EmailConfig | RealEmailConfig {
   const realProviders = options.realProviders ?? REAL_EMAIL_PROVIDERS;
   const apiKey = value(env, "EMAIL_API_KEY");
+  const sesSecret = value(env, "EMAIL_AWS_SECRET_ACCESS_KEY");
+  const sesSessionToken = value(env, "EMAIL_AWS_SESSION_TOKEN");
 
-  assertNoPublicEmailVariables(env, apiKey);
+  assertNoPublicEmailVariables(
+    env,
+    [apiKey, sesSecret, sesSessionToken].filter((s): s is string => s !== undefined),
+  );
 
   const provider = requiredVar(env, "EMAIL_PROVIDER");
   const isLocalProvider = (LOCAL_PROVIDERS as readonly string[]).includes(provider);
@@ -257,7 +285,56 @@ export function evaluateEmailConfig(
     return Object.freeze({ provider: "mailpit", from, appBaseUrl, smtpHost, smtpPort });
   }
 
-  // Real provider (none exists until P9).
+  // ── Real provider: SES (P9-4) ──────────────────────────────────────────────
+  if (provider === "ses") {
+    if (apiKey !== undefined) {
+      throw new ConfigError(
+        "REFUSING TO START: EMAIL_API_KEY is set but EMAIL_PROVIDER=ses. The SES adapter uses " +
+          "EMAIL_AWS_ACCESS_KEY_ID and EMAIL_AWS_SECRET_ACCESS_KEY, not EMAIL_API_KEY.",
+      );
+    }
+    const region = requiredVar(env, "EMAIL_AWS_REGION");
+    const AWS_REGION_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)+$/;
+    if (!AWS_REGION_PATTERN.test(region)) {
+      throw new ConfigError("EMAIL_AWS_REGION is not a well-formed AWS region string (expected e.g. eu-west-1).");
+    }
+    const accessKeyId = requiredVar(env, "EMAIL_AWS_ACCESS_KEY_ID");
+    if (accessKeyId.length < 16 || !/^[A-Z0-9]+$/.test(accessKeyId)) {
+      // IAM access key ids are 20 chars of [A-Z0-9]. Reject anything that
+      // obviously isn't one so a mistyped value fails loudly at startup.
+      throw new ConfigError("EMAIL_AWS_ACCESS_KEY_ID does not look like an AWS access key id.");
+    }
+    const secretAccessKeyRaw = requiredVar(env, "EMAIL_AWS_SECRET_ACCESS_KEY");
+    if (secretAccessKeyRaw.length < 20) {
+      throw new ConfigError("EMAIL_AWS_SECRET_ACCESS_KEY looks too short to be a real secret.");
+    }
+    const sessionTokenRaw = value(env, "EMAIL_AWS_SESSION_TOKEN");
+    const configurationSetName = value(env, "EMAIL_AWS_CONFIGURATION_SET");
+    const rawTimeout = value(env, "EMAIL_SES_SEND_TIMEOUT_MS");
+    let httpTimeoutMs: number | undefined;
+    if (rawTimeout !== undefined) {
+      const parsed = Number(rawTimeout);
+      if (!Number.isInteger(parsed) || parsed < 1_000 || parsed > 60_000) {
+        throw new ConfigError("EMAIL_SES_SEND_TIMEOUT_MS must be an integer between 1000 and 60000.");
+      }
+      httpTimeoutMs = parsed;
+    }
+    const sesConfig: SesEmailConfig = Object.freeze({
+      provider: "ses",
+      from,
+      appBaseUrl,
+      region,
+      accessKeyId,
+      secretAccessKey: createEmailSecret(secretAccessKeyRaw),
+      ...(sessionTokenRaw !== undefined ? { sessionToken: createEmailSecret(sessionTokenRaw) } : {}),
+      ...(configurationSetName !== undefined ? { configurationSetName } : {}),
+      ...(httpTimeoutMs !== undefined ? { httpTimeoutMs } : {}),
+    });
+    return sesConfig;
+  }
+
+  // Any other registered real provider (none at present, kept as the
+  // generic fallback shape so adding one later is a one-line change).
   if (apiKey === undefined || apiKey.length < 8) {
     throw new ConfigError(`EMAIL_API_KEY is required for provider "${provider}" and looks too short to be a real key.`);
   }
@@ -283,9 +360,12 @@ export function loadEmailConfig(environment: KolektoEnvironment): EmailConfig {
     );
   }
   const config = evaluateEmailConfig(process.env, environment);
-  if (config.provider === "fake" || config.provider === "mailpit") return config as EmailConfig;
-  // Unreachable while REAL_EMAIL_PROVIDERS is empty; fails closed if someone registers a provider without wiring it.
-  throw new ConfigError("A real email provider was configured but no adapter is wired for it yet (P9).");
+  if (config.provider === "fake" || config.provider === "mailpit" || config.provider === "ses") {
+    return config as EmailConfig;
+  }
+  // Fallback for any future RealEmailConfig that lands in REAL_EMAIL_PROVIDERS
+  // without a matching case here — fails closed with a clear message.
+  throw new ConfigError(`A real email provider "${config.provider}" was configured but no adapter is wired for it yet.`);
 }
 
 /** A log-safe description. Names the provider and sender; never a credential. */

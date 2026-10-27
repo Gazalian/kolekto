@@ -17,11 +17,12 @@
  * every environment, so a worker that is merely started sends nothing.
  */
 
-import { createEmailProvider, type EmailProvider } from "@kolekto/adapters";
+import { createEmailProviderAsync, type EmailProvider } from "@kolekto/adapters";
 import { loadConfig, loadDatabaseUrl, loadEmailConfig } from "@kolekto/config";
 import postgres from "postgres";
 
 import { processNotificationMessage } from "./notification-processor.js";
+import { getSendLimits } from "./notification-rate-limit.ts";
 import { runSenderTick } from "./notification-sender.ts";
 
 const POLL_INTERVAL_MS = 2_000;
@@ -36,23 +37,49 @@ let running = true;
 
 /**
  * Build the email provider from configuration, or return null (and run only
- * the event stage) when email is unconfigured or the startup guards refuse the
- * configuration. Never throws — a misconfigured sender must not take down the
- * event stage.
+ * the event stage) when email is unconfigured or the startup guards refuse
+ * the configuration. Never throws — a misconfigured sender must not take
+ * down the event stage.
+ *
+ * The SES adapter needs an async startup check (GetAccount) and the
+ * configured L4/L5 numbers so it can refuse to start when the provider's
+ * own quotas sit at or below ours. The transactional class is the only
+ * one any code path writes today (P9-3), so its numbers are what we
+ * reconcile against.
  */
-function loadEmailSender(): EmailProvider | null {
+async function loadEmailSender(sql: postgres.Sql<Record<string, never>>): Promise<EmailProvider | null> {
   if (!process.env["EMAIL_PROVIDER"]) {
     console.log("Email sender disabled: EMAIL_PROVIDER is not set.");
     return null;
   }
   try {
     const { environment } = loadConfig();
-    const provider = createEmailProvider(loadEmailConfig(environment));
+    const config = loadEmailConfig(environment);
+    let built: EmailProvider;
+    if (config.provider === "ses") {
+      const limits = await getSendLimits(sql, "transactional");
+      const sesConfig = {
+        provider: "ses" as const,
+        from: config.from,
+        region: config.region,
+        accessKeyId: config.accessKeyId,
+        secretAccessKey: config.secretAccessKey,
+        requireProductionAccess: environment === "production",
+        localL4Daily: limits.l4Daily,
+        localL5PerSecond: limits.l5PerSecond,
+        ...(config.sessionToken !== undefined ? { sessionToken: config.sessionToken } : {}),
+        ...(config.configurationSetName !== undefined ? { configurationSetName: config.configurationSetName } : {}),
+        ...(config.httpTimeoutMs !== undefined ? { httpTimeoutMs: config.httpTimeoutMs } : {}),
+      };
+      built = await createEmailProviderAsync(sesConfig);
+    } else {
+      built = await createEmailProviderAsync(config);
+    }
     console.log(
-      `Email sender configured: provider=${provider.name}, idempotency=${provider.idempotency}. ` +
+      `Email sender configured: provider=${built.name}, idempotency=${built.idempotency}. ` +
         "Sending stays off until the email_sending_enabled pause switch is on.",
     );
-    return provider;
+    return built;
   } catch (err) {
     console.error("Email sender NOT started (configuration refused):", err instanceof Error ? err.message : err);
     return null;
@@ -67,7 +94,7 @@ async function main() {
 
   console.log("Kolekto worker: connected. Polling notification_events queue.");
 
-  const provider = loadEmailSender();
+  const provider = await loadEmailSender(sql);
   let senderHalted = false;
   let lastMaintenance = 0;
 

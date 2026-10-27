@@ -171,3 +171,24 @@ export async function recoverExpiredLease(sql: Db, deliveryId: string): Promise<
   if (!row) return { recovered: false, reason: "not_leased" };
   return { recovered: row.recovered, reason: row.reason };
 }
+
+/**
+ * P9-4. Resolve an expired-lease `sending` row as ambiguous (dead /
+ * outcome_unknown) rather than returning it to pending. Used by the sender
+ * when the provider's idempotency is `"none"` — a retry would risk a double
+ * send, so the row is surfaced for an operator to decide. Live-lease rows
+ * are refused; a terminal row returns `not_leased`.
+ */
+export interface ResolveAmbiguousOutcome {
+  readonly resolved: boolean;
+  readonly reason: string;
+}
+
+export async function resolveLeaseAmbiguous(sql: Db, deliveryId: string): Promise<ResolveAmbiguousOutcome> {
+  const [row] = await sql<{ resolved: boolean; reason: string }[]>`
+    select resolved, reason
+    from app.resolve_lease_ambiguous(${deliveryId}::uuid)
+  `;
+  if (!row) return { resolved: false, reason: "not_leased" };
+  return { resolved: row.resolved, reason: row.reason };
+}
