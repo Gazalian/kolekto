@@ -29,7 +29,7 @@
  */
 
 /** The provider implementations that exist. A real provider is added in P9 after approval. */
-export type EmailProviderName = "fake" | "mailpit";
+export type EmailProviderName = "fake" | "mailpit" | "ses";
 
 export interface EmailMessage {
   /** A single recipient address. Multiple recipients are deliberately not supported. */
