@@ -2,14 +2,27 @@
 
 import { cn } from "@kolekto/ui";
 import { Bell } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { computePanelCoords, type PanelCoords } from "../lib/notification-panel-placement.ts";
 import { useNotifications } from "./NotificationProvider.tsx";
 import { NotificationPanel } from "./NotificationPanel.tsx";
 
+/**
+ * The bell button and its dropdown panel.
+ *
+ * The panel is `position: fixed` with coordinates computed from the button's
+ * viewport-rect on open: `absolute right-0 top-full` cannot work for every
+ * mount site this bell is used in (the sidebar bell sits at the bottom-left
+ * of the viewport, so top-full pushed the panel off the bottom and right-0
+ * pushed it off the left — QA LAYOUT-1). We re-measure on resize and on
+ * window scroll so a scroll or orientation change does not strand the panel.
+ */
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
+  const [coords, setCoords] = useState<PanelCoords | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
   const panelId = useId();
   const { notifications, unreadCount, loading, error, refresh } = useNotifications();
 
@@ -18,13 +31,31 @@ export function NotificationBell() {
     if (returnFocus) buttonRef.current?.focus();
   }
 
+  const reposition = useCallback(() => {
+    const btn = buttonRef.current;
+    if (!btn) return;
+    const rect = btn.getBoundingClientRect();
+    setCoords(computePanelCoords(rect, window.innerWidth, window.innerHeight));
+  }, []);
+
+  // Compute coordinates synchronously before the panel paints so the first
+  // frame already lands in the right place (no flicker from an initial render
+  // at (0,0) followed by a corrective layout pass). The panel is only
+  // rendered when `open && coords` so stale coordinates from a previous open
+  // never reach the DOM.
+  useLayoutEffect(() => {
+    if (!open) return;
+    reposition();
+  }, [open, reposition]);
+
   useEffect(() => {
     if (!open) return;
 
     function handleClickOutside(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (ref.current?.contains(target)) return;
+      if (panelRef.current?.contains(target)) return;
+      setOpen(false);
     }
     function handleKeyDown(e: KeyboardEvent) {
       if (e.key === "Escape") {
@@ -32,16 +63,24 @@ export function NotificationBell() {
         close(true);
       }
     }
+    function handleResize() {
+      reposition();
+    }
     document.addEventListener("mousedown", handleClickOutside);
     document.addEventListener("keydown", handleKeyDown);
+    window.addEventListener("resize", handleResize);
+    // scroll uses capture so a scroll inside any ancestor also fires.
+    window.addEventListener("scroll", handleResize, true);
     return () => {
       document.removeEventListener("mousedown", handleClickOutside);
       document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("resize", handleResize);
+      window.removeEventListener("scroll", handleResize, true);
     };
-  }, [open]);
+  }, [open, reposition]);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative inline-block">
       <button
         ref={buttonRef}
         type="button"
@@ -65,14 +104,22 @@ export function NotificationBell() {
         )}
       </button>
 
-      {open && (
+      {open && coords && (
         <NotificationPanel
           id={panelId}
+          panelRef={panelRef}
           notifications={notifications}
           loading={loading}
           error={error}
           onRefresh={refresh}
           onClose={() => close()}
+          style={{
+            position: "fixed",
+            top: coords.top,
+            left: coords.left,
+            width: coords.width,
+            maxHeight: coords.maxHeight,
+          }}
         />
       )}
     </div>

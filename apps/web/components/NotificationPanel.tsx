@@ -3,7 +3,7 @@
 import { cn } from "@kolekto/ui";
 import { Bell, Check } from "lucide-react";
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { type CSSProperties, type RefObject, useState, useTransition } from "react";
 import { markAllReadAction } from "../app/notifications/actions.ts";
 import { NotificationItem } from "./NotificationItem.tsx";
 
@@ -24,18 +24,30 @@ interface NotificationRow {
 
 export function NotificationPanel({
   id,
+  panelRef,
   notifications,
   loading,
   error,
   onRefresh,
   onClose,
+  style,
 }: {
   id?: string;
+  /**
+   * Set by `NotificationBell` so outside-click detection can tell a click
+   * inside the fixed-positioned panel apart from a click outside the bell.
+   * Without this, a click on the panel's own buttons would close the panel
+   * before the handler ran, because the panel sits outside the bell's
+   * `.relative` wrapper when it is `position: fixed`.
+   */
+  panelRef?: RefObject<HTMLDivElement | null>;
   notifications: NotificationRow[];
   loading: boolean;
   error: boolean;
   onRefresh: () => void | Promise<void>;
   onClose: () => void;
+  /** Inline position/size the bell computes to keep the panel on screen. */
+  style?: CSSProperties;
 }) {
   const [isPending, startTransition] = useTransition();
   const [markAllError, setMarkAllError] = useState<string | null>(null);
@@ -58,13 +70,19 @@ export function NotificationPanel({
 
   return (
     <div
+      ref={panelRef}
       id={id}
       role="region"
       aria-label="Notifications"
+      // When a `style` is supplied (the bell's computed `position: fixed`
+      // coordinates), rely on it for layout and only keep the visual classes.
+      // Otherwise fall back to the original anchor-below-right positioning so
+      // this component is still usable standalone.
       className={cn(
-        "absolute right-0 top-full z-50 mt-1 w-80 overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)]",
-        "sm:w-96",
+        "z-50 flex flex-col overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)]",
+        !style && "absolute right-0 top-full mt-1 w-80 sm:w-96",
       )}
+      style={style}
     >
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
         <h2 className="text-sm font-semibold text-[var(--color-text)]">Notifications</h2>
@@ -97,7 +115,7 @@ export function NotificationPanel({
         </div>
       )}
 
-      <div className="max-h-96 overflow-y-auto">
+      <div className="max-h-96 min-h-0 flex-1 overflow-y-auto">
         {loading && !hasAny ? (
           <div className="px-4 py-8 text-center text-sm text-[var(--color-text-faint)]" role="status">
             Loading…
