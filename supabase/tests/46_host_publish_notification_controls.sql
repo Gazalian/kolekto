@@ -27,7 +27,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(16);
+select plan(17);
 
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
