@@ -257,4 +257,161 @@ describe("the processor against the real database", { skip: SKIP }, () => {
       await sql.end({ timeout: 2 });
     }
   });
+
+  it("M13.3 host publish — all three notify targets end-to-end through the real pipeline", async () => {
+    // Covers Priority 5 of the M13.3 brief: the host's choice at publish
+    // reaches the right in-app recipients through the REAL audit trigger +
+    // pgmq + processor, with no seeded delivery rows. The three branches:
+    //
+    //   all    → every audience member with an account gets one in-app
+    //            delivery.
+    //   unpaid → only audience members with an outstanding obligation on
+    //            this collection (status in unpaid/in_installments/overdue)
+    //            get one in-app delivery; members with no obligation yet
+    //            and members with paid/exempt/cancelled are excluded.
+    //   none   → no pgmq message is enqueued; no delivery is created.
+    //
+    // The test runs inside one transaction, rolled back at the end, so no
+    // row persists in the local database.
+    const sql = postgres(URL_ENV, { prepare: false, transform: { undefined: null }, max: 1 });
+    const evidence: Record<string, unknown> = {};
+    try {
+      await sql
+        .begin(async (rawTx) => {
+          const tx = rawTx as unknown as Tx;
+
+          // ── Fixtures: two users, two members linked to them, three drafts.
+          const OWING = "b4000000-0000-4000-8000-000000000001";
+          const PAID = "b4000000-0000-4000-8000-000000000002";
+          const COMMUNITY2 = "b5000000-0000-4000-8000-00000000000a";
+          const OWNER_TERM2 = "b6000000-0000-4000-8000-000000000001";
+          const COL_ALL = "b7000000-0000-4000-8000-000000000a01";
+          const COL_UNPAID = "b7000000-0000-4000-8000-000000000a02";
+          const COL_NONE = "b7000000-0000-4000-8000-000000000a03";
+
+          await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
+            (${OWING}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'owing@m13-3.example.test', now()),
+            (${PAID},  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'paid@m13-3.example.test',  now())`;
+          await tx`insert into public.users (id, full_name, email) values
+            (${OWING}, 'M13.3 Owing', 'owing@m13-3.example.test'),
+            (${PAID},  'M13.3 Paid',  'paid@m13-3.example.test')
+            on conflict (id) do update set full_name = excluded.full_name`;
+          await tx`insert into public.communities (id, slug, name, type, is_personal, created_by)
+            values (${COMMUNITY2}, 'itest-pub', 'ITest Pub', 'social_group', false, ${OWING})`;
+          await tx`insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
+            (${OWNER_TERM2}, ${COMMUNITY2}, ${OWING}, 'owner', 'M13.3 Owing', 'created')`;
+
+          const asOwner = async <T>(fn: () => Promise<T>): Promise<T> => {
+            await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: OWING, role: "authenticated" })}, true)`;
+            await tx`set local role authenticated`;
+            try {
+              return await fn();
+            } finally {
+              await tx`reset role`;
+            }
+          };
+
+          // Both users become members of the community (via create_member
+          // which is the real audited domain function). Linking a member to
+          // its auth user lives in `members.user_id`.
+          const owingMemberId = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY2}::uuid, 'Owing Member', '+2348095552001', 'owing@m13-3.example.test') as id`,
+            ),
+          ).id;
+          const paidMemberId = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY2}::uuid, 'Paid Member', '+2348095552002', 'paid@m13-3.example.test') as id`,
+            ),
+          ).id;
+          // Linking a member to an auth user requires both user_id and
+          // claimed_at (members_claimed_consistently check). This stands in
+          // for the real claim flow, which does not exist yet (D-LINK).
+          await tx`update public.members set user_id = ${OWING}, claimed_at = now() where id = ${owingMemberId}`;
+          await tx`update public.members set user_id = ${PAID},  claimed_at = now() where id = ${paidMemberId}`;
+
+          // Three identical draft collections, one per branch.
+          for (const id of [COL_ALL, COL_UNPAID, COL_NONE]) {
+            const slug = `itest-${id.slice(-4)}`;
+            await tx`insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, created_by, audience_mode)
+              values (${id}, ${COMMUNITY2}, ${slug}, 'ITest Pub', 'dues', 'managed', 'fixed', 500000, 'draft', ${OWING}, 'all_members')`;
+          }
+
+          // For the "unpaid" cohort to be meaningful, give each member an
+          // obligation on COL_UNPAID — one that is still owed (status
+          // 'unpaid' from app.assign_obligations' default) and one that is
+          // exempt (via the real audited domain function). An exempt
+          // obligation does not count as owing, so the unpaid cohort is
+          // exactly {OWING}. The 'paid' status is deliberately not used
+          // here: a paid obligation only comes from a Paystack-verified
+          // contribution (CASH-02) and this test cannot create one.
+          await asOwner(() => tx`select app.assign_obligations(${COL_UNPAID}::uuid, array[${owingMemberId}::uuid, ${paidMemberId}::uuid])`);
+          const paidObligationId = first(
+            await tx<{ id: string }[]>`select id from public.obligations where collection_id = ${COL_UNPAID} and member_id = ${paidMemberId}`,
+          ).id;
+          await asOwner(() => tx`select app.exempt_obligation(${paidObligationId}::uuid, 'integration test: exempt stands in for paid')`);
+
+          // ── Call app.publish_collection three times (all / unpaid / none).
+          const resAll = first(await asOwner(() => tx<{ status: string }[]>`select app.publish_collection(${COL_ALL}::uuid, 'draft'::public.collection_status, null, 'all') as status`));
+          const resUnpaid = first(await asOwner(() => tx<{ status: string }[]>`select app.publish_collection(${COL_UNPAID}::uuid, 'draft'::public.collection_status, null, 'unpaid') as status`));
+          const resNone = first(await asOwner(() => tx<{ status: string }[]>`select app.publish_collection(${COL_NONE}::uuid, 'draft'::public.collection_status, null, 'none') as status`));
+          assert.equal(resAll.status, "active");
+          assert.equal(resUnpaid.status, "active");
+          assert.equal(resNone.status, "active");
+
+          // ── The real trigger produced these messages for this community.
+          const messages = await tx<{ message: Record<string, unknown> }[]>`
+            select message from pgmq.q_notification_events
+            where message ->> 'community_id' = ${COMMUNITY2}
+              and (message ->> 'action') like 'collection.%'
+            order by msg_id`;
+          const actions = messages.map((m) => String(m.message["action"]));
+          evidence["pub_actions"] = actions;
+          assert.deepEqual(
+            [...actions].sort(),
+            ["collection.publish", "collection.publish_remind_unpaid"].sort(),
+            "silent publish produced no pgmq message; the other two did",
+          );
+
+          // ── Run the real processor over those messages.
+          for (const m of messages) {
+            await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
+          }
+
+          // ── Assertions on the delivery rows the processor created.
+          const deliveries = await tx<{ event_type: string; recipient_user_id: string; recipient_member_id: string }[]>`
+            select e.event_type, d.recipient_user_id::text as recipient_user_id, d.recipient_member_id::text as recipient_member_id
+            from public.notification_deliveries d
+            join public.notification_events e on e.id = d.notification_event_id
+            where d.community_id = ${COMMUNITY2}
+              and d.channel = 'in_app'
+            order by e.event_type, d.recipient_user_id`;
+          evidence["deliveries"] = deliveries;
+
+          const forAll = deliveries.filter((d) => d.event_type === "collection.publish");
+          const forUnpaid = deliveries.filter((d) => d.event_type === "collection.publish_remind_unpaid");
+
+          assert.equal(forAll.length, 2, "notify=all reaches both audience members");
+          assert.deepEqual(
+            [...forAll.map((d) => d.recipient_user_id)].sort(),
+            [OWING, PAID].sort(),
+            "notify=all names both members",
+          );
+          assert.equal(forUnpaid.length, 1, "notify=unpaid reaches only the one still owing");
+          assert.equal(forUnpaid[0]?.recipient_user_id, OWING, "notify=unpaid is addressed to the owing member");
+
+          // There is no `collection.publish_silent` event or delivery.
+          const silent = await tx<{ c: number }[]>`select count(*)::int as c from public.notification_events where community_id = ${COMMUNITY2} and event_type = 'collection.publish_silent'`;
+          assert.equal(silent[0]?.c, 0, "silent publish wrote no notification_event");
+
+          throw new Rollback();
+        })
+        .catch((e: unknown) => {
+          if (!(e instanceof Rollback)) throw e;
+        });
+      console.log("M13.3 integration evidence:", JSON.stringify(evidence));
+    } finally {
+      await sql.end({ timeout: 2 });
+    }
+  });
 });

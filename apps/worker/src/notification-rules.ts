@@ -39,6 +39,9 @@ export interface AuditMessage {
 /** The actions the trigger enqueues. A message for any other action is acknowledged and ignored. */
 export const WATCHED_ACTIONS = [
   "collection.publish",
+  // M13.3: host targeted the "still owes payment" cohort at publish time; the
+  // worker's recipient plan filters the audience by outstanding obligation.
+  "collection.publish_remind_unpaid",
   "member.create",
   "member.approve_join",
   "member.reject_join",
@@ -178,6 +181,9 @@ export function isImportedMember(m: { readonly is_imported?: boolean | null; rea
 
 export type RecipientPlan =
   | { readonly kind: "collection_audience" }
+  // M13.3: the audience restricted to members with an outstanding obligation
+  // on this collection (status unpaid / in_installments / overdue).
+  | { readonly kind: "collection_audience_unpaid" }
   | { readonly kind: "member_self" }
   | { readonly kind: "officers_with_permission"; readonly permission: string }
   | { readonly kind: "officer_term_holder" }
@@ -197,6 +203,8 @@ export function recipientPlan(action: string): RecipientPlan {
   switch (action) {
     case "collection.publish":
       return { kind: "collection_audience" };
+    case "collection.publish_remind_unpaid":
+      return { kind: "collection_audience_unpaid" };
     case "member.create":
     case "member.approve_join":
       return { kind: "member_self" };
@@ -274,6 +282,7 @@ export function buildPayload(message: AuditMessage, facts: PayloadFacts): Payloa
 
   switch (message.action) {
     case "collection.publish":
+    case "collection.publish_remind_unpaid":
       return {
         ...base,
         collection_name: text(facts.collectionName, 200),

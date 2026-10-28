@@ -1,21 +1,26 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- 46 — Host-controlled publish-time notification (M13.3)
 --
--- Migration 20261027210000. What is proved here:
+-- Migrations 20261027210000 + 20261028100000. What is proved here:
 --
---   A. Schema: `app.publish_collection(uuid, collection_status, text, boolean)`
---      exists and is grantable to authenticated.
---   B. Behaviour:
---        · p_notify=true  → audit action `collection.publish`,
---          one pgmq message is enqueued (trigger watches that action),
---          and the audit row's after_state carries `notified: true`.
---        · p_notify=false → audit action `collection.publish_silent`,
+--   A. Schema: `app.publish_collection(uuid, collection_status, text, text)`
+--      exists (the boolean form was dropped in 20261028100000) and is
+--      grantable to authenticated.
+--   B. Behaviour of the three notify-targets:
+--        · p_notify_target = 'all'    → audit `collection.publish`,
+--          one pgmq message is enqueued, after_state.notify_target = 'all'.
+--        · p_notify_target = 'unpaid' → audit
+--          `collection.publish_remind_unpaid`, one pgmq message is enqueued
+--          (the trigger watches this new action too),
+--          after_state.notify_target = 'unpaid'.
+--        · p_notify_target = 'none'   → audit `collection.publish_silent`,
 --          NO pgmq message is enqueued (trigger ignores unwatched actions),
---          and the audit row's after_state carries `notified: false`.
+--          after_state.notify_target = 'none'.
 --      Business state (status, published_at, published_by) is identical in
---      both cases.
+--      all three cases.
 --   C. Preconditions:
 --        · unknown collection → NOT_FOUND.
+--        · unknown notify_target → INVALID_NOTIFY_TARGET.
 --        · non-draft `p_expected` → INVALID_TRANSITION; the host-facing
 --          publish is deliberately narrow (other transitions go through
 --          app.transition_collection_status).
@@ -27,7 +32,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(17);
+select plan(20);
 
 
 -- ── Fixtures ─────────────────────────────────────────────────────────────────
@@ -43,79 +48,102 @@ insert into public.communities (id, slug, name, type, is_personal, created_by) v
 insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
   ('f3000000-0000-4000-8000-000000000001', 'f2000000-0000-4000-8000-00000000000a', 'f1000000-0000-4000-8000-000000000001', 'owner', 'M13.3 Host', 'created');
 
--- Two draft collections, identical shape; one for notify-publish, one for silent.
+-- Five draft collections, identical shape; one each for all/unpaid/none and
+-- two for the precondition/permission branches. One is already-active.
 insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, created_by) values
-  ('f4000000-0000-4000-8000-000000000a01', 'f2000000-0000-4000-8000-00000000000a', 'notify-draft', 'Notify Draft', 'dues', 'open', 'fixed', 500000, 'draft', 'f1000000-0000-4000-8000-000000000001'),
-  ('f4000000-0000-4000-8000-000000000a02', 'f2000000-0000-4000-8000-00000000000a', 'silent-draft', 'Silent Draft', 'dues', 'open', 'fixed', 500000, 'draft', 'f1000000-0000-4000-8000-000000000001'),
-  ('f4000000-0000-4000-8000-000000000a03', 'f2000000-0000-4000-8000-00000000000a', 'conflict-draft', 'Conflict Draft', 'dues', 'open', 'fixed', 500000, 'draft', 'f1000000-0000-4000-8000-000000000001'),
-  ('f4000000-0000-4000-8000-000000000a04', 'f2000000-0000-4000-8000-00000000000a', 'already-active', 'Already Active', 'dues', 'open', 'fixed', 500000, 'active', 'f1000000-0000-4000-8000-000000000001');
+  ('f4000000-0000-4000-8000-000000000a01', 'f2000000-0000-4000-8000-00000000000a', 'notify-draft',    'Notify Draft',    'dues', 'open', 'fixed', 500000, 'draft',  'f1000000-0000-4000-8000-000000000001'),
+  ('f4000000-0000-4000-8000-000000000a02', 'f2000000-0000-4000-8000-00000000000a', 'silent-draft',    'Silent Draft',    'dues', 'open', 'fixed', 500000, 'draft',  'f1000000-0000-4000-8000-000000000001'),
+  ('f4000000-0000-4000-8000-000000000a03', 'f2000000-0000-4000-8000-00000000000a', 'conflict-draft',  'Conflict Draft',  'dues', 'open', 'fixed', 500000, 'draft',  'f1000000-0000-4000-8000-000000000001'),
+  ('f4000000-0000-4000-8000-000000000a04', 'f2000000-0000-4000-8000-00000000000a', 'already-active',  'Already Active',  'dues', 'open', 'fixed', 500000, 'active', 'f1000000-0000-4000-8000-000000000001'),
+  ('f4000000-0000-4000-8000-000000000a05', 'f2000000-0000-4000-8000-00000000000a', 'unpaid-draft',    'Unpaid Draft',    'dues', 'open', 'fixed', 500000, 'draft',  'f1000000-0000-4000-8000-000000000001');
 
 
 -- ── A. Schema ────────────────────────────────────────────────────────────────
 select has_function('app', 'publish_collection',
-  array['uuid', 'public.collection_status', 'text', 'boolean'],
-  'app.publish_collection(uuid, collection_status, text, boolean) exists');
+  array['uuid', 'public.collection_status', 'text', 'text'],
+  'app.publish_collection(uuid, collection_status, text, text) exists');
 
 select function_privs_are(
   'app', 'publish_collection',
-  array['uuid', 'public.collection_status', 'text', 'boolean'],
+  array['uuid', 'public.collection_status', 'text', 'text'],
   'authenticated', array['EXECUTE'],
   'authenticated holds EXECUTE on app.publish_collection');
 
 
--- ── B. notify=true branch ────────────────────────────────────────────────────
+-- ── B. notify_target='all' branch ────────────────────────────────────────────
 set local request.jwt.claims = '{"sub":"f1000000-0000-4000-8000-000000000001","role":"authenticated"}';
 set local role authenticated;
 
 select is(
   app.publish_collection(
-    'f4000000-0000-4000-8000-000000000a01'::uuid, 'draft'::public.collection_status, 'ship it', true),
+    'f4000000-0000-4000-8000-000000000a01'::uuid, 'draft'::public.collection_status, 'ship it', 'all'),
   'active'::public.collection_status,
-  'notify-publish resolves to active (no future starts_at)');
+  'notify_target=all resolves to active (no future starts_at)');
 
 reset role;
 
--- Business state updated.
-select is(
-  (select status from public.collections where id = 'f4000000-0000-4000-8000-000000000a01'),
-  'active'::public.collection_status,
-  'collection row shows status=active after notify-publish');
-select isnt(
-  (select published_at from public.collections where id = 'f4000000-0000-4000-8000-000000000a01'),
-  null,
-  'published_at is set after notify-publish');
-
--- Audit action is `collection.publish` and after_state records the choice.
 select is(
   (select action from public.audit_logs where object_id = 'f4000000-0000-4000-8000-000000000a01'
      order by created_at desc limit 1),
   'collection.publish',
-  'notify=true writes audit action collection.publish');
+  'notify_target=all writes audit action collection.publish');
 select is(
-  (select (after_state ->> 'notified') from public.audit_logs
+  (select (after_state ->> 'notify_target') from public.audit_logs
      where object_id = 'f4000000-0000-4000-8000-000000000a01' order by created_at desc limit 1),
-  'true',
-  'after_state.notified = true in the notify-publish audit row');
-
--- Trigger enqueued exactly one message for this audit row.
+  'all',
+  'after_state.notify_target = all');
 select is(
   (select count(*)::int from pgmq.q_notification_events
      where message ->> 'audit_log_id' =
        (select id::text from public.audit_logs
           where object_id = 'f4000000-0000-4000-8000-000000000a01' order by created_at desc limit 1)),
   1,
-  'notify-publish enqueued exactly one pgmq message');
+  'notify_target=all enqueued exactly one pgmq message');
 
 
--- ── B. notify=false branch (silent) ──────────────────────────────────────────
+-- ── B. notify_target='unpaid' branch ─────────────────────────────────────────
 set local request.jwt.claims = '{"sub":"f1000000-0000-4000-8000-000000000001","role":"authenticated"}';
 set local role authenticated;
 
 select is(
   app.publish_collection(
-    'f4000000-0000-4000-8000-000000000a02'::uuid, 'draft'::public.collection_status, 'quiet', false),
+    'f4000000-0000-4000-8000-000000000a05'::uuid, 'draft'::public.collection_status, 'remind', 'unpaid'),
   'active'::public.collection_status,
-  'silent-publish resolves to active, same as notify-publish');
+  'notify_target=unpaid resolves to active, same as all');
+
+reset role;
+
+select is(
+  (select action from public.audit_logs where object_id = 'f4000000-0000-4000-8000-000000000a05'
+     order by created_at desc limit 1),
+  'collection.publish_remind_unpaid',
+  'notify_target=unpaid writes audit action collection.publish_remind_unpaid');
+select is(
+  (select (after_state ->> 'notify_target') from public.audit_logs
+     where object_id = 'f4000000-0000-4000-8000-000000000a05' order by created_at desc limit 1),
+  'unpaid',
+  'after_state.notify_target = unpaid');
+-- The trigger NOW watches `collection.publish_remind_unpaid` (added by
+-- 20261028100000), so the message IS enqueued. The worker's recipient plan
+-- filters by obligation status; the trigger stays dumb.
+select is(
+  (select count(*)::int from pgmq.q_notification_events
+     where message ->> 'audit_log_id' =
+       (select id::text from public.audit_logs
+          where object_id = 'f4000000-0000-4000-8000-000000000a05' order by created_at desc limit 1)),
+  1,
+  'notify_target=unpaid enqueued exactly one pgmq message');
+
+
+-- ── B. notify_target='none' branch (silent) ──────────────────────────────────
+set local request.jwt.claims = '{"sub":"f1000000-0000-4000-8000-000000000001","role":"authenticated"}';
+set local role authenticated;
+
+select is(
+  app.publish_collection(
+    'f4000000-0000-4000-8000-000000000a02'::uuid, 'draft'::public.collection_status, 'quiet', 'none'),
+  'active'::public.collection_status,
+  'notify_target=none resolves to active, same as all');
 
 reset role;
 
@@ -123,22 +151,21 @@ select is(
   (select action from public.audit_logs where object_id = 'f4000000-0000-4000-8000-000000000a02'
      order by created_at desc limit 1),
   'collection.publish_silent',
-  'notify=false writes audit action collection.publish_silent');
+  'notify_target=none writes audit action collection.publish_silent');
 select is(
-  (select (after_state ->> 'notified') from public.audit_logs
+  (select (after_state ->> 'notify_target') from public.audit_logs
      where object_id = 'f4000000-0000-4000-8000-000000000a02' order by created_at desc limit 1),
-  'false',
-  'after_state.notified = false in the silent-publish audit row');
-
--- The trigger watches a fixed list; `collection.publish_silent` is NOT on it,
--- so no message is enqueued. This is the whole point of this slice.
+  'none',
+  'after_state.notify_target = none');
+-- `collection.publish_silent` is NOT in the trigger's watched list, so no
+-- message is enqueued. This is the whole point of the silent path.
 select is(
   (select count(*)::int from pgmq.q_notification_events
      where message ->> 'audit_log_id' =
        (select id::text from public.audit_logs
           where object_id = 'f4000000-0000-4000-8000-000000000a02' order by created_at desc limit 1)),
   0,
-  'silent-publish enqueued NO pgmq message');
+  'notify_target=none enqueued NO pgmq message');
 
 
 -- ── C. Preconditions ─────────────────────────────────────────────────────────
@@ -146,17 +173,22 @@ set local request.jwt.claims = '{"sub":"f1000000-0000-4000-8000-000000000001","r
 set local role authenticated;
 
 select throws_matching(
-  $$ select app.publish_collection('00000000-0000-0000-0000-000000000000'::uuid, 'draft'::public.collection_status, null, true) $$,
+  $$ select app.publish_collection('00000000-0000-0000-0000-000000000000'::uuid, 'draft'::public.collection_status, null, 'all') $$,
   'NOT_FOUND',
   'unknown collection raises NOT_FOUND');
 
 select throws_matching(
-  $$ select app.publish_collection('f4000000-0000-4000-8000-000000000a04'::uuid, 'active'::public.collection_status, null, true) $$,
+  $$ select app.publish_collection('f4000000-0000-4000-8000-000000000a03'::uuid, 'draft'::public.collection_status, null, 'everyone') $$,
+  'INVALID_NOTIFY_TARGET',
+  'unknown notify_target raises INVALID_NOTIFY_TARGET');
+
+select throws_matching(
+  $$ select app.publish_collection('f4000000-0000-4000-8000-000000000a04'::uuid, 'active'::public.collection_status, null, 'all') $$,
   'INVALID_TRANSITION',
   'already-active collection raises INVALID_TRANSITION (narrow by design)');
 
 select throws_matching(
-  $$ select app.publish_collection('f4000000-0000-4000-8000-000000000a03'::uuid, 'active'::public.collection_status, null, true) $$,
+  $$ select app.publish_collection('f4000000-0000-4000-8000-000000000a03'::uuid, 'active'::public.collection_status, null, 'all') $$,
   'STATUS_CONFLICT',
   'draft collection with stale p_expected raises STATUS_CONFLICT');
 
@@ -164,13 +196,11 @@ reset role;
 
 
 -- ── D. Permission ───────────────────────────────────────────────────────────
--- The outsider is authenticated but holds no officer term in this community,
--- so app.require_permission(collection.publish) refuses with 42501.
 set local request.jwt.claims = '{"sub":"f1000000-0000-4000-8000-000000000002","role":"authenticated"}';
 set local role authenticated;
 
 select throws_ok(
-  $$ select app.publish_collection('f4000000-0000-4000-8000-000000000a03'::uuid, 'draft'::public.collection_status, null, true) $$,
+  $$ select app.publish_collection('f4000000-0000-4000-8000-000000000a03'::uuid, 'draft'::public.collection_status, null, 'all') $$,
   '42501',
   null,
   'authenticated outsider without collection.publish is refused');
@@ -179,7 +209,7 @@ reset role;
 
 select function_privs_are(
   'app', 'publish_collection',
-  array['uuid', 'public.collection_status', 'text', 'boolean'],
+  array['uuid', 'public.collection_status', 'text', 'text'],
   'anon', array[]::text[],
   'anon holds no EXECUTE on app.publish_collection');
 

@@ -8,6 +8,9 @@ import {
 describe("getNotificationLabel", () => {
   it("maps known event types to a human label", () => {
     expect(getNotificationLabel("collection.publish")).toBe("Collection published");
+    // M13.3: the "still owes payment" variant has its own label so a reader
+    // can tell the two apart in the inbox.
+    expect(getNotificationLabel("collection.publish_remind_unpaid")).toBe("Payment reminder");
     expect(getNotificationLabel("member.approve_join")).toBe("Membership approved");
     expect(getNotificationLabel("member.join_via_invite")).toBe("New member joined");
   });
@@ -70,6 +73,27 @@ describe("getNotificationDescription", () => {
 
   it("falls back when the collection name is missing", () => {
     expect(getNotificationDescription("collection.publish", {})).toBe("A collection is now live");
+  });
+
+  it("M13.3: the payment-reminder variant describes an outstanding payment, named when possible", () => {
+    expect(
+      getNotificationDescription("collection.publish_remind_unpaid", { collection_name: "Annual Dues" }),
+    ).toBe("Your payment for Annual Dues is still outstanding");
+    expect(getNotificationDescription("collection.publish_remind_unpaid", {})).toBe(
+      "A payment is still outstanding",
+    );
+  });
+
+  it("M13.3: the payment-reminder variant deep-links to the collection", () => {
+    expect(
+      getNotificationDeepLink("collection.publish_remind_unpaid", {
+        community_slug: "lagos-alumni",
+        collection_slug: "annual-dues",
+      }),
+    ).toBe("/c/lagos-alumni/collections/annual-dues");
+    expect(
+      getNotificationDeepLink("collection.publish_remind_unpaid", { community_slug: "lagos-alumni" }),
+    ).toBe("/c/lagos-alumni/collections");
   });
 
   it("describes an approved membership", () => {
