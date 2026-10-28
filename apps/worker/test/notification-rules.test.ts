@@ -44,12 +44,14 @@ function msg(patch: Record<string, unknown> = {}): AuditMessage {
 }
 
 describe("the watched actions", () => {
-  it("are exactly the eight approved ones (M13.3: + collection.publish_remind_unpaid)", () => {
+  it("are exactly the ten approved ones (M13.3: + remind, remind_unpaid, publish_remind_unpaid)", () => {
     assert.deepEqual(
       [...WATCHED_ACTIONS].sort(),
       [
         "collection.publish",
         "collection.publish_remind_unpaid",
+        "collection.remind",
+        "collection.remind_unpaid",
         "member.approve_join",
         "member.create",
         "member.join_via_invite",
@@ -64,8 +66,20 @@ describe("the watched actions", () => {
     for (const a of ["member.restore", "member.archive", "member.update", "member.edit"]) assert.equal(isWatchedAction(a), false, a);
   });
 
-  it("event keys are action:object, unchanged from M13.1", () => {
+  it("event keys are action:object_id for most actions, action:audit_log_id for reminders", () => {
+    // Default (object-keyed) for publish, member and officer actions: one event per object.
     assert.equal(eventKey("member.create", OBJECT), `member.create:${OBJECT}`);
+    assert.equal(eventKey("collection.publish", OBJECT), `collection.publish:${OBJECT}`);
+
+    // Reminders fire many times for the same collection — key them on the audit log
+    // id so a redelivered message still dedupes (same audit_log_id) but a later
+    // reminder gets its own event rather than being swallowed by the ON CONFLICT.
+    const AUDIT = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+    assert.equal(eventKey("collection.remind", OBJECT, AUDIT), `collection.remind:${AUDIT}`);
+    assert.equal(eventKey("collection.remind_unpaid", OBJECT, AUDIT), `collection.remind_unpaid:${AUDIT}`);
+    // Without an audit_log_id, remind falls back to the object key (defensive — the
+    // processor always has one in practice).
+    assert.equal(eventKey("collection.remind", OBJECT), `collection.remind:${OBJECT}`);
   });
 });
 
@@ -168,6 +182,10 @@ describe("recipientPlan", () => {
     // outstanding obligation on this collection. The processor filters here;
     // the trigger is dumb about which plan applies.
     assert.deepEqual(recipientPlan("collection.publish_remind_unpaid"), { kind: "collection_audience_unpaid" });
+    // M13.3 post-publish reminders: reuse the publish-time plans so one audience
+    // resolver covers both the publish and the later reminder.
+    assert.deepEqual(recipientPlan("collection.remind"), { kind: "collection_audience" });
+    assert.deepEqual(recipientPlan("collection.remind_unpaid"), { kind: "collection_audience_unpaid" });
     assert.deepEqual(recipientPlan("member.create"), { kind: "member_self" });
     assert.deepEqual(recipientPlan("member.approve_join"), { kind: "member_self" });
     assert.deepEqual(recipientPlan("officer_invitation.accept"), { kind: "officer_term_holder" });
@@ -219,6 +237,10 @@ describe("buildPayload: names, codes and slugs only", () => {
 
   const KEYS: Record<string, string[]> = {
     "collection.publish": ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"],
+    // M13.3: the three other collection-level actions carry the same shape as publish.
+    "collection.publish_remind_unpaid": ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"],
+    "collection.remind": ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"],
+    "collection.remind_unpaid": ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"],
     "member.create": ["actor_name", "community_id", "community_name", "community_slug", "member_code", "member_name"],
     "member.approve_join": ["actor_name", "community_id", "community_name", "community_slug", "member_code", "member_name"],
     "member.join_via_invite": ["actor_name", "community_id", "community_name", "community_slug", "member_name"],

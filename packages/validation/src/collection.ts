@@ -303,6 +303,28 @@ export const publishCollectionSchema = z.object({
 
 export type PublishCollectionInput = z.infer<typeof publishCollectionSchema>;
 
+/**
+ * Post-publish reminder schema (M13.3). Sends a reminder for an already-
+ * published collection. `notifyTarget` is `all` or `unpaid` only: a `none`
+ * choice is a cancel on the client and never reaches the server. The
+ * idempotency key is minted once per dialog open: a double-click reuses it
+ * (server dedupes); a fresh dialog session mints a new one (fresh event).
+ */
+export const REMINDER_NOTIFY_TARGETS = ["all", "unpaid"] as const;
+export type ReminderNotifyTarget = (typeof REMINDER_NOTIFY_TARGETS)[number];
+
+export const sendCollectionPublishReminderSchema = z.object({
+  collectionId: z.string().uuid(),
+  notifyTarget: z.enum(REMINDER_NOTIFY_TARGETS),
+  /** 8–128 characters of A-Z a-z 0-9 _ -. Mint once per dialog open with crypto.randomUUID(). */
+  idempotencyKey: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,128}$/, "Invalid idempotency key"),
+  reason: z.string().trim().max(500).optional(),
+});
+
+export type SendCollectionPublishReminderInput = z.infer<typeof sendCollectionPublishReminderSchema>;
+
 // ── Obligations ─────────────────────────────────────────────────────────────
 
 export const assignObligationsSchema = z.object({

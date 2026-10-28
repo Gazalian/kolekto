@@ -29,7 +29,12 @@ import {
   type CollectionStatus,
 } from "../../../../../lib/collection-display.ts";
 import { formatDistanceToNow } from "../../../../../lib/format.ts";
-import { previewPublishRecipientsAction, publishCollectionAction, transitionCollectionStatusAction } from "../actions.ts";
+import {
+  previewPublishRecipientsAction,
+  publishCollectionAction,
+  sendCollectionReminderAction,
+  transitionCollectionStatusAction,
+} from "../actions.ts";
 import { ObligationsPanel } from "./ObligationsPanel.tsx";
 import { CheckInPanel, type CheckInPerson } from "./CheckInPanel.tsx";
 import { ExportPanel } from "./ExportPanel.tsx";
@@ -197,6 +202,12 @@ export function CollectionDetailClient({
     | { kind: "error"; message: string }
   >({ kind: "idle" });
 
+  // Post-publish reminder dialog state (20261029100000). Opened from the
+  // "Send reminder" button for an active or scheduled collection. The
+  // dialog's own component owns the local form state (choice, submission,
+  // outcome) so the parent only decides when the dialog is open.
+  const [reminderOpen, setReminderOpen] = useState(false);
+
   const status = collection.status as CollectionStatus;
   const publicUrl = typeof window === "undefined" ? "" : `${window.location.origin}${collectionPath(communitySlug, collection.slug)}`;
   const isLive = status === "active" || status === "paused" || status === "closed" || status === "scheduled";
@@ -278,6 +289,15 @@ export function CollectionDetailClient({
           </div>
           {permissions.canPublish && (
             <div className="flex flex-wrap gap-2">
+              {(status === "active" || status === "scheduled") && (
+                <Button
+                  variant="secondary"
+                  disabled={isPending}
+                  onClick={() => setReminderOpen(true)}
+                >
+                  Send reminder
+                </Button>
+              )}
               {actionsFor(status).map((action) => (
                 <Button
                   key={action.target}
@@ -617,6 +637,14 @@ export function CollectionDetailClient({
           </div>
         </Dialog>
       )}
+
+      {reminderOpen && (
+        <SendReminderDialog
+          collectionId={collection.id}
+          collectionName={collection.name}
+          onClose={() => setReminderOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -820,5 +848,219 @@ function ShareRow({ url, name, canShare }: { url: string; name: string; canShare
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * SendReminderDialog — post-publish reminders (20261029100000).
+ *
+ * Opened from the "Send reminder" button on a published (active or scheduled)
+ * collection. The organiser picks who to notify, previews the count server-
+ * side, then submits. The server function
+ * `app.send_collection_publish_reminder` is idempotent on an `idempotencyKey`
+ * generated here when the dialog opens — a double-click or re-submission with
+ * the same key returns the previously-recorded audit event without enqueuing
+ * a second notification. A fresh dialog open mints a new key, so a later
+ * reminder goes through on its own.
+ *
+ * "No notification" is a client-side cancel. It never calls the server, so no
+ * event, no delivery row and no audit entry are created — unlike publish, no
+ * audit action is written for it.
+ */
+function SendReminderDialog({
+  collectionId,
+  collectionName,
+  onClose,
+}: {
+  collectionId: string;
+  collectionName: string;
+  onClose: () => void;
+}) {
+  // crypto.randomUUID is a browser native; this is a client component and
+  // the dialog never renders during server rendering (parent gates on
+  // reminderOpen = false initially).
+  const [idempotencyKey] = useState(() =>
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `rk-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  );
+  const [mode, setMode] = useState<"all" | "unpaid" | "none">("all");
+  const [preview, setPreview] = useState<RecipientPreview>({ kind: "loading" });
+  const [state, setState] = useState<
+    | { kind: "idle" }
+    | { kind: "submitting" }
+    | { kind: "sent"; recipients: number; reused: boolean }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await previewPublishRecipientsAction(collectionId);
+      if (cancelled) return;
+      if ("error" in result) {
+        setPreview({ kind: "error", message: result.error });
+      } else {
+        setPreview({ kind: "ready", ...result });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [collectionId]);
+
+  // Target recipient count for the confirmation summary. For "none" there is
+  // no server-side recipient resolution — the submit button becomes "Close
+  // without notifying" and the UI never calls the server.
+  const targetCount =
+    preview.kind === "ready" ? (mode === "all" ? preview.eligible : mode === "unpaid" ? preview.unpaid : 0) : null;
+  const unpaidEmpty = preview.kind === "ready" && preview.unpaid === 0;
+  const isBusy = state.kind === "submitting";
+  const alreadySent = state.kind === "sent";
+
+  async function onSubmit(): Promise<void> {
+    if (isBusy || alreadySent) return;
+    if (mode === "none") {
+      // "No notification" is a cancel. It is not a successful send.
+      onClose();
+      return;
+    }
+    setState({ kind: "submitting" });
+    const result = await sendCollectionReminderAction({
+      collectionId,
+      notifyTarget: mode,
+      idempotencyKey,
+    });
+    if ("error" in result) {
+      setState({ kind: "error", message: result.error });
+      return;
+    }
+    setState({
+      kind: "sent",
+      recipients: targetCount ?? 0,
+      reused: !result.created,
+    });
+  }
+
+  const dialogTitle = `Send a reminder for ${collectionName}`;
+
+  return (
+    <Dialog
+      open
+      onClose={isBusy ? () => undefined : onClose}
+      title={dialogTitle}
+      description="Send a notification to members who should see this collection in their notification bell. Email is not sent in this environment."
+    >
+      <div className="flex flex-col gap-4">
+        {state.kind !== "sent" && (
+          <fieldset className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
+            <legend className="px-1 text-sm font-medium text-[var(--color-text)]">Who should be notified?</legend>
+            <label className="flex items-start gap-3">
+              <input
+                type="radio"
+                name="reminder-mode"
+                value="all"
+                checked={mode === "all"}
+                onChange={() => setMode("all")}
+                disabled={isBusy}
+                className="mt-1"
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium text-[var(--color-text)]">All eligible members</span>
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  <PreviewCount preview={preview} count={preview.kind === "ready" ? preview.eligible : null} suffix="eligible member" fallback="Every" />
+                  {" will see this reminder in their notification bell."}
+                </span>
+              </span>
+            </label>
+            <label className="flex items-start gap-3">
+              <input
+                type="radio"
+                name="reminder-mode"
+                value="unpaid"
+                checked={mode === "unpaid"}
+                onChange={() => setMode("unpaid")}
+                disabled={isBusy || unpaidEmpty}
+                className="mt-1"
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium text-[var(--color-text)]">Members who still owe payment</span>
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  <PreviewCount preview={preview} count={preview.kind === "ready" ? preview.unpaid : null} suffix="member" fallback="Members" />
+                  {" with an obligation that is unpaid, in instalments or overdue. Exempt, paid and cancelled are excluded."}
+                </span>
+                {unpaidEmpty && (
+                  <span className="text-xs text-[var(--color-text-faint)]">
+                    No one is in this cohort right now — nobody has an outstanding obligation on this collection.
+                  </span>
+                )}
+              </span>
+            </label>
+            <label className="flex items-start gap-3">
+              <input
+                type="radio"
+                name="reminder-mode"
+                value="none"
+                checked={mode === "none"}
+                onChange={() => setMode("none")}
+                disabled={isBusy}
+                className="mt-1"
+              />
+              <span className="flex flex-col gap-0.5">
+                <span className="text-sm font-medium text-[var(--color-text)]">No notification</span>
+                <span className="text-xs text-[var(--color-text-muted)]">
+                  Close this dialog without sending anything. You can share the link yourself.
+                </span>
+              </span>
+            </label>
+          </fieldset>
+        )}
+
+        {state.kind === "sent" && (
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+            <p className="text-sm font-medium text-[var(--color-text)]">
+              {state.reused
+                ? "This reminder was already sent."
+                : `Reminder queued for ${state.recipients} ${state.recipients === 1 ? "recipient" : "recipients"}.`}
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              Deliveries appear in the notification bell as the worker processes them. Email is disabled in this environment.
+            </p>
+          </div>
+        )}
+
+        {state.kind === "error" && (
+          <p className="text-xs text-[var(--color-danger)]" role="alert">
+            {state.message}
+          </p>
+        )}
+
+        <div className="flex flex-wrap justify-end gap-2">
+          {state.kind === "sent" ? (
+            <Button variant="primary" onClick={onClose}>
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={onClose} disabled={isBusy}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={isBusy}
+                disabled={preview.kind === "loading" || (mode === "unpaid" && unpaidEmpty)}
+                onClick={onSubmit}
+              >
+                {mode === "none"
+                  ? "Close without notifying"
+                  : mode === "unpaid"
+                    ? `Send to ${targetCount ?? 0} ${targetCount === 1 ? "member" : "members"}`
+                    : `Send to ${targetCount ?? "every"} ${targetCount === 1 ? "member" : "members"}`}
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </Dialog>
   );
 }

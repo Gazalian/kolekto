@@ -42,6 +42,11 @@ export const WATCHED_ACTIONS = [
   // M13.3: host targeted the "still owes payment" cohort at publish time; the
   // worker's recipient plan filters the audience by outstanding obligation.
   "collection.publish_remind_unpaid",
+  // M13.3 post-publish reminders: an organiser can notify an already-published
+  // collection's audience later. `collection.remind` reuses the full-audience
+  // plan; `collection.remind_unpaid` reuses the outstanding-obligation filter.
+  "collection.remind",
+  "collection.remind_unpaid",
   "member.create",
   "member.approve_join",
   "member.reject_join",
@@ -71,7 +76,20 @@ export function isWatchedAction(action: string): action is WatchedAction {
   return (WATCHED_ACTIONS as readonly string[]).includes(action);
 }
 
-export function eventKey(action: string, objectId: string): string {
+/**
+ * The processor dedupes an event on `event_key` so a redelivered message does
+ * not create a second event (QA BUG-4). Most actions fire at most once per
+ * object (a collection publishes once; a member is created once), so keying on
+ * (action, object_id) is both unique and natural. The post-publish reminder
+ * actions (`collection.remind`, `collection.remind_unpaid`) fire many times
+ * for the same collection — one per organiser click — so they key on the
+ * audit_log_id instead. A redelivered reminder still dedupes (same
+ * audit_log_id), while a later reminder gets its own event.
+ */
+export function eventKey(action: string, objectId: string, auditLogId?: string): string {
+  if ((action === "collection.remind" || action === "collection.remind_unpaid") && auditLogId) {
+    return `${action}:${auditLogId}`;
+  }
   return `${action}:${objectId}`;
 }
 
@@ -202,8 +220,10 @@ export type RecipientPlan =
 export function recipientPlan(action: string): RecipientPlan {
   switch (action) {
     case "collection.publish":
+    case "collection.remind":
       return { kind: "collection_audience" };
     case "collection.publish_remind_unpaid":
+    case "collection.remind_unpaid":
       return { kind: "collection_audience_unpaid" };
     case "member.create":
     case "member.approve_join":
@@ -283,6 +303,8 @@ export function buildPayload(message: AuditMessage, facts: PayloadFacts): Payloa
   switch (message.action) {
     case "collection.publish":
     case "collection.publish_remind_unpaid":
+    case "collection.remind":
+    case "collection.remind_unpaid":
       return {
         ...base,
         collection_name: text(facts.collectionName, 200),
