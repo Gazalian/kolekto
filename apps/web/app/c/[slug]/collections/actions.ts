@@ -26,6 +26,7 @@ import {
   transitionCollectionStatus,
   publishCollection,
   countCollectionAudience,
+  countCollectionPublishRecipients,
   updateCollection,
   updateObligationAmount,
   waiveObligationAmount,
@@ -472,16 +473,35 @@ export async function publishCollectionAction(
 }
 
 /**
- * M13.3: recipient preview for the publish dialog. Returns the same counts
- * `app.count_collection_audience` already exposes (eligible / with_obligation
- * / awaiting). Read-only, scoped by the function's own permission check.
+ * M13.3: recipient preview for the publish dialog. `eligible` is the full
+ * audience with a linked account; `unpaid` is the subset with an outstanding
+ * obligation on this collection. Also returns the three-way audience count
+ * so the "with_obligation / awaiting" split is still visible under the main
+ * number. Read-only, scoped by each function's own permission check.
  */
 export async function previewPublishRecipientsAction(
   collectionId: string,
-): Promise<{ eligible: number; with_obligation: number; awaiting: number } | { error: string }> {
+): Promise<
+  | {
+      eligible: number;
+      unpaid: number;
+      with_obligation: number;
+      awaiting: number;
+    }
+  | { error: string }
+> {
   const caller = await requireCallerContext();
   try {
-    return await countCollectionAudience(caller, collectionId);
+    const [publish, audience] = await Promise.all([
+      countCollectionPublishRecipients(caller, collectionId),
+      countCollectionAudience(caller, collectionId),
+    ]);
+    return {
+      eligible: publish.eligible,
+      unpaid: publish.unpaid,
+      with_obligation: audience.with_obligation,
+      awaiting: audience.awaiting,
+    };
   } catch (error) {
     return { error: messageFrom(error, "Could not count the recipients") };
   }

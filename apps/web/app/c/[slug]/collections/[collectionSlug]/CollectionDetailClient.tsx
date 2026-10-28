@@ -182,16 +182,18 @@ export function CollectionDetailClient({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   /**
-   * M13.3: the host's publish-time notification choice. Always 'all' by
-   * default — the previous behaviour. 'none' writes `collection.publish_silent`
-   * so the audit trigger does not enqueue. Preview counts come from
-   * `app.count_collection_audience` via the server action.
+   * M13.3: the host's publish-time notification target. 'all' is the
+   * previous default (notify every eligible audience member with an
+   * account); 'unpaid' targets only members with an outstanding obligation
+   * on this collection; 'none' publishes without notifying. Preview counts
+   * come from `app.count_collection_publish_recipients` + the audience split
+   * via the server action.
    */
-  const [notifyMode, setNotifyMode] = useState<"all" | "none">("all");
+  const [notifyMode, setNotifyMode] = useState<"all" | "unpaid" | "none">("all");
   const [recipientPreview, setRecipientPreview] = useState<
     | { kind: "idle" }
     | { kind: "loading" }
-    | { kind: "ready"; eligible: number; with_obligation: number; awaiting: number }
+    | { kind: "ready"; eligible: number; unpaid: number; with_obligation: number; awaiting: number }
     | { kind: "error"; message: string }
   >({ kind: "idle" });
 
@@ -251,7 +253,7 @@ export function CollectionDetailClient({
         ? await publishCollectionAction(slug, collection.slug, {
             collectionId: collection.id,
             expected: "draft" as const,
-            notify: notifyMode === "all",
+            notifyTarget: notifyMode,
           })
         : await transitionCollectionStatusAction(slug, collection.slug, {
             collectionId: collection.id,
@@ -646,8 +648,16 @@ function Row({ label, value }: { label: string; value: string }) {
 type RecipientPreview =
   | { kind: "idle" }
   | { kind: "loading" }
-  | { kind: "ready"; eligible: number; with_obligation: number; awaiting: number }
+  | {
+      kind: "ready";
+      eligible: number;
+      unpaid: number;
+      with_obligation: number;
+      awaiting: number;
+    }
   | { kind: "error"; message: string };
+
+type NotifyMode = "all" | "unpaid" | "none";
 
 function PublishNotifyControls({
   mode,
@@ -655,12 +665,13 @@ function PublishNotifyControls({
   preview,
   disabled,
 }: {
-  mode: "all" | "none";
-  onChange: (next: "all" | "none") => void;
+  mode: NotifyMode;
+  onChange: (next: NotifyMode) => void;
   preview: RecipientPreview;
   disabled: boolean;
 }) {
   const eligible = preview.kind === "ready" ? preview.eligible : null;
+  const unpaid = preview.kind === "ready" ? preview.unpaid : null;
 
   return (
     <fieldset className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
@@ -683,9 +694,34 @@ function PublishNotifyControls({
         <span className="flex flex-col gap-0.5">
           <span className="text-sm font-medium text-[var(--color-text)]">Notify every eligible member</span>
           <span className="text-xs text-[var(--color-text-muted)]">
-            <PreviewCount preview={preview} count={eligible} suffix="eligible member" />
+            <PreviewCount preview={preview} count={eligible} suffix="eligible member" fallback="Every" />
             {" will see this collection in their notification bell. Members without an account are not reached in-app."}
           </span>
+        </span>
+      </label>
+      <label className="flex items-start gap-3">
+        <input
+          type="radio"
+          name="notify-mode"
+          value="unpaid"
+          checked={mode === "unpaid"}
+          onChange={() => onChange("unpaid")}
+          disabled={disabled || (preview.kind === "ready" && preview.unpaid === 0)}
+          className="mt-1"
+        />
+        <span className="flex flex-col gap-0.5">
+          <span className="text-sm font-medium text-[var(--color-text)]">Only members who still owe payment</span>
+          <span className="text-xs text-[var(--color-text-muted)]">
+            <PreviewCount preview={preview} count={unpaid} suffix="member" fallback="Members" />
+            {" with an obligation that is unpaid, in instalments or overdue. Exempt, paid and cancelled are excluded; "}
+            {"members with no obligation yet are excluded too — the data does not say they owe this payment."}
+          </span>
+          {preview.kind === "ready" && preview.unpaid === 0 && (
+            <span className="text-xs text-[var(--color-text-faint)]">
+              No one is in this cohort yet. Obligations are not usually set up before publishing — this option is more
+              useful later, after obligations exist.
+            </span>
+          )}
         </span>
       </label>
       <label className="flex items-start gap-3">
@@ -720,10 +756,20 @@ function PublishNotifyControls({
   );
 }
 
-function PreviewCount({ preview, count, suffix }: { preview: RecipientPreview; count: number | null; suffix: string }) {
+function PreviewCount({
+  preview,
+  count,
+  suffix,
+  fallback,
+}: {
+  preview: RecipientPreview;
+  count: number | null;
+  suffix: string;
+  fallback: string;
+}) {
   if (preview.kind === "loading") return <span>Counting recipients…</span>;
   if (preview.kind === "error") return <span>Unknown number of</span>;
-  if (count === null) return <span>Every</span>;
+  if (count === null) return <span>{fallback}</span>;
   return (
     <strong className="font-semibold text-[var(--color-text)]">
       {count} {suffix}

@@ -278,18 +278,26 @@ export const transitionCollectionStatusSchema = z.object({
 export type TransitionCollectionStatusInput = z.infer<typeof transitionCollectionStatusSchema>;
 
 /**
- * Host-facing publish schema (M13.3). `notify` controls whether the audit
- * trigger enqueues a notification: true writes `collection.publish`, false
- * writes `collection.publish_silent` (which is not in the trigger's watched
- * list). The database only accepts draft → active/scheduled through this
- * path; other transitions use `transitionCollectionStatusSchema`.
+ * Host-facing publish schema (M13.3). `notifyTarget` picks the audit action
+ * the DB function writes, which drives the audit trigger and the worker's
+ * recipient plan:
+ *
+ *   'all'    → audit collection.publish              (whole audience).
+ *   'unpaid' → audit collection.publish_remind_unpaid (audience ∩ obligation
+ *              status in unpaid/in_installments/overdue).
+ *   'none'   → audit collection.publish_silent        (not watched; no fan-out).
+ *
+ * The database only accepts draft → active/scheduled through this path;
+ * other transitions use `transitionCollectionStatusSchema`.
  */
+export const PUBLISH_NOTIFY_TARGETS = ["all", "unpaid", "none"] as const;
+export type PublishNotifyTarget = (typeof PUBLISH_NOTIFY_TARGETS)[number];
+
 export const publishCollectionSchema = z.object({
   collectionId: z.string().uuid(),
   /** The status the caller believes the collection is in. Must be 'draft'. */
   expected: z.literal("draft"),
-  /** When true, every eligible audience member with an account is notified. */
-  notify: z.boolean(),
+  notifyTarget: z.enum(PUBLISH_NOTIFY_TARGETS),
   reason: z.string().trim().max(500).optional(),
 });
 

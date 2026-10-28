@@ -44,11 +44,12 @@ function msg(patch: Record<string, unknown> = {}): AuditMessage {
 }
 
 describe("the watched actions", () => {
-  it("are exactly the seven approved ones", () => {
+  it("are exactly the eight approved ones (M13.3: + collection.publish_remind_unpaid)", () => {
     assert.deepEqual(
       [...WATCHED_ACTIONS].sort(),
       [
         "collection.publish",
+        "collection.publish_remind_unpaid",
         "member.approve_join",
         "member.create",
         "member.join_via_invite",
@@ -163,6 +164,10 @@ describe("isImportedMember", () => {
 describe("recipientPlan", () => {
   it("tells the right in-app audience for each action", () => {
     assert.deepEqual(recipientPlan("collection.publish"), { kind: "collection_audience" });
+    // M13.3: a targeted-publish narrows the audience to members with an
+    // outstanding obligation on this collection. The processor filters here;
+    // the trigger is dumb about which plan applies.
+    assert.deepEqual(recipientPlan("collection.publish_remind_unpaid"), { kind: "collection_audience_unpaid" });
     assert.deepEqual(recipientPlan("member.create"), { kind: "member_self" });
     assert.deepEqual(recipientPlan("member.approve_join"), { kind: "member_self" });
     assert.deepEqual(recipientPlan("officer_invitation.accept"), { kind: "officer_term_holder" });

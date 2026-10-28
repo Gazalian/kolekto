@@ -193,37 +193,41 @@ describe("lifecycle and obligations", () => {
     assert.equal(result.success, true);
   });
 
-  it("the publish schema requires an explicit boolean notify and only accepts a draft (M13.3)", () => {
-    assert.equal(
-      publishCollectionSchema.safeParse({
-        collectionId: COLLECTION_ID,
-        expected: "draft",
-        notify: true,
-      }).success,
-      true,
-    );
-    assert.equal(
-      publishCollectionSchema.safeParse({
-        collectionId: COLLECTION_ID,
-        expected: "draft",
-        notify: false,
-      }).success,
-      true,
-    );
+  it("the publish schema accepts the three notifyTarget values and only a draft (M13.3)", () => {
+    for (const notifyTarget of ["all", "unpaid", "none"] as const) {
+      assert.equal(
+        publishCollectionSchema.safeParse({
+          collectionId: COLLECTION_ID,
+          expected: "draft",
+          notifyTarget,
+        }).success,
+        true,
+        `notifyTarget=${notifyTarget} should be accepted`,
+      );
+    }
     // Non-draft `expected` is refused — the host-facing publish is narrow.
     assert.equal(
       publishCollectionSchema.safeParse({
         collectionId: COLLECTION_ID,
         expected: "active",
-        notify: false,
+        notifyTarget: "all",
       }).success,
       false,
     );
-    // `notify` is required; omitting it must not quietly default to anything.
+    // notifyTarget is required; omitting it must not quietly default to anything.
     assert.equal(
       publishCollectionSchema.safeParse({
         collectionId: COLLECTION_ID,
         expected: "draft",
+      }).success,
+      false,
+    );
+    // An unknown target is refused — not a free-text string.
+    assert.equal(
+      publishCollectionSchema.safeParse({
+        collectionId: COLLECTION_ID,
+        expected: "draft",
+        notifyTarget: "everyone",
       }).success,
       false,
     );

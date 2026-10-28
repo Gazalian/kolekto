@@ -14,6 +14,8 @@
 
 export const NOTIFICATION_LABELS: Record<string, string> = {
   "collection.publish": "Collection published",
+  // M13.3: a publish specifically aimed at the "still owes payment" cohort.
+  "collection.publish_remind_unpaid": "Payment reminder",
   "member.approve_join": "Membership approved",
   "member.join_via_invite": "New member joined",
 };
@@ -31,7 +33,8 @@ export function getNotificationDeepLink(eventType: string, payload: Record<strin
   if (!slug) return null;
 
   switch (eventType) {
-    case "collection.publish": {
+    case "collection.publish":
+    case "collection.publish_remind_unpaid": {
       const colSlug = typeof payload.collection_slug === "string" ? payload.collection_slug : undefined;
       return colSlug ? `/c/${slug}/collections/${colSlug}` : `/c/${slug}/collections`;
     }
@@ -50,6 +53,10 @@ export function getNotificationDescription(eventType: string, payload: Record<st
     case "collection.publish": {
       const name = typeof payload.collection_name === "string" ? payload.collection_name : undefined;
       return name ? `${name} is now live` : "A collection is now live";
+    }
+    case "collection.publish_remind_unpaid": {
+      const name = typeof payload.collection_name === "string" ? payload.collection_name : undefined;
+      return name ? `Your payment for ${name} is still outstanding` : "A payment is still outstanding";
     }
     case "member.approve_join":
       return "Your membership has been approved";

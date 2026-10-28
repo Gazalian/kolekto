@@ -274,7 +274,8 @@ async function readFacts(
   msg: AuditMessage,
 ): Promise<Facts | "member_unavailable" | "imported_member"> {
   switch (msg.action) {
-    case "collection.publish": {
+    case "collection.publish":
+    case "collection.publish_remind_unpaid": {
       const [col] = await sql<{ name: string; slug: string; community_slug: string }[]>`
         select c.name, c.slug, cm.slug as community_slug
         from public.collections c
@@ -383,6 +384,25 @@ async function resolveRecipients(sql: Db, msg: AuditMessage, hints: Facts["recip
         select a.member_id, m.user_id
         from app.resolve_collection_audience(${msg.object_id}::uuid) a
         join public.members m on m.id = a.member_id
+        where m.user_id is not null
+      `;
+
+    case "collection_audience_unpaid":
+      // M13.3: audience restricted to members with an outstanding obligation
+      // on this collection. `exempt`, `paid` and `cancelled` are excluded; a
+      // member with no obligation yet is excluded too (the data does not say
+      // they owe this payment, only that they are eligible for one). The
+      // worker filters here rather than in SQL inside the trigger so the
+      // trigger stays dumb and the recipient plan is a single source of
+      // truth.
+      return sql<Recipient[]>`
+        select a.member_id, m.user_id
+        from app.resolve_collection_audience(${msg.object_id}::uuid) a
+        join public.members m on m.id = a.member_id
+        join public.obligations o
+          on o.collection_id = ${msg.object_id}::uuid
+         and o.member_id = a.member_id
+         and o.status in ('unpaid', 'in_installments', 'overdue')
         where m.user_id is not null
       `;
 

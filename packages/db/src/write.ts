@@ -524,25 +524,56 @@ export async function transitionCollectionStatus(
 }
 
 /**
- * Host-facing publish with an explicit notify choice (M13.3).
+ * Host-facing publish with an explicit notification target (M13.3).
  *
- * `notify = true` writes audit action `collection.publish` (the audit trigger
- * enqueues to pgmq and the worker fans out in-app notifications to every
- * audience member with an account). `notify = false` writes action
- * `collection.publish_silent` — not in the trigger's watched list, so no
- * enqueue happens. Business state (status, published_at, published_by) is
- * identical in both cases. Narrow by design: only draft → active/scheduled.
+ * `notifyTarget` controls the audit action the DB function writes, which in
+ * turn tells the audit trigger whether to enqueue and tells the worker which
+ * recipient plan to run:
+ *
+ *   'all'    → audit `collection.publish`; worker fans out to every
+ *              audience member with a linked account (existing default).
+ *   'unpaid' → audit `collection.publish_remind_unpaid`; worker fans out
+ *              only to audience members with an obligation in
+ *              (unpaid, in_installments, overdue) on this collection.
+ *   'none'   → audit `collection.publish_silent`; trigger does not watch
+ *              this action, so no pgmq message is enqueued at all.
+ *
+ * Business state (status, published_at, published_by) is identical in all
+ * three cases. Narrow by design: only draft → active/scheduled.
  */
+export type PublishNotifyTarget = "all" | "unpaid" | "none";
+
 export async function publishCollection(
   caller: CallerContext,
-  input: { collectionId: string; expected: CollectionStatus; notify: boolean; reason?: string | undefined },
+  input: {
+    collectionId: string;
+    expected: CollectionStatus;
+    notifyTarget: PublishNotifyTarget;
+    reason?: string | undefined;
+  },
 ): Promise<CollectionStatus> {
   const [row] = await call(caller, (tx) =>
     tx<{ status: CollectionStatus }[]>`select app.publish_collection(
-      ${input.collectionId}, ${input.expected}, ${input.reason ?? null}, ${input.notify}
+      ${input.collectionId}, ${input.expected}, ${input.reason ?? null}, ${input.notifyTarget}
     ) as status`,
   );
   return row!.status;
+}
+
+/**
+ * Preview counts for the host publish dialog (M13.3). `eligible` is the full
+ * audience with a linked account; `unpaid` is the subset with an outstanding
+ * obligation on this collection. Permission-checked by the DB function.
+ */
+export async function countCollectionPublishRecipients(
+  caller: CallerContext,
+  collectionId: string,
+): Promise<{ eligible: number; unpaid: number }> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ eligible: number; unpaid: number }[]>`
+      select * from app.count_collection_publish_recipients(${collectionId})`,
+  );
+  return row ?? { eligible: 0, unpaid: 0 };
 }
 
 // ── Collection audience (20260920150000) ───────────────────────────────────
