@@ -101,6 +101,12 @@ test("an organiser can send a reminder on an already-published collection, twice
   // out of scope here), so the eligible cohort is 0. That is the correct
   // production UI state for this fixture, and the worker-integration test
   // covers the non-zero audience path end-to-end.
+  //
+  // Wait for the preview fetch to finish before looking for the submit
+  // button: while the preview is loading, the button text falls back to
+  // "Send to every members" (count is unknown), and the `\d+ member`
+  // locator below would not match until the preview resolves.
+  await expect(reminderDialog.getByText(/\d+ eligible members?/)).toBeVisible();
   const sendButton = reminderDialog.getByRole("button", { name: /^Send to \d+ member/ });
   await expect(sendButton).toBeVisible();
   await expect(sendButton).toBeEnabled();
@@ -120,6 +126,7 @@ test("an organiser can send a reminder on an already-published collection, twice
   await reminderButton.click();
   const dialog2 = page.getByRole("dialog");
   await expect(dialog2.getByText(/Send a reminder for Reminder Dues/)).toBeVisible();
+  await expect(dialog2.getByText(/\d+ eligible members?/)).toBeVisible();
   await dialog2.getByRole("button", { name: /^Send to \d+ member/ }).click();
   await expect(dialog2.getByText(/Reminder queued for \d+ recipients?\./)).toBeVisible();
   await dialog2.getByRole("button", { name: "Done" }).click();
