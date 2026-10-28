@@ -209,26 +209,6 @@ begin
       return new;
     end if;
 
-    select * into v_state from app.notification_suppression_state();
-    if v_state.present then
-      if not v_state.trusted then
-        begin
-          insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome)
-          values (new.id, new.community_id, new.action, 'ignored_untrusted_role');
-        exception when others then
-          null;
-        end;
-      elsif v_state.valid and new.action = any (c_suppressible) then
-        begin
-          insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome, reason)
-          values (new.id, new.community_id, new.action, 'suppressed', v_state.reason);
-          return new;
-        exception when others then
-          null;
-        end;
-      end if;
-    end if;
-
     v_msg := jsonb_build_object(
       'audit_log_id', new.id,
       'community_id', new.community_id,
@@ -256,6 +236,52 @@ begin
       );
     end if;
 
+    -- Operator-only notification suppression (M13.2 P3, preserved verbatim here
+    -- so the lapse-held path is not accidentally bypassed by the recipient-target
+    -- rewrite). A valid in-window setting → suppressed; a well-formed but lapsed
+    -- one (expired, or more than 15 minutes ahead) → HELD in notification_events_held
+    -- with a lapsed_held log row; an untrusted client role → ignored and logged.
+    -- Officer access changes are never suppressible.
+    select * into v_state from app.notification_suppression_state();
+    if v_state.present then
+      if not v_state.trusted then
+        begin
+          insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome)
+          values (new.id, new.community_id, new.action, 'ignored_untrusted_role');
+        exception when others then
+          null;
+        end;
+      elsif new.action = any (c_suppressible) then
+        if v_state.valid then
+          begin
+            insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome, reason)
+            values (new.id, new.community_id, new.action, 'suppressed', v_state.reason);
+            return new;
+          exception when others then
+            null;
+          end;
+        elsif v_state.lapsed then
+          -- Operator session, suppression well-formed but outside its window: keep the
+          -- event intact in the held queue; the operator decides via
+          -- app.release_held_notifications() / app.discard_held_notifications(reason).
+          -- If the hold cannot be both recorded and queued it is not a hold: fall through.
+          begin
+            insert into public.notification_suppression_log (audit_log_id, community_id, action, outcome, reason)
+            values (new.id, new.community_id, new.action, 'lapsed_held', v_state.reason);
+            perform pgmq.send('notification_events_held', v_msg);
+
+            if coalesce(current_setting('kolekto.suppression_lapse_warned', true), '') <> 'on' then
+              raise warning 'NOTIFICATION SUPPRESSION LAPSED in this transaction: its window ended, so further notification events are being HELD in notification_events_held (not sent, not discarded). Decide with app.release_held_notifications() or app.discard_held_notifications(reason). Keep maintenance transactions under 10 minutes.';
+              perform set_config('kolekto.suppression_lapse_warned', 'on', true);
+            end if;
+            return new;
+          exception when others then
+            null;
+          end;
+        end if;
+      end if;
+    end if;
+
     perform pgmq.send('notification_events', v_msg);
     return new;
   exception when others then
@@ -275,7 +301,8 @@ comment on function app.enqueue_notification_on_audit() is
   'M13.3: watches collection.publish, collection.publish_remind_unpaid, '
   'member.create / approve_join / reject_join / join_via_invite, '
   'officer_invitation.accept, officer_term.end. Ignores system actors on member.*. '
-  'Narrow before_state for reject_join. Honours operator-only suppression (never for officer access changes). '
+  'Narrow before_state for reject_join. Honours operator-only suppression and the '
+  'lapse-held path from 20261009120000 (never for officer access changes). '
   'Never raises: a failure is absorbed so the audited write proceeds.';
 
 revoke all on function app.enqueue_notification_on_audit() from public;
