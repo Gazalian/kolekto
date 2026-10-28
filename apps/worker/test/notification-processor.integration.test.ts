@@ -487,11 +487,11 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           await asOwner(() => tx`select app.exempt_obligation(${paidObligationId}::uuid, 'integration test: exempt stands in for paid')`);
 
           // ── First reminder (all) ─────────────────────────────────────────────
-          const KEY_ALL = "itest-rem-first-abcdef12";
+          const idempotencyA = "itest-rem-first-one-two-three";
           const resAll = first(
             await asOwner(
               () => tx<{ audit_log_id: string; created: boolean; notify_target: string }[]>`
-                select * from app.send_collection_publish_reminder(${COL}::uuid, 'all', ${KEY_ALL}, 'first')`,
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'all', ${idempotencyA}, 'first')`,
             ),
           );
           evidence["first_all"] = resAll;
@@ -502,7 +502,7 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           const resReplay = first(
             await asOwner(
               () => tx<{ audit_log_id: string; created: boolean }[]>`
-                select * from app.send_collection_publish_reminder(${COL}::uuid, 'all', ${KEY_ALL}, 'replay')`,
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'all', ${idempotencyA}, 'replay')`,
             ),
           );
           evidence["replay"] = resReplay;
@@ -510,11 +510,11 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           assert.equal(resReplay.audit_log_id, resAll.audit_log_id, "replay reuses the original audit_log_id");
 
           // Second reminder (unpaid) with a fresh key.
-          const KEY_UNPAID = "itest-rem-second-xyz98765";
+          const idempotencyB = "itest-rem-second-four-five-six";
           const resUnpaid = first(
             await asOwner(
               () => tx<{ audit_log_id: string; created: boolean; notify_target: string }[]>`
-                select * from app.send_collection_publish_reminder(${COL}::uuid, 'unpaid', ${KEY_UNPAID}, 'later unpaid')`,
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'unpaid', ${idempotencyB}, 'later unpaid')`,
             ),
           );
           evidence["second_unpaid"] = resUnpaid;
