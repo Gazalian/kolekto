@@ -414,4 +414,190 @@ describe("the processor against the real database", { skip: SKIP }, () => {
       await sql.end({ timeout: 2 });
     }
   });
+
+  it("M13.3 post-publish reminder — end-to-end + idempotency, no email, no duplicates", async () => {
+    // Covers the post-publish reminder brief (20261029100000):
+    //   · the real app.send_collection_publish_reminder function fires the
+    //     real audit trigger, enqueues the real pgmq message, and the real
+    //     processor fans it out to the correct cohort for 'all' / 'unpaid';
+    //   · a duplicate submission under the same idempotency_key creates NO
+    //     second audit, NO second pgmq message and NO second delivery;
+    //   · a fresh key fires a second real event through the pipeline;
+    //   · email remains disabled: no delivery row is sent, no email is
+    //     emitted (the processor would have surfaced that otherwise).
+    //
+    // One transaction, rolled back at the end.
+    const sql = postgres(URL_ENV, { prepare: false, transform: { undefined: null }, max: 1 });
+    const evidence: Record<string, unknown> = {};
+    try {
+      await sql
+        .begin(async (rawTx) => {
+          const tx = rawTx as unknown as Tx;
+
+          const OWING = "c4000000-0000-4000-8000-000000000001";
+          const PAID = "c4000000-0000-4000-8000-000000000002";
+          const COMMUNITY3 = "c5000000-0000-4000-8000-00000000000a";
+          const OWNER_TERM3 = "c6000000-0000-4000-8000-000000000001";
+          const COL = "c7000000-0000-4000-8000-000000000a01";
+
+          await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
+            (${OWING}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'rem-owing@itest.example.test', now()),
+            (${PAID},  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'rem-paid@itest.example.test',  now())`;
+          await tx`insert into public.users (id, full_name, email) values
+            (${OWING}, 'Rem Owing', 'rem-owing@itest.example.test'),
+            (${PAID},  'Rem Paid',  'rem-paid@itest.example.test')
+            on conflict (id) do update set full_name = excluded.full_name`;
+          await tx`insert into public.communities (id, slug, name, type, is_personal, created_by)
+            values (${COMMUNITY3}, 'itest-reminders', 'ITest Reminders', 'social_group', false, ${OWING})`;
+          await tx`insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
+            (${OWNER_TERM3}, ${COMMUNITY3}, ${OWING}, 'owner', 'Rem Owing', 'created')`;
+
+          const asOwner = async <T>(fn: () => Promise<T>): Promise<T> => {
+            await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: OWING, role: "authenticated" })}, true)`;
+            await tx`set local role authenticated`;
+            try {
+              return await fn();
+            } finally {
+              await tx`reset role`;
+            }
+          };
+
+          const owingMemberId = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY3}::uuid, 'Owing Member', '+2348095553001', 'rem-owing@itest.example.test') as id`,
+            ),
+          ).id;
+          const paidMemberId = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY3}::uuid, 'Paid Member', '+2348095553002', 'rem-paid@itest.example.test') as id`,
+            ),
+          ).id;
+          await tx`update public.members set user_id = ${OWING}, claimed_at = now() where id = ${owingMemberId}`;
+          await tx`update public.members set user_id = ${PAID},  claimed_at = now() where id = ${paidMemberId}`;
+
+          // One published collection, two obligations: owing stays unpaid,
+          // paid becomes exempt (stands in for 'paid' which only cash can
+          // reach, same as the publish-time integration test above).
+          await tx`insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, created_by, audience_mode, published_at, published_by)
+            values (${COL}, ${COMMUNITY3}, 'itest-reminder-col', 'ITest Reminder', 'dues', 'managed', 'fixed', 500000, 'active', ${OWING}, 'all_members', now(), ${OWING})`;
+          await asOwner(() => tx`select app.assign_obligations(${COL}::uuid, array[${owingMemberId}::uuid, ${paidMemberId}::uuid])`);
+          const paidObligationId = first(
+            await tx<{ id: string }[]>`select id from public.obligations where collection_id = ${COL} and member_id = ${paidMemberId}`,
+          ).id;
+          await asOwner(() => tx`select app.exempt_obligation(${paidObligationId}::uuid, 'integration test: exempt stands in for paid')`);
+
+          // ── First reminder (all) ─────────────────────────────────────────────
+          const idempotencyA = "itest-rem-first-one-two-three";
+          const resAll = first(
+            await asOwner(
+              () => tx<{ audit_log_id: string; created: boolean; notify_target: string }[]>`
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'all', ${idempotencyA}, 'first')`,
+            ),
+          );
+          evidence["first_all"] = resAll;
+          assert.equal(resAll.created, true, "first reminder is a fresh request");
+          assert.equal(resAll.notify_target, "all");
+
+          // Idempotent replay — same key, same target: created=false, SAME audit_log_id.
+          const resReplay = first(
+            await asOwner(
+              () => tx<{ audit_log_id: string; created: boolean }[]>`
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'all', ${idempotencyA}, 'replay')`,
+            ),
+          );
+          evidence["replay"] = resReplay;
+          assert.equal(resReplay.created, false, "replay with same key is not a fresh request");
+          assert.equal(resReplay.audit_log_id, resAll.audit_log_id, "replay reuses the original audit_log_id");
+
+          // Second reminder (unpaid) with a fresh key.
+          const idempotencyB = "itest-rem-second-four-five-six";
+          const resUnpaid = first(
+            await asOwner(
+              () => tx<{ audit_log_id: string; created: boolean; notify_target: string }[]>`
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'unpaid', ${idempotencyB}, 'later unpaid')`,
+            ),
+          );
+          evidence["second_unpaid"] = resUnpaid;
+          assert.equal(resUnpaid.created, true, "a fresh key is a fresh reminder");
+
+          // ── Audit log check: exactly TWO reminder rows for this collection.
+          const auditRows = await tx<{ action: string }[]>`
+            select action from public.audit_logs
+            where community_id = ${COMMUNITY3}
+              and object_id = ${COL}
+              and action like 'collection.remind%'
+            order by created_at`;
+          evidence["audit_actions"] = auditRows.map((r) => r.action);
+          assert.deepEqual(
+            auditRows.map((r) => r.action),
+            ["collection.remind", "collection.remind_unpaid"],
+            "exactly two audit rows: one fresh per unique idempotency key, replay wrote nothing",
+          );
+
+          // ── pgmq had two messages for this collection; the processor runs them.
+          const messages = await tx<{ message: Record<string, unknown> }[]>`
+            select message from pgmq.q_notification_events
+            where message ->> 'community_id' = ${COMMUNITY3}
+              and (message ->> 'action') like 'collection.remind%'
+            order by msg_id`;
+          evidence["pgmq_actions"] = messages.map((m) => String(m.message["action"]));
+          assert.equal(messages.length, 2, "exactly two pgmq messages: the replay enqueued nothing");
+
+          for (const m of messages) {
+            await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
+          }
+
+          // ── Delivery rows: 'all' reaches both; 'unpaid' reaches only owing.
+          const deliveries = await tx<{ event_type: string; recipient_user_id: string }[]>`
+            select e.event_type, d.recipient_user_id::text as recipient_user_id
+            from public.notification_deliveries d
+            join public.notification_events e on e.id = d.notification_event_id
+            where d.community_id = ${COMMUNITY3}
+              and d.channel = 'in_app'
+            order by e.event_type, d.recipient_user_id`;
+          evidence["deliveries"] = deliveries;
+
+          const forAll = deliveries.filter((d) => d.event_type === "collection.remind");
+          const forUnpaid = deliveries.filter((d) => d.event_type === "collection.remind_unpaid");
+
+          assert.equal(forAll.length, 2, "remind=all reaches both audience members");
+          assert.deepEqual(
+            [...forAll.map((d) => d.recipient_user_id)].sort(),
+            [OWING, PAID].sort(),
+          );
+          assert.equal(forUnpaid.length, 1, "remind=unpaid reaches only the owing member");
+          assert.equal(forUnpaid[0]?.recipient_user_id, OWING);
+
+          // ── Replay the queue messages: no new events, no new deliveries.
+          const eventsBefore = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_events where community_id = ${COMMUNITY3}`).n;
+          const deliveriesBefore = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_deliveries where community_id = ${COMMUNITY3}`).n;
+          for (const m of messages) {
+            await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
+          }
+          const eventsAfter = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_events where community_id = ${COMMUNITY3}`).n;
+          const deliveriesAfter = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_deliveries where community_id = ${COMMUNITY3}`).n;
+          assert.equal(eventsAfter, eventsBefore, "replaying the queue created no duplicate event");
+          assert.equal(deliveriesAfter, deliveriesBefore, "replaying the queue created no duplicate delivery");
+
+          // Email stays disabled: no email delivery row is sent in this environment.
+          const emailDeliveries = await tx<{ status: string }[]>`
+            select status::text as status
+            from public.notification_deliveries
+            where community_id = ${COMMUNITY3} and channel = 'email'`;
+          evidence["email_statuses"] = emailDeliveries.map((e) => e.status);
+          assert.ok(
+            emailDeliveries.every((e) => e.status !== "sent"),
+            "no email was sent (email_sending_enabled is off in this environment)",
+          );
+
+          throw new Rollback();
+        })
+        .catch((e: unknown) => {
+          if (!(e instanceof Rollback)) throw e;
+        });
+      console.log("M13.3 reminder integration evidence:", JSON.stringify(evidence));
+    } finally {
+      await sql.end({ timeout: 2 });
+    }
+  });
 });

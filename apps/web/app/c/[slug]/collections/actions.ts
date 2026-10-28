@@ -25,6 +25,7 @@ import {
   setTierHidden,
   transitionCollectionStatus,
   publishCollection,
+  sendCollectionPublishReminder,
   countCollectionAudience,
   countCollectionPublishRecipients,
   updateCollection,
@@ -47,6 +48,7 @@ import {
   syncObligationsSchema,
   transitionCollectionStatusSchema,
   publishCollectionSchema,
+  sendCollectionPublishReminderSchema,
   updateCollectionSchema,
   updateObligationAmountSchema,
   waiveObligationSchema,
@@ -504,6 +506,39 @@ export async function previewPublishRecipientsAction(
     };
   } catch (error) {
     return { error: messageFrom(error, "Could not count the recipients") };
+  }
+}
+
+/**
+ * M13.3 post-publish reminder (20261029100000). Sends a reminder on an
+ * already-published collection. The DB function enforces permission
+ * (collection.publish), state (active | scheduled) and idempotency on the
+ * client-generated key; the audit insert fires the shared notification
+ * trigger, which enqueues a pgmq message for the worker to fan out.
+ *
+ * No slug argument: the dialog opens with the current page already loaded,
+ * so revalidation is unnecessary (the notification data a viewer sees comes
+ * from the bell, not from this page).
+ */
+export async function sendCollectionReminderAction(
+  input: unknown,
+): Promise<
+  (ActionResult & { auditLogId?: string; created?: boolean; notifyTarget?: "all" | "unpaid" }) | { error: string }
+> {
+  const parsed = sendCollectionPublishReminderSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That reminder is not valid" };
+
+  const caller = await requireCallerContext();
+  try {
+    const result = await sendCollectionPublishReminder(caller, parsed.data);
+    return {
+      ok: true,
+      auditLogId: result.auditLogId,
+      created: result.created,
+      notifyTarget: result.notifyTarget,
+    };
+  } catch (error) {
+    return { error: messageFrom(error, "Could not send the reminder") };
   }
 }
 
