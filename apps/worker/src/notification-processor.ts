@@ -95,7 +95,7 @@ export async function processNotificationMessage(
     if (facts === "imported_member") return SKIPPED("imported_member");
 
     const payload = buildPayload(msg, facts.payload);
-    const key = eventKey(msg.action, msg.object_id);
+    const key = eventKey(msg.action, msg.object_id, msg.audit_log_id);
 
     // Idempotent event create. ON CONFLICT so a replayed message does not error.
     await tx`
@@ -275,7 +275,9 @@ async function readFacts(
 ): Promise<Facts | "member_unavailable" | "imported_member"> {
   switch (msg.action) {
     case "collection.publish":
-    case "collection.publish_remind_unpaid": {
+    case "collection.publish_remind_unpaid":
+    case "collection.remind":
+    case "collection.remind_unpaid": {
       const [col] = await sql<{ name: string; slug: string; community_slug: string }[]>`
         select c.name, c.slug, cm.slug as community_slug
         from public.collections c

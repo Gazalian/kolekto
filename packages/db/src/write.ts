@@ -564,6 +564,7 @@ export async function publishCollection(
  * Preview counts for the host publish dialog (M13.3). `eligible` is the full
  * audience with a linked account; `unpaid` is the subset with an outstanding
  * obligation on this collection. Permission-checked by the DB function.
+ * Reused by the post-publish reminder dialog — same cohorts, same permissions.
  */
 export async function countCollectionPublishRecipients(
   caller: CallerContext,
@@ -574,6 +575,49 @@ export async function countCollectionPublishRecipients(
       select * from app.count_collection_publish_recipients(${collectionId})`,
   );
   return row ?? { eligible: 0, unpaid: 0 };
+}
+
+/**
+ * M13.3 post-publish reminder (20261029100000). Sends a reminder on an
+ * already-published (active or scheduled) collection. `notifyTarget = "all"`
+ * writes an audit action of `collection.remind` (full audience);
+ * `"unpaid"` writes `collection.remind_unpaid` (audience members with an
+ * unpaid / in_installments / overdue obligation). The DB function is
+ * permission-checked (collection.publish) and idempotent on
+ * (community, actor, idempotency key): a duplicate submission returns the
+ * previously-recorded audit_log_id without enqueuing a second event.
+ */
+export type ReminderNotifyTarget = "all" | "unpaid";
+
+export interface SendPublishReminderResult {
+  auditLogId: string;
+  created: boolean;
+  notifyTarget: ReminderNotifyTarget;
+}
+
+export async function sendCollectionPublishReminder(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    notifyTarget: ReminderNotifyTarget;
+    idempotencyKey: string;
+    reason?: string | undefined;
+  },
+): Promise<SendPublishReminderResult> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ audit_log_id: string; created: boolean; notify_target: ReminderNotifyTarget }[]>`
+      select * from app.send_collection_publish_reminder(
+        ${input.collectionId}, ${input.notifyTarget}, ${input.idempotencyKey}, ${input.reason ?? null}
+      )`,
+  );
+  if (!row) {
+    throw new Error("sendCollectionPublishReminder returned no row");
+  }
+  return {
+    auditLogId: row.audit_log_id,
+    created: row.created,
+    notifyTarget: row.notify_target,
+  };
 }
 
 // ── Collection audience (20260920150000) ───────────────────────────────────
