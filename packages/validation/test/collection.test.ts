@@ -12,6 +12,7 @@ import {
   setCollectionStorySchema,
   setCollectionTiersSchema,
   transitionCollectionStatusSchema,
+  publishCollectionSchema,
   waiveObligationSchema,
 } from "../src/collection.ts";
 
@@ -190,6 +191,42 @@ describe("lifecycle and obligations", () => {
       target: "active",
     });
     assert.equal(result.success, true);
+  });
+
+  it("the publish schema requires an explicit boolean notify and only accepts a draft (M13.3)", () => {
+    assert.equal(
+      publishCollectionSchema.safeParse({
+        collectionId: COLLECTION_ID,
+        expected: "draft",
+        notify: true,
+      }).success,
+      true,
+    );
+    assert.equal(
+      publishCollectionSchema.safeParse({
+        collectionId: COLLECTION_ID,
+        expected: "draft",
+        notify: false,
+      }).success,
+      true,
+    );
+    // Non-draft `expected` is refused — the host-facing publish is narrow.
+    assert.equal(
+      publishCollectionSchema.safeParse({
+        collectionId: COLLECTION_ID,
+        expected: "active",
+        notify: false,
+      }).success,
+      false,
+    );
+    // `notify` is required; omitting it must not quietly default to anything.
+    assert.equal(
+      publishCollectionSchema.safeParse({
+        collectionId: COLLECTION_ID,
+        expected: "draft",
+      }).success,
+      false,
+    );
   });
 
   it("caps a bulk assignment at 500 members per call", () => {

@@ -24,6 +24,8 @@ import {
   setItemHidden,
   setTierHidden,
   transitionCollectionStatus,
+  publishCollection,
+  countCollectionAudience,
   updateCollection,
   updateObligationAmount,
   waiveObligationAmount,
@@ -43,6 +45,7 @@ import {
   setCollectionTiersSchema,
   syncObligationsSchema,
   transitionCollectionStatusSchema,
+  publishCollectionSchema,
   updateCollectionSchema,
   updateObligationAmountSchema,
   waiveObligationSchema,
@@ -440,6 +443,47 @@ export async function transitionCollectionStatusAction(
     return { ok: true, status };
   } catch (error) {
     return { error: messageFrom(error, "Could not change the collection's status") };
+  }
+}
+
+/**
+ * M13.3: host-facing publish with an explicit notify choice. Uses
+ * `app.publish_collection` so the audit action name reflects what the host
+ * chose (`collection.publish` enqueues, `collection.publish_silent` does
+ * not). Everything else — state transition, published_at, published_by —
+ * matches the ordinary publish path.
+ */
+export async function publishCollectionAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult & { status?: string }> {
+  const parsed = publishCollectionSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That publish choice is not available" };
+
+  const caller = await requireCallerContext();
+  try {
+    const status = await publishCollection(caller, parsed.data);
+    revalidateCollection(slug, collectionSlug);
+    return { ok: true, status };
+  } catch (error) {
+    return { error: messageFrom(error, "Could not publish the collection") };
+  }
+}
+
+/**
+ * M13.3: recipient preview for the publish dialog. Returns the same counts
+ * `app.count_collection_audience` already exposes (eligible / with_obligation
+ * / awaiting). Read-only, scoped by the function's own permission check.
+ */
+export async function previewPublishRecipientsAction(
+  collectionId: string,
+): Promise<{ eligible: number; with_obligation: number; awaiting: number } | { error: string }> {
+  const caller = await requireCallerContext();
+  try {
+    return await countCollectionAudience(caller, collectionId);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not count the recipients") };
   }
 }
 
