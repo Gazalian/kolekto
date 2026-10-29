@@ -2,7 +2,7 @@
 
 import { Banner, Button, TextField } from "@kolekto/ui";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useState } from "react";
 import { mapAuthError } from "../../../lib/auth-errors.ts";
 import { safeRedirectPath } from "../../../lib/safe-redirect.ts";
@@ -11,7 +11,6 @@ import { createClient } from "../../../lib/supabase/browser.ts";
 type Mode = "password" | "otp";
 
 export function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const next = safeRedirectPath(searchParams.get("next"));
   const passwordReset = searchParams.get("password_reset") === "success";
@@ -45,8 +44,12 @@ export function LoginForm() {
       setError(mapAuthError(signInError.message));
       return;
     }
-    router.push(next);
-    router.refresh();
+    // Full-document navigation rather than router.push + router.refresh: the
+    // browser sends the freshly written session cookie with this request, so
+    // middleware and the destination both see the session. Fixes the same
+    // client→server cookie-propagation race that commit 3fcad67 closed on
+    // post-verification navigation, which left this path still racy.
+    window.location.assign(next);
   }
 
   async function sendOtpCode() {
@@ -79,8 +82,8 @@ export function LoginForm() {
       setError(mapAuthError(verifyError.message));
       return;
     }
-    router.push(next);
-    router.refresh();
+    // Full-document navigation (see handlePasswordLogin above for the reason).
+    window.location.assign(next);
   }
 
   // OTP verification screen
