@@ -43,12 +43,12 @@ const APP_SEGMENTS = new Set([
  * whitelisted columns for published collections only. This check decides
  * whether to bounce the request to a sign-in page, nothing more.
  */
-function isPublicCollectionPath(pathname: string): boolean {
+export function isPublicCollectionPath(pathname: string): boolean {
   const segments = pathname.split("/").filter(Boolean);
   return segments.length === 2 && !APP_SEGMENTS.has(segments[0]!);
 }
 
-function isPublicPath(pathname: string): boolean {
+export function isPublicPath(pathname: string): boolean {
   return (
     pathname === "/" ||
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
@@ -56,12 +56,32 @@ function isPublicPath(pathname: string): boolean {
   );
 }
 
-function isAuthPath(pathname: string): boolean {
+export function isAuthPath(pathname: string): boolean {
   return AUTH_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
 }
 
-function isOnboardingPath(pathname: string): boolean {
+export function isOnboardingPath(pathname: string): boolean {
   return ONBOARDING_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
+}
+
+/**
+ * Build a redirect response that carries any Supabase session cookies the
+ * current middleware pass refreshed. `getUser()` rotates the refresh token
+ * (supabase/config.toml, `enable_refresh_token_rotation = true`), writing the
+ * new cookies through `setAll` onto `response`. A plain `NextResponse.redirect`
+ * returns a fresh response without those Set-Cookie headers, so the browser
+ * keeps the already-used refresh token and the next request logs out — the
+ * failure mode @supabase/ssr's own middleware guidance calls out ("you may be
+ * causing the browser and server to go out of sync and terminate the user's
+ * session prematurely"). Every `ResponseCookie` in `from.cookies` is copied,
+ * so options (path, httpOnly, maxAge, sameSite, etc.) are preserved exactly.
+ */
+export function redirectWithRefreshedCookies(from: NextResponse, destination: URL): NextResponse {
+  const to = NextResponse.redirect(destination);
+  for (const cookie of from.cookies.getAll()) {
+    to.cookies.set(cookie);
+  }
+  return to;
 }
 
 /**
@@ -102,12 +122,12 @@ export async function updateSession(request: NextRequest) {
   if (!user && !isPublicPath(pathname)) {
     const redirectUrl = new URL("/login", request.url);
     redirectUrl.searchParams.set("next", pathname);
-    return NextResponse.redirect(redirectUrl);
+    return redirectWithRefreshedCookies(response, redirectUrl);
   }
 
   if (user) {
     if (isAuthPath(pathname) && !pathname.startsWith("/reset-password")) {
-      return NextResponse.redirect(new URL("/communities", request.url));
+      return redirectWithRefreshedCookies(response, new URL("/communities", request.url));
     }
 
     if (!isPublicPath(pathname) || isOnboardingPath(pathname)) {
@@ -120,11 +140,11 @@ export async function updateSession(request: NextRequest) {
       const onboarded = !!userRow?.onboarding_completed_at;
 
       if (!onboarded && !isOnboardingPath(pathname)) {
-        return NextResponse.redirect(new URL("/welcome", request.url));
+        return redirectWithRefreshedCookies(response, new URL("/welcome", request.url));
       }
 
       if (onboarded && isOnboardingPath(pathname)) {
-        return NextResponse.redirect(new URL("/communities", request.url));
+        return redirectWithRefreshedCookies(response, new URL("/communities", request.url));
       }
     }
   }
