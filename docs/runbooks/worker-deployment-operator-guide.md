@@ -31,7 +31,7 @@ checked in writing.
   and the alerts in §4.
 
 > **Proposed defaults, not yet approved policy.** Every numeric value in
-> §3 — the drain budget (90 s), the restart backoff and crash-loop
+> §3 — the drain budget (150 s), the restart backoff and crash-loop
 > threshold (3 fatal exits in 5 min), the single-instance invariant, the
 > memory and CPU ceilings (256 / 512 MiB; 0.1 / 0.5 vCPU), the 30-day
 > log retention — and the `Severity (proposed)` column in the §4 alert
@@ -57,13 +57,14 @@ operator-side. What matters is that the chosen platform satisfies §3
   platforms force an HTTP health probe (see §3.4 and the design doc
   §3.6).
 - **Kubernetes `Deployment`** with `replicas: 1`,
-  `terminationGracePeriodSeconds: 90` and `strategy: Recreate`.
+  `terminationGracePeriodSeconds: 150` and `strategy: Recreate`.
   Pro: full control; standard patterns for probes and secrets.
   Con: cluster operation overhead; a `RollingUpdate` would briefly run
   two instances, which violates §3.1 of the design doc — use `Recreate`
   instead.
 - **Long-running VM process managed by systemd** (`Restart=on-failure`,
-  `RestartSec=2`, `KillSignal=SIGTERM`, `TimeoutStopSec=90`).
+  `RestartSec=2`, `KillSignal=SIGTERM`, `TimeoutStopSec=150`; §3.5 has
+  the full unit).
   Pro: simple and predictable; no cold-start; the operator already
   owns the host.
   Con: operator owns patching the host; log collection is a separate
@@ -103,11 +104,13 @@ itself; this runbook is what a reviewer checks it against.
 ### 3.3 Signals and drain
 
 - Stop signal: **`SIGTERM`**. The worker's own `SIGINT` and `SIGTERM`
-  handlers (`apps/worker/src/index.ts:101-102`) flip `running = false`
+  handlers (in `main()` in `apps/worker/src/index.ts`) flip `running = false`
   so the current loop iteration completes.
-- Drain budget before `SIGKILL`: **≥ 90 s**. Covers one
-  `EMAIL_SES_SEND_TIMEOUT_MS` (default 10 s, max 60 s) + one pgmq
-  `VISIBILITY_TIMEOUT_S` (30 s) + a few hundred ms of settle.
+- Drain budget before `SIGKILL`: **≥ 150 s**. The worst case with the
+  database timeouts (M13.2 Phase 8) is a read batch of 10 messages each
+  waiting out the 5 s lock limit (50 s), then one
+  `EMAIL_SES_SEND_TIMEOUT_MS` (default 10 s, max 60 s), then a settle
+  retried up to three times (about 17 s).
 - If the hard kill fires, the `sending` row's lease (5 min) expires on
   the next worker's maintenance tick and lands as `dead/outcome_unknown`
   per migration `20261025100000`. **Nothing is lost; at worst one row
@@ -115,10 +118,14 @@ itself; this runbook is what a reviewer checks it against.
 
 ### 3.4 Health probing
 
-- The worker emits one JSON `notification_send_health` log line per
-  minute to `stdout`. A **liveness via log** rule is: no health line
-  from this process for 2 minutes → the process is wedged or dead →
-  restart.
+- The worker emits one JSON `notification_event_health` log line per
+  minute to `stdout`, whatever its configuration. A **liveness via log**
+  rule is: no `notification_event_health` line from this process for
+  2 minutes → the process is wedged or dead → restart.
+- Do **not** base liveness on `notification_send_health`. An event-stage-only
+  worker never emits it (no provider, or a refused sender
+  configuration), so that rule would keep restarting a healthy process.
+  Its absence on a worker that should be sending is alert A4's concern.
 - The worker **does not** expose an HTTP `/healthz` today. If the
   chosen platform requires one, add it in a small follow-up PR as
   described in design-doc §3.6 (new optional env var
@@ -140,11 +147,57 @@ itself; this runbook is what a reviewer checks it against.
   ~5 min.
 - Three fatal exits in five minutes → crash loop; page on-call; keep
   the worker stopped until an operator intervenes.
+- Exit 1 is deliberate for a refused environment (`worker_environment_refused`),
+  missing privileges (`worker_privileges_refused`) and a worker fault
+  (`notification_event_worker_fault`). None can fix itself, so the crash-loop
+  stop is the expected outcome: see §7.2. A restart cannot use up a queue
+  message's attempts, because the worker refuses before its first read.
+
+On systemd, the start-limit settings belong in `[Unit]`. In `[Service]` they
+are not honoured as a start limit, so the crash-loop stop above would not hold.
+**Proposed, not tested: no unit has been loaded on a real host.** Check it on
+the target with `systemd-analyze verify`, then prove the stop with three failed
+starts. `RestartSteps` and `RestartMaxDelaySec` need systemd 254 or later. On
+an older host remove them: the restart stays at a fixed 2 s, and the start
+limit still applies.
+
+```ini
+[Unit]
+Description=Kolekto notification worker
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+# Point this at whatever pages on-call. Without it the worker stops silently.
+OnFailure=kolekto-worker-alert.service
+
+[Service]
+ExecStart=/usr/bin/node /opt/kolekto/worker/dist/index.js
+EnvironmentFile=/etc/kolekto/worker.env
+Environment=PGAPPNAME=kolekto-worker
+Restart=on-failure
+RestartSec=2
+RestartSteps=8
+RestartMaxDelaySec=300
+KillSignal=SIGTERM
+TimeoutStopSec=150
+User=kolekto-worker
+NoNewPrivileges=true
+ProtectSystem=strict
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
+```
+
+This replaces the unit in §11.7 of the Phase 8 report, which is kept as written
+because that report is sealed.
 
 ### 3.6 Log collection
 
-- `stdout`: structured JSON (one `notification_send_health` line per
-  minute; a few other info-level lines).
+- `stdout`: structured JSON (one `notification_event_health` line per
+  minute always, one `notification_send_health` line per minute when a
+  provider is configured; a few other info-level lines).
 - `stderr`: plain text (startup errors, provider errors by code, loop
   errors).
 - Neither stream carries recipient addresses, member names, email
@@ -204,6 +257,29 @@ Required when `KOLEKTO_ENV=staging`:
 KOLEKTO_EXPECTED_PROJECT_REF=<must equal the ref parsed from the URL>
 ```
 
+The worker checks all of this first, whatever the email configuration, before
+opening any connection, and exits 1 on any refusal
+(`apps/worker/src/worker-guards.ts`). A refusal prints a stable code and at most
+a variable name, never a value:
+
+| `code` | Meaning |
+|---|---|
+| `ENV_MISSING` | The named variable is unset or blank |
+| `ENV_KOLEKTO_ENV_INVALID` | Not exactly `local`, `staging` or `production` |
+| `ENV_SUPABASE_URL_MALFORMED` | The web URL does not parse, or is not http(s) |
+| `ENV_SUPABASE_URL_NOT_LOCAL` / `ENV_SUPABASE_URL_NOT_HOSTED` | `local` must be this machine. Staging and production must be exactly `https://<ref>.supabase.co` |
+| `ENV_SUPABASE_URL_PROJECT_MISMATCH` | The web URL disagrees with `KOLEKTO_EXPECTED_PROJECT_REF` or, in production, `KOLEKTO_PRODUCTION_PROJECT_REF` |
+| `ENV_EXPECTED_REF_MISSING` | Staging without `KOLEKTO_EXPECTED_PROJECT_REF` |
+| `ENV_LEGACY_PROJECT` | Either URL names the legacy estate |
+| `ENV_TARGETS_PRODUCTION` | Staging, and either URL names `KOLEKTO_PRODUCTION_PROJECT_REF` |
+| `ENV_DB_URL_MALFORMED` | `SUPABASE_DB_URL` does not parse, or has no host, user or database, an encoded host, a second `@`, or a `host=`-style parameter. Percent-encode any `@` in the password |
+| `ENV_DB_URL_MULTIPLE_HOSTS` | More than one host |
+| `ENV_DB_URL_NOT_LOCAL` | `local` must be this machine |
+| `ENV_DB_URL_PROJECT_UNKNOWN` | Staging or production, and the URL is neither `db.<ref>.supabase.co` nor a session pooler URL with a `<role>.<ref>` user. A custom domain is refused until this code learns it |
+| `ENV_DB_URL_PROJECT_MISMATCH` | The database URL names a different project from the web URL |
+| `ENV_CONFIG_REFUSED` | The shared config layer refused, as a backstop |
+| `ENV_EMAIL_REFUSED` | A wrong-environment email setting, such as a real provider in `local`. An unsupported or incomplete email setting is not this: it stops only the sender, as before |
+
 Optional defence (recommended in staging + production):
 
 ```
@@ -249,6 +325,20 @@ human within 15 min and A5 within 1 h.
 | **A3** | 24-hour dead-rate (approximation of §10.6.1's 1-hour wording — see note below) | `dead_24h / (sent_24h + dead_24h)` from the same log line; treat a zero denominator as "no attempts, no alert" rather than divide-by-zero | > 10 % | rolling 24 h | Page | Rising dead-rate is a reputation signal, often preceded by complaints via the P9-2 ingestion. |
 | **A4** | `now() − last_heartbeat_at` AND `pending_due > 0` | `app.notification_send_health()` row | heartbeat > 5 min while backlog is non-zero | — | Page | A silent worker holding a backlog means mail is not going out. |
 | **A5** | `resolved_ambiguous_this_tick` | per-minute health log line | > 0 | 3 consecutive minutes | Ticket | Sporadic non-zero is normal (restarts, transient AWS outages). Sustained non-zero means the worker is crashing mid-flight repeatedly — a deployment issue. |
+
+**Event-stage alerts (M13.2 Phase 8, proposed).** These read
+`notification_event_health`, or the queue table directly, which needs no
+worker to be running:
+
+| # | Metric | Threshold | For | Severity (proposed) | Why |
+|---|---|---|---|---|---|
+| **A6** | `queue_parked`, or `select count(*) from pgmq.q_notification_events where headers ? 'kolekto_parked_reason'` | > 0 | immediately | Page | A message has left circulation and will wait until an operator acts. See §7.1. |
+| **A7** | `archive_failures_total` or `ack_failures_total` increasing | > 0 | 5 minutes sustained | Ticket | A queue privilege or lock problem, before anything parks. |
+| **A8** | `queue_oldest_age_s` | > 1 200 (20 min) | sustained | Page | Backoff spans about 15 minutes. Older means the stage is not keeping up, or the worker is down. |
+| **A9** | Process exit 1 with `worker_database_timeouts_refused` in `stderr` | any | immediately | Page | The connection path dropped the session timeouts, usually a transaction-mode pooler. The worker will not start until the URL is fixed. |
+| **A10** | `worker_environment_refused`, `worker_privileges_refused` or `notification_event_worker_fault` in `stderr` | any | immediately | Page | The worker stopped because of its environment, its role or the schema, not a message. It will not recover by itself. See §7.2. |
+| **A11** | `worker_privileges_degraded` in `stderr` | any | immediately | Ticket | The worker runs, but messages will park instead of finishing. See §7.1. |
+| **A12** | `dead_lettered_total` increasing | > 0 | immediately | Ticket | Nothing else reports a dead letter. Read the archive: see §7.3. |
 
 **A3 — scope note (keep visible to on-call).** §10.6.1 of the decision
 record phrases this threshold as "dead exceeding 10 % of attempts in
@@ -306,7 +396,7 @@ When replacing the worker in a live, **already-authorised** environment
    owner connection. The next tick (≤ 2 s) stops claiming. Deliveries
    wait and age out at 72 h.
 2. **Stop the old worker.** Platform-specific — the stop signal must be
-   `SIGTERM`, the drain budget must be ≥ 90 s. The hard-kill upper
+   `SIGTERM`, the drain budget must be ≥ 150 s. The hard-kill upper
    bound is the recovery for anything that overruns.
 3. **Deploy the new worker.** Wait for the first
    `notification_send_health` log line (one per minute).
@@ -331,20 +421,25 @@ Before starting the worker in a new environment for the first time:
 
 - [ ] `KOLEKTO_ENV` set to the target.
 - [ ] `NEXT_PUBLIC_SUPABASE_URL` matches the project.
-- [ ] `SUPABASE_DB_URL` reaches the project's Postgres and the role has
-      the `app.*` grants the worker uses (`app.email_sending_enabled`,
-      `app.record_sender_heartbeat`,
-      `app.expire_stale_notification_deliveries`,
-      `app.notification_send_health`,
-      `app.recover_expired_notification_lease`,
-      `app.resolve_lease_ambiguous`, `app.reserve_email_attempt`,
-      `app.notification_send_limits`).
+- [ ] `SUPABASE_DB_URL` is a **direct or session-mode** connection, not
+      transaction mode: the worker refuses to start if its session
+      timeouts are not applied (alert A9).
+- [ ] `SUPABASE_DB_URL` reaches the project's Postgres as the dedicated
+      worker role, with exactly the grants, column grants and policies in
+      `docs/database/proposals/M13.2-FINAL-worker-role.proposed.sql` (17
+      functions, not only the `app.*` ones, plus queue and table access).
+      Run that file's post-apply checks. The `postgres` owner connection is
+      not an acceptable worker credential.
+- [ ] The worker's first start logs neither `worker_privileges_refused` nor
+      `worker_privileges_degraded`.
+- [ ] `has_schema_privilege('<worker role>', 'net', 'USAGE')` is `false`.
+      While it is true, that credential can queue outbound HTTP (finding F-13).
 - [ ] Platform configuration says one replica.
-- [ ] Platform stop signal is SIGTERM; drain budget ≥ 90 s.
+- [ ] Platform stop signal is SIGTERM; drain budget ≥ 150 s.
 - [ ] Platform restart policy matches §3.5.
 - [ ] Log collector receives both stdout and stderr; retention ≥ 30
       days.
-- [ ] Alerts A1–A5 are wired and tested in a non-production environment
+- [ ] Alerts A1–A12 are wired and tested in a non-production environment
       (fire a synthetic value to each).
 - [ ] `app.email_sending_enabled()` returns `false`.
 - [ ] First `notification_send_health` log line appears within 2 min of
@@ -370,6 +465,97 @@ pause switch on.
   numbers (see SES-sender runbook §5).
 - **Reverting a worker code change.** Standard rollback for the chosen
   platform. Follow §5 in reverse order.
+
+### 7.1 A parked queue message (alert A6)
+
+After three failed attempts at its final queue operation, a message is
+**parked**: it stays in `pgmq.q_notification_events`, unread for ten years
+unless released, with the reason in its `headers`. Nothing is deleted, and
+the worker keeps serving other messages.
+
+```sql
+select msg_id, read_ct, enqueued_at, headers from pgmq.q_notification_events
+where headers ? 'kolekto_parked_reason';
+```
+
+| `kolekto_parked_reason` | What it means | Delivery state |
+|---|---|---|
+| `ack_failed` | Processing committed; deleting the message kept failing. It is **not** poison | Its event and deliveries exist |
+| `archive_failed` | Processing failed five times, and moving it to the dead-letter archive kept failing | Nothing was created |
+
+1. Fix the cause. Check the worker log for the `error` code on
+   `notification_event_ack_failed` or `notification_event_archive_failed`:
+   `42501` is a missing privilege, `55P03` a held lock.
+2. Release it: `select pgmq.set_vt('notification_events', <msg_id>, 0);`
+3. The worker gives it one attempt. Success removes it (`ack_failed`) or moves
+   it to `pgmq.a_notification_events` with its headers (`archive_failed`). If the
+   same operation fails, it parks again at once.
+
+Do not delete a parked message by hand, and do not re-queue it as a new
+message: an `archive_failed` message is poison, and the archive is where it
+belongs. There is no dead-letter replay tool yet.
+
+### 7.2 The worker refused to start, or stopped on a fault (alert A10)
+
+| Line in `stderr` | What it means | What has happened to messages |
+|---|---|---|
+| `worker_environment_refused` | §3.9. It never connected | Nothing |
+| `worker_privileges_refused` | A privilege or object it needs is missing. `missing` names each one, with a SQLSTATE if the object does not exist. `queue_read` is `false` | Nothing. It did not read the queue, so `read_ct` did not move |
+| `notification_event_worker_fault` | It was running, and processing failed with an error that says the role or schema cannot process anything (42501, 42P01, 42703, 42883 and similar) | The message stays in the queue. The read is recorded, so it does not count towards dead-lettering |
+
+These are not the message's fault, and **no message is lost, archived or sent
+twice**. To recover:
+
+1. Stop restarting it. A crash-loop stop is expected here.
+2. Fix the cause: apply the missing grant or migration, or correct the
+   configuration. Re-run the worker-role proposal's post-apply checks.
+3. Start the worker once. It checks privileges again before reading. Messages
+   already in the queue are read at their visibility timeout and processed in
+   the ordinary way. Nothing needs releasing or re-queuing.
+
+To see which messages were affected. It is safe to run at any time:
+
+```sql
+select msg_id, read_ct, enqueued_at, vt,
+       headers->>'kolekto_fault_reads' as fault_reads,
+       headers->>'kolekto_fault_code'  as fault_code,
+       headers->>'kolekto_fault_at'    as fault_at
+from pgmq.q_notification_events
+where headers ? 'kolekto_fault_reads';
+```
+
+`fault_code` is the SQLSTATE of the failure, or `batch_abandoned` for a message
+that was read in the same batch and never attempted. A message with a fault
+record has `read_ct - fault_reads` real attempts: it dead-letters only if that
+passes five. Do not clear the headers, and do not delete these messages.
+
+If the fault was on an older build, or a fault record could not be written
+(`notification_event_fault_record_failed`), those reads do count. Fix the cause
+before restarting repeatedly: while the preflight passes and processing still
+fails, each restart can raise `read_ct` by one on up to ten messages.
+
+### 7.3 A message in the dead-letter archive (alert A12)
+
+A dead letter is kept, with its body and headers, in `pgmq.a_notification_events`.
+**There is no replay tool, and none runs automatically.** Do not copy a message
+back into the queue by hand without an explicit decision: it is usually poison.
+
+```sql
+select msg_id, read_ct, enqueued_at, archived_at, headers
+from pgmq.a_notification_events
+order by archived_at desc limit 50;
+```
+
+Check the worker log for `Failed to process message <msg_id>` lines. Their
+SQLSTATE says why, and they are the only record of it.
+
+One case is not poison. If `notification_event_ack_failed` and
+`notification_event_mark_failed` both appear for the message, and neither
+carries a privilege error, it was processed but could not be removed or marked
+for five reads, usually because of a held lock. It was archived with its event
+and deliveries already created. Nothing further is needed, and it must not be
+replayed. So check `notification_events` for a row with the message's
+`object_id` and action before treating any dead letter as lost work.
 
 ## 8. What this runbook does NOT cover
 
