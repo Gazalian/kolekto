@@ -1,0 +1,150 @@
+--- clock/identity
+server_now | current_database | inet_server_port | version | host_port | stack_set
+2026-11-05 17:08:43.7431+00 | postgres |  | PostgreSQL 17.6 on x86_64-pc-linux-gnu, compiled by gcc (GCC) 15.2.0, 64-bit | 55422 | t
+(1 row)
+--- roles
+rolname | rolcanlogin | rolsuper | rolbypassrls | rolcreaterole | rolcreatedb | rolinherit
+kolekto_itest | t | f | t | f | f | t
+postgres | t | f | t | t | t | t
+service_role | f | f | t | f | f | t
+(3 rows)
+member | of_role | admin_option | inherit_option | set_option
+kolekto_itest | postgres | f | t | t
+(1 row)
+--- queue
+q_total | q_read | a_total
+0 | 0 | 1
+(1 row)
+queue_name | is_partitioned | is_unlogged
+notification_events | f | f
+notification_events_held | f | f
+(2 rows)
+--- deliveries
+channel | status | count
+email | dead | 76
+email | sent | 85
+email | skipped | 24
+(3 rows)
+events
+185
+(1 row)
+open_email
+0
+(1 row)
+leases
+0
+(1 row)
+--- sender state
+email_sending_enabled | last_heartbeat_at | last_claim_at | updated_at | fresh
+f |  |  | 2026-11-04 14:55:10.704471+00 | 
+(1 row)
+fn_switch
+f
+(1 row)
+--- budget
+l4_used | l4_cap | ledger_total | oldest | newest | older_than_48h
+22 | 180 | 153 | 2026-11-04 15:50:01.131089+00 | 2026-11-05 16:11:46.644637+00 | 0
+(1 row)
+l1_address | l1_window_hours | l2_community | l2_window_hours | l3_platform | l3_window_hours | l4_daily | l4_window_hours | l5_per_second | l5_window_seconds | backlog_max | max_attempts
+3 | 24 | 100 | 1 | 1000 | 1 | 180 | 24 | 1 | 1 | 500 | 3
+(1 row)
+--- mutex/sessions
+advisory_locks
+0
+(1 row)
+usename | application_name | state
+(0 rows)
+--- rls
+nspname | relname | relrowsecurity | relforcerowsecurity | owner
+pgmq | a_notification_events | f | f | postgres
+pgmq | meta | f | f | postgres
+pgmq | q_notification_events | f | f | postgres
+public | audit_logs | t | t | postgres
+public | collections | t | t | postgres
+public | communities | t | t | postgres
+public | members | t | t | postgres
+public | notification_deliveries | t | t | postgres
+public | notification_events | t | t | postgres
+public | notification_send_attempts | t | t | postgres
+public | notification_sender_state | t | t | postgres
+public | obligations | t | t | postgres
+public | officer_terms | t | t | postgres
+public | role_permissions | t | t | postgres
+public | users | t | t | postgres
+(15 rows)
+--- triggers on worker-written tables
+relname | tgname | proname | prosecdef
+notification_deliveries | notification_deliveries_set_updated_at | set_updated_at | f
+notification_events | notification_events_no_update | block_notification_event_mutation | f
+notification_events | notification_events_no_delete | block_notification_event_mutation | f
+notification_events | notification_events_sanitize_payload | sanitize_notification_event_payload | f
+(4 rows)
+--- functions
+nspname | proname | args | prosecdef | owner | cfg
+app | claim_next_notification_delivery | p_lease_seconds integer | t | postgres | search_path=""
+app | email_sending_enabled |  | t | postgres | search_path=""
+app | evaluate_email_eligibility | p_event_type text, p_object_id uuid, p_asserted_user_id uuid | t | postgres | search_path=""
+app | expire_stale_notification_deliveries | p_max_age_hours integer | t | postgres | search_path=""
+app | notification_send_health |  | t | postgres | search_path=""
+app | notification_send_limits | p_class text | t | postgres | search_path=""
+app | purge_stale_send_attempts |  | t | postgres | search_path=""
+app | record_sender_heartbeat | p_claimed boolean | t | postgres | search_path=""
+app | recover_expired_notification_lease | p_delivery_id uuid | t | postgres | search_path=""
+app | reserve_email_attempt | p_delivery_id uuid | t | postgres | search_path=""
+app | resolve_collection_audience | p_collection_id uuid | t | postgres | search_path=""
+app | resolve_lease_ambiguous | p_delivery_id uuid | t | postgres | search_path=""
+app | resolve_notification_claim | p_delivery_id uuid, p_lease_token text, p_outcome text, p_error_code text, p_provider_message_id text, p_next_retry_at timestamp with time zone | t | postgres | search_path=""
+app | sanitize_notification_event_payload |  | f | postgres | search_path=""
+app | set_email_sending_enabled | p_enabled boolean | t | postgres | search_path=""
+app | set_updated_at |  | f | postgres | search_path=""
+pgmq | _belongs_to_pgmq | table_name text | f | postgres | 
+pgmq | archive | queue_name text, msg_id bigint | f | postgres | 
+pgmq | archive | queue_name text, msg_ids bigint[] | f | postgres | 
+pgmq | delete | queue_name text, msg_id bigint | f | postgres | 
+pgmq | delete | queue_name text, msg_ids bigint[] | f | postgres | 
+pgmq | format_table_name | queue_name text, prefix text | f | postgres | 
+pgmq | read | queue_name text, vt integer, qty integer, conditional jsonb | f | postgres | 
+pgmq | send | queue_name text, msg jsonb | f | postgres | 
+pgmq | send | queue_name text, msg jsonb, delay integer | f | postgres | 
+pgmq | send | queue_name text, msg jsonb, delay timestamp with time zone | f | postgres | 
+pgmq | send | queue_name text, msg jsonb, headers jsonb | f | postgres | 
+pgmq | send | queue_name text, msg jsonb, headers jsonb, delay integer | f | postgres | 
+pgmq | send | queue_name text, msg jsonb, headers jsonb, delay timestamp with time zone | f | postgres | 
+pgmq | validate_queue_name | queue_name text | f | postgres | 
+(30 rows)
+--- pgmq grants
+grantee | table_name | privilege_type
+pg_monitor | a_notification_events | SELECT
+postgres | a_notification_events | DELETE
+postgres | a_notification_events | INSERT
+postgres | a_notification_events | REFERENCES
+postgres | a_notification_events | SELECT
+postgres | a_notification_events | TRIGGER
+postgres | a_notification_events | TRUNCATE
+postgres | a_notification_events | UPDATE
+pg_monitor | meta | SELECT
+postgres | meta | DELETE
+postgres | meta | INSERT
+postgres | meta | REFERENCES
+postgres | meta | SELECT
+postgres | meta | TRIGGER
+postgres | meta | TRUNCATE
+postgres | meta | UPDATE
+pg_monitor | q_notification_events | SELECT
+postgres | q_notification_events | DELETE
+postgres | q_notification_events | INSERT
+postgres | q_notification_events | REFERENCES
+postgres | q_notification_events | SELECT
+postgres | q_notification_events | TRIGGER
+postgres | q_notification_events | TRUNCATE
+postgres | q_notification_events | UPDATE
+(24 rows)
+nspname | nspacl
+pgmq | {postgres=UC/postgres,pg_monitor=U/postgres}
+public | {pg_database_owner=UC/pg_database_owner,=U/pg_database_owner,postgres=U/pg_database_owner,anon=U/pg_database_owner,authenticated=U/pg_database_owner,service_role=U/pg_database_owner}
+app | {postgres=UC/postgres,authenticated=U/postgres,anon=U/postgres,kolekto_importer=U/postgres}
+(3 rows)
+--- pg_stat_statements
+count
+459
+(1 row)

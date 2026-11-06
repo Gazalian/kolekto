@@ -1,0 +1,470 @@
+(node:29252) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:24340) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+TAP version 13
+# (node:24716) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: M13.2 Phase 7 — the real worker process
+    # Subtest: RT-1: starts as the worker role on the verified stack, heartbeats while paused, and stops cleanly
+    ok 1 - RT-1: starts as the worker role on the verified stack, heartbeats while paused, and stops cleanly
+      ---
+      duration_ms: 7144.769
+      ...
+    # Subtest: EV-1: member.create — queue → real worker → pending while OFF → sent once when ON, no restart → replay safe → OFF stops the next one
+    not ok 2 - EV-1: member.create — queue → real worker → pending while OFF → sent once when ON, no restart → replay safe → OFF stops the next one
+      ---
+      duration_ms: 33343.8946
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:424:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] Timed out after 30000 ms waiting for: the pending email row.
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:87:38)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:431:23
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:429:5)
+        async Test.run (node:internal/test_runner/test:935:9)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:633:7)
+      ...
+    # Subtest: EV-2: officer_term.end — real RPC → real worker → verified_account email to the term holder, once, replay safe
+    not ok 3 - EV-2: officer_term.end — real RPC → real worker → verified_account email to the term holder, once, replay safe
+      ---
+      duration_ms: 30933.0849
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:491:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] Timed out after 30000 ms waiting for: the officer notice to be sent.
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:87:38)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:504:22
+        async withSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-switch.ts:88:12)
+        async whileSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:343:18)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:503:7
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:502:5)
+        async Test.run (node:internal/test_runner/test:935:9)
+      ...
+    # Subtest: EV-3: officer_invitation.accept — real invitation and acceptance → real worker → email to the new officer, once, replay safe
+    not ok 4 - EV-3: officer_invitation.accept — real invitation and acceptance → real worker → email to the new officer, once, replay safe
+      ---
+      duration_ms: 31604.8473
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:528:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] Timed out after 30000 ms waiting for: the officer welcome to be sent.
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:87:38)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:547:22
+        async withSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-switch.ts:88:12)
+        async whileSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:343:18)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:546:7
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:544:5)
+        async Test.run (node:internal/test_runner/test:935:9)
+      ...
+    # Subtest: RT-4: messages the processor refuses are acknowledged, create nothing, and leave a log line with a stable reason
+    not ok 5 - RT-4: messages the processor refuses are acknowledged, create nothing, and leave a log line with a stable reason
+      ---
+      duration_ms: 1038.718
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:573:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        unwatched_action
+        + actual - expected
+        
+        + 'invalid_message'
+        - 'unwatched_action'
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 'unwatched_action'
+      actual: 'invalid_message'
+      operator: 'strictEqual'
+      stack: |-
+        file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:589:16
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:583:5)
+        async Test.run (node:internal/test_runner/test:935:9)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:633:7)
+      ...
+    # Subtest: RC-LOCK: a held database lock stalls the worker, the heartbeat stops showing it, and it recovers when the lock goes, with no restart
+    not ok 6 - RC-LOCK: a held database lock stalls the worker, the heartbeat stops showing it, and it recovers when the lock goes, with no restart
+      ---
+      duration_ms: 45934.8215
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:601:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] No worker session blocked on a lock within 45000 ms (notification_events).
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        awaitBlockedWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-worker.ts:374:38)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:608:25
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:607:7)
+        async Test.run (node:internal/test_runner/test:935:9)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:633:7)
+      ...
+    # Subtest: RT-6: a stop request during blocked processing lets the in-flight message finish, then exits 0
+    not ok 7 - RT-6: a stop request during blocked processing lets the in-flight message finish, then exits 0
+      ---
+      duration_ms: 45889.1934
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:630:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] No worker session blocked on a lock within 45000 ms (notification_events).
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        awaitBlockedWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-worker.ts:374:38)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:637:9
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:636:7)
+        async Test.run (node:internal/test_runner/test:935:9)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:633:7)
+      ...
+    # Subtest: RC-1: a worker killed during processing loses nothing; the message reappears only after the visibility timeout, with read_ct 2, and completes once
+    not ok 8 - RC-1: a worker killed during processing loses nothing; the message reappears only after the visibility timeout, with read_ct 2, and completes once
+      ---
+      duration_ms: 45914.2478
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:655:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] No worker session blocked on a lock within 45000 ms (notification_events).
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        awaitBlockedWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-worker.ts:374:38)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:662:9
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:661:7)
+        async Test.run (node:internal/test_runner/test:935:9)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:633:7)
+      ...
+    # Subtest: RC-2: if the acknowledgement fails after processing committed, the worker survives and the replay creates nothing new
+    not ok 9 - RC-2: if the acknowledgement fails after processing committed, the worker survives and the replay creates nothing new
+      ---
+      duration_ms: 45781.8421
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:688:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] No worker session blocked on a lock within 45000 ms (notification_events).
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        awaitBlockedWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-worker.ts:374:38)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:696:9
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:695:7)
+        async Test.run (node:internal/test_runner/test:935:9)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:633:7)
+      ...
+    # Subtest: RC-5: a poison message is tried exactly 5 times, archived at read_ct 6 with no sensitive text logged, and a healthy message is unaffected
+    not ok 10 - RC-5: a poison message is tried exactly 5 times, archived at read_ct 6 with no sensitive text logged, and a healthy message is unaffected
+      ---
+      duration_ms: 31531.795
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:723:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] Timed out after 30000 ms waiting for: the healthy message to be processed.
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:87:38)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:736:7
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:735:5)
+        async Test.run (node:internal/test_runner/test:935:9)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:633:7)
+      ...
+    # Subtest: SM-RETRY: a temporary rejection schedules a retry about 5 minutes out, then a retry succeeds with the same Message-ID, once
+    not ok 11 - SM-RETRY: a temporary rejection schedules a retry about 5 minutes out, then a retry succeeds with the same Message-ID, once
+      ---
+      duration_ms: 1537.654
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:772:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        exactly one email delivery for this community
+        
+        0 !== 1
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 1
+      actual: 0
+      operator: 'strictEqual'
+      stack: |-
+        emailRow (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:223:10)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:778:21
+        async until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:85:19)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:777:21
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async withSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-switch.ts:88:12)
+        async whileSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:343:18)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:776:7
+        async withProxy (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:766:14)
+      ...
+    # Subtest: SM-EXHAUST: an unreachable provider backs off about 5 then about 30 minutes, then ends dead/retries_exhausted after 3 attempts
+    not ok 12 - SM-EXHAUST: an unreachable provider backs off about 5 then about 30 minutes, then ends dead/retries_exhausted after 3 attempts
+      ---
+      duration_ms: 840.7763
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:802:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        exactly one email delivery for this community
+        
+        0 !== 1
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 1
+      actual: 0
+      operator: 'strictEqual'
+      stack: |-
+        emailRow (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:223:10)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:808:19
+        async until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:85:19)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:807:21
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async withSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-switch.ts:88:12)
+        async whileSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:343:18)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:806:5)
+        async Test.run (node:internal/test_runner/test:935:9)
+      ...
+    # Subtest: SM-PERM: a permanent rejection is dead on the first attempt and never retried
+    not ok 13 - SM-PERM: a permanent rejection is dead on the first attempt and never retried
+      ---
+      duration_ms: 1179.9182
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:831:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        exactly one email delivery for this community
+        
+        0 !== 1
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 1
+      actual: 0
+      operator: 'strictEqual'
+      stack: |-
+        emailRow (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:223:10)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:837:21
+        async until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:85:19)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:836:22
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async withSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-switch.ts:88:12)
+        async whileSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:343:18)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:835:7
+        async withProxy (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:766:14)
+      ...
+    # Subtest: SM-AMBIG: delivered but the client never hears: dead/outcome_unknown, never retried, and Mailpit holds exactly one copy
+    not ok 14 - SM-AMBIG: delivered but the client never hears: dead/outcome_unknown, never retried, and Mailpit holds exactly one copy
+      ---
+      duration_ms: 809.5376
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:850:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        exactly one email delivery for this community
+        
+        0 !== 1
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 1
+      actual: 0
+      operator: 'strictEqual'
+      stack: |-
+        emailRow (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:223:10)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:856:21
+        async until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:85:19)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:855:22
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async withSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-switch.ts:88:12)
+        async whileSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:343:18)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:854:7
+        async withProxy (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:766:14)
+      ...
+    # Subtest: SM-TIMEOUT: no reply after the body ends dead/outcome_unknown, and nothing reached Mailpit
+    not ok 15 - SM-TIMEOUT: no reply after the body ends dead/outcome_unknown, and nothing reached Mailpit
+      ---
+      duration_ms: 968.5935
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:871:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        exactly one email delivery for this community
+        
+        0 !== 1
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: 1
+      actual: 0
+      operator: 'strictEqual'
+      stack: |-
+        emailRow (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:223:10)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:877:21
+        async until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:85:19)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:876:22
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async withSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-switch.ts:88:12)
+        async whileSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:343:18)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:875:7
+        async withProxy (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:766:14)
+      ...
+    # Subtest: RC-SEND: a worker killed in the middle of a send never re-sends: the next worker's maintenance records dead/outcome_unknown
+    not ok 16 - RC-SEND: a worker killed in the middle of a send never re-sends: the next worker's maintenance records dead/outcome_unknown
+      ---
+      duration_ms: 15894.5588
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:887:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Integration gate refused: 1 safety condition(s) failed.
+          - [WORKER_TIMEOUT] Timed out after 15000 ms waiting for: the proxy to see the message body start.
+      code: 'ERR_TEST_FAILURE'
+      name: 'IntegrationGateError'
+      stack: |-
+        refuse (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-environment.ts:266:10)
+        until (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:87:38)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:893:9
+        async withWorker (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:115:20)
+        async withSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/support/itest-switch.ts:88:12)
+        async whileSendingEnabled (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:343:18)
+        async file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:892:7
+        async withProxy (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:766:14)
+        async TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:890:5)
+        async Test.run (node:internal/test_runner/test:935:9)
+      ...
+    # Subtest: CFG: every invalid database configuration exits non-zero, quickly, without printing the credential
+    ok 17 - CFG: every invalid database configuration exits non-zero, quickly, without printing the credential
+      ---
+      duration_ms: 10820.7242
+      ...
+    # Subtest: CFG-REVOKED: a credential revoked while running ends the process instead of polling forever
+    ok 18 - CFG-REVOKED: a credential revoked while running ends the process instead of polling forever
+      ---
+      duration_ms: 2916.507
+      ...
+    # Subtest: CFG-SENDER: a refused sender configuration keeps the event stage working and sends nothing (finding F-4 recorded)
+    ok 19 - CFG-SENDER: a refused sender configuration keeps the event stage working and sends nothing (finding F-4 recorded)
+      ---
+      duration_ms: 6789.2733
+      ...
+    # Subtest: LP-3: the worker role is refused everything outside its grants, and holds only the listed tables
+    not ok 20 - LP-3: the worker role is refused everything outside its grants, and holds only the listed tables
+      ---
+      duration_ms: 405.9021
+      location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:980:3'
+      failureType: 'testCodeFailure'
+      error: |-
+        Expected values to be strictly deep-equal:
+        + actual - expected
+        
+          [
+        +   'cron.job',
+        +   'cron.job_run_details',
+        +   'net._http_response',
+        +   'net.http_request_queue',
+            'pgmq.a_notification_events',
+            'pgmq.q_notification_events',
+            'public.collections',
+            'public.communities',
+            'public.members',
+        
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected:
+        0: 'pgmq.a_notification_events'
+        1: 'pgmq.q_notification_events'
+        2: 'public.collections'
+        3: 'public.communities'
+        4: 'public.members'
+        5: 'public.notification_deliveries'
+        6: 'public.notification_events'
+        7: 'public.obligations'
+        8: 'public.officer_terms'
+        9: 'public.role_permissions'
+      actual:
+        0: 'cron.job'
+        1: 'cron.job_run_details'
+        2: 'net._http_response'
+        3: 'net.http_request_queue'
+        4: 'pgmq.a_notification_events'
+        5: 'pgmq.q_notification_events'
+        6: 'public.collections'
+        7: 'public.communities'
+        8: 'public.members'
+        9: 'public.notification_deliveries'
+        10: 'public.notification_events'
+        11: 'public.obligations'
+        12: 'public.officer_terms'
+        13: 'public.role_permissions'
+      operator: 'deepStrictEqual'
+      stack: |-
+        TestContext.<anonymous> (file:///C:/Users/USER/Desktop/Kolekto-codebase/kolekto/apps/worker/test/integration/notification-worker-runtime.integration.test.ts:1036:14)
+        process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+        async Test.run (node:internal/test_runner/test:935:9)
+        async Suite.processPendingSubtests (node:internal/test_runner/test:633:7)
+      ...
+    # Subtest: F-2: a real constraint failure's raw error carries a recipient address; the log summary does not
+    ok 21 - F-2: a real constraint failure's raw error carries a recipient address; the log summary does not
+      ---
+      duration_ms: 79.3539
+      ...
+    1..21
+not ok 1 - M13.2 Phase 7 — the real worker process
+  ---
+  duration_ms: 369418.9619
+  type: 'suite'
+  location: 'C:\\Users\\USER\\Desktop\\Kolekto-codebase\\kolekto\\apps\\worker\\test\\integration\\notification-worker-runtime.integration.test.ts:355:1'
+  failureType: 'subtestsFailed'
+  error: '16 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+1..1
+# tests 21
+# suites 1
+# pass 5
+# fail 16
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 421350.4758
+Integration gate refused: 1 safety condition(s) failed.
+  - [RUN_FAILED] Integration tests failed (exit 1, 16 failed, 0 cancelled).

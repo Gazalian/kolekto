@@ -1,0 +1,4 @@
+Kolekto worker: connected. Polling notification_events queue.
+Email sender configured: provider=mailpit, idempotency=none. Sending stays off until the email_sending_enabled pause switch is on.
+Failed to process message 146 (read_ct=1): {"name":"PostgresError","code":"42501","severity":"ERROR"}
+{"msg":"notification_event_health","queue_depth":1,"queue_max_read_ct":1,"queue_oldest_age_s":1,"processed_total":0,"skipped_total":0,"failed_total":1,"dead_lettered_total":0,"poll_failures_total":0}

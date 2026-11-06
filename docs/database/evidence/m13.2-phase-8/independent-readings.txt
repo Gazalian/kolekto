@@ -1,0 +1,42 @@
+mailpit: Messages 63, SMTPAccepted 63, SMTPRejected 0, MessagesDeleted 0
+run_tag | event | channel | status | error_code | attempts | grants | assurance | delivery_id | stored_message_id_matches_recomputed | mailpit_copies
+ac3f2fb2 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b05c-053f-7dfb-aa76-e9a733c27220 | none | 0
+ac3f2fb2 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b05c-1aa7-7f0c-bdb5-aa73689f377b | none | 0
+ac3f2fb2 | member.create | email | sent | - | 1 | 1 | unverified_supplied | 01a1b05c-bd3b-71e9-bcd6-99ccff94065e | true | 1
+ac3f2fb2 | member.create | email | sent | - | 1 | 1 | unverified_supplied | 01a1b05c-f6fa-7335-9edb-066500aab1ad | true | 1
+ac3f2fb2 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b05d-1fdf-7f4d-a040-4d96d3321739 | none | 0
+ac3f2fb2 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b061-39c3-7c2f-9d24-a0895949d371 | none | 0
+1b8ec960 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b068-9387-7078-ac93-57fb40ed69f1 | none | 0
+1b8ec960 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b068-a1bb-76f6-a2e7-250a8ffec4c5 | none | 0
+1b8ec960 | member.create | email | sent | - | 1 | 1 | unverified_supplied | 01a1b069-237c-72a2-b92c-c1b05fa13e41 | true | 1
+1b8ec960 | member.create | email | sent | - | 1 | 1 | unverified_supplied | 01a1b069-444b-748b-b3a1-7ab500493d59 | true | 1
+1b8ec960 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b069-6872-739b-8c30-c94689cb0951 | none | 0
+1b8ec960 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b06d-63db-7ccd-b439-4dfeb74bb990 | none | 0
+74006e5c | member.create | email | sent | - | 1 | 1 | unverified_supplied | 01a1b073-410e-70d3-8bb4-40b1df2e747c | true | 1
+74006e5c | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b073-8a04-765f-8e3b-b84ce03c2c1a | none | 0
+74006e5c | officer_term.end | email | sent | - | 1 | 1 | verified_account | 01a1b073-ae41-7493-abc2-e59bbd0044ee | true | 1
+74006e5c | officer_term.end | in_app | sent | - | 0 | 0 | - | 01a1b073-ae2d-7565-b63d-0cd76cf9c8af | none | 0
+74006e5c | officer_invitation.accept | email | sent | - | 1 | 1 | verified_account | 01a1b073-d3ec-72c7-846d-e99e7fa9717b | true | 1
+74006e5c | officer_invitation.accept | in_app | sent | - | 0 | 0 | - | 01a1b073-d3cf-78df-b5ec-b2306f881b01 | none | 0
+74006e5c | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b073-fdd9-765d-b876-29b19ca810c3 | none | 0
+74006e5c | member.join_via_invite | in_app | sent | - | 0 | 0 | - | 01a1b073-fe7a-73dc-81c0-4f0ec6521b45 | none | 0
+74006e5c | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b074-174c-7218-9c31-6e131165c62f | none | 0
+74006e5c | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b074-3202-794a-ba62-712885db0517 | none | 0
+74006e5c | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b074-b266-70d3-8cb6-bb9b0c18442d | none | 0
+74006e5c | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b074-bf2e-7bf5-ae4d-11991a0a0cd0 | none | 0
+74006e5c | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b075-581d-7bda-b6c5-7e20d24c3c89 | none | 0
+74006e5c | member.create | email | sent | - | 2 | 2 | unverified_supplied | 01a1b078-2f0c-72fa-8700-67ea66b5ba56 | true | 1
+74006e5c | member.create | email | dead | retries_exhausted | 3 | 3 | unverified_supplied | 01a1b078-54d9-7a3b-bd04-ef40bb0b6744 | none | 0
+74006e5c | member.create | email | dead | provider_rejected_permanent | 1 | 1 | unverified_supplied | 01a1b078-7430-71f0-bd53-758606af99c1 | none | 0
+74006e5c | member.create | email | dead | outcome_unknown | 1 | 1 | unverified_supplied | 01a1b078-88c8-764c-a4b2-d92bdb2d417d | none | 1
+74006e5c | member.create | email | dead | outcome_unknown | 1 | 1 | unverified_supplied | 01a1b078-a84a-7447-b6bc-f488f06f4f62 | none | 0
+74006e5c | member.create | email | dead | outcome_unknown | 1 | 1 | unverified_supplied | 01a1b078-daf3-7320-91a5-3ba55b9ded3d | none | 0
+b1080bd7 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b07d-3868-7fa6-8ed6-a959a5668940 | none | 0
+b1080bd7 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b07d-4851-7f4a-bb49-3836df70c565 | none | 0
+b1080bd7 | member.create | email | sent | - | 1 | 1 | unverified_supplied | 01a1b07d-cc20-7053-862f-7239b0d540a9 | true | 1
+b1080bd7 | member.create | email | sent | - | 1 | 1 | unverified_supplied | 01a1b07d-eea8-7abe-a949-9f479069a58d | true | 1
+b1080bd7 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b07e-13e8-70b3-9543-4029daf6cfbc | none | 0
+b1080bd7 | member.create | email | dead | itest_quarantined | 0 | 0 | unverified_supplied | 01a1b081-fa22-7776-b420-793c07709c86 | none | 0
+totals: {"ac3f2fb2":{"deliveries":6,"email":6,"grants":2,"copies":2,"duplicated":0},"1b8ec960":{"deliveries":6,"email":6,"grants":2,"copies":2,"duplicated":0},"74006e5c":{"deliveries":19,"email":16,"grants":12,"copies":5,"duplicated":0},"b1080bd7":{"deliveries":6,"email":6,"grants":2,"copies":2,"duplicated":0}}
+mailpit messages with a recipient outside .example.test or a sender other than the test sender: 0
+mailpit message ids carrying more than one copy: 0

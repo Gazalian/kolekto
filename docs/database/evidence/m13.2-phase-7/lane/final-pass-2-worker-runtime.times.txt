@@ -1,0 +1,4 @@
+command: npm run test:integration -- --worker-runtime (from apps/worker)
+start 2026-11-05 18:05:35 UTC
+end 2026-11-05 18:13:17 UTC
+exit 0

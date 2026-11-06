@@ -1,0 +1,13 @@
+BEGIN
+predefined | member
+pg_read_all_data | postgres
+pg_read_all_data | supabase_etl_admin
+pg_read_all_data | supabase_read_only_user
+(3 rows)
+rolname | rolconfig
+kolekto_itest_worker | 
+(1 row)
+alter_role_texts
+22
+(1 row)
+ROLLBACK

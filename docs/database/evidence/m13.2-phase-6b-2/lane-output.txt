@@ -1,0 +1,304 @@
+
+> @kolekto/worker@0.0.0 test:integration
+> node --experimental-strip-types test/support/run-integration.ts --with-smtp
+
+(node:7112) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:21900) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+TAP version 13
+# (node:30196) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: M13.2 Phase 6A — end-to-end notification pipeline to Mailpit
+    # Subtest: member.create: audit → trigger → queue → processor → delivery → sender → Mailpit, once, and replay-safe
+    ok 1 - member.create: audit → trigger → queue → processor → delivery → sender → Mailpit, once, and replay-safe
+      ---
+      duration_ms: 2849.994
+      ...
+    1..1
+ok 1 - M13.2 Phase 6A — end-to-end notification pipeline to Mailpit
+  ---
+  duration_ms: 3475.1053
+  type: 'suite'
+  ...
+# (node:28312) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# integration evidence: {"queued_actions":["member.create","member.create","member.join_via_invite","member.join_via_invite","member.join_via_invite","member.reject_join","member.approve_join","officer_term.end"],"outcomes":{"member.create:01a1ac7a-9301-79d9-b035-6e09b51df163":"processed","member.create:01a1ac7a-934e-74d3-b31f-a0384364a1ac":"skipped/member_unavailable","member.join_via_invite:01a1ac7a-93ba-7ff2-be74-ed5d57bf7a9f":"skipped/member_unavailable","member.join_via_invite:01a1ac7a-93d0-7d96-acd0-aaf435e48c90":"processed","member.join_via_invite:01a1ac7a-93e0-7ed4-907b-63327308ba0b":"processed","member.reject_join:01a1ac7a-93ba-7ff2-be74-ed5d57bf7a9f":"processed","member.approve_join:01a1ac7a-93d0-7d96-acd0-aaf435e48c90":"processed","officer_term.end:5f3fa486-ce66-4857-a440-9bda8fc9052f":"processed"},"events":6,"deliveries":6}
+# Subtest: the processor against the real database
+    # Subtest: handles the approved events end to end, writes pending email rows only for supplied-address membership confirmations, and is replay-safe
+    ok 1 - handles the approved events end to end, writes pending email rows only for supplied-address membership confirmations, and is replay-safe
+      ---
+      duration_ms: 869.1457
+      ...
+# M13.3 integration evidence: {"pub_actions":["collection.publish","collection.publish_remind_unpaid"],"deliveries":[{"event_type":"collection.publish","recipient_user_id":"35b6463f-416c-4b38-9ddb-ef73cb87a10e","recipient_member_id":"01a1ac7a-9663-7b0b-8c04-d2f349877190"},{"event_type":"collection.publish","recipient_user_id":"47422b7d-7874-43d3-beef-7342a286ca2f","recipient_member_id":"01a1ac7a-963e-7e1a-80ef-3e1c4f61beb2"},{"event_type":"collection.publish_remind_unpaid","recipient_user_id":"47422b7d-7874-43d3-beef-7342a286ca2f","recipient_member_id":"01a1ac7a-963e-7e1a-80ef-3e1c4f61beb2"}]}
+    # Subtest: M13.3 host publish — all three notify targets end-to-end through the real pipeline
+    ok 2 - M13.3 host publish — all three notify targets end-to-end through the real pipeline
+      ---
+      duration_ms: 387.651
+      ...
+# M13.3 reminder integration evidence: {"first_all":{"audit_log_id":"01a1ac7a-9813-79a2-bb10-1b23af39f6b2","created":true,"notify_target":"all"},"replay":{"audit_log_id":"01a1ac7a-9813-79a2-bb10-1b23af39f6b2","created":false,"notify_target":"all"},"second_unpaid":{"audit_log_id":"01a1ac7a-9828-77a1-becc-a5e1116632c6","created":true,"notify_target":"unpaid"},"audit_actions":["collection.remind","collection.remind_unpaid"],"pgmq_actions":["collection.remind","collection.remind_unpaid"],"deliveries":[{"event_type":"collection.remind","recipient_user_id":"4a80c9ae-df42-49dd-aa1f-7e9c9bf3494c"},{"event_type":"collection.remind","recipient_user_id":"e9bb4938-506d-4077-832c-47ee257266eb"},{"event_type":"collection.remind_unpaid","recipient_user_id":"4a80c9ae-df42-49dd-aa1f-7e9c9bf3494c"}],"email_statuses":[]}
+    # Subtest: M13.3 post-publish reminder — end-to-end + idempotency, no email, no duplicates
+    ok 3 - M13.3 post-publish reminder — end-to-end + idempotency, no email, no duplicates
+      ---
+      duration_ms: 367.9913
+      ...
+    1..3
+ok 2 - the processor against the real database
+  ---
+  duration_ms: 1975.4861
+  type: 'suite'
+  ...
+# (node:30540) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: rate limits against the real database
+    # Subtest: claim+reserve in a transaction grants, then skips at L1
+    ok 1 - claim+reserve in a transaction grants, then skips at L1
+      ---
+      duration_ms: 236.3524
+      ...
+    # Subtest: two concurrent workers serialize on the advisory lock
+    ok 2 - two concurrent workers serialize on the advisory lock
+      ---
+      duration_ms: 2660.0492
+      ...
+    # Subtest: a rolled-back reservation leaves no ledger row
+    ok 3 - a rolled-back reservation leaves no ledger row
+      ---
+      duration_ms: 928.2121
+      ...
+    1..3
+ok 3 - rate limits against the real database
+  ---
+  duration_ms: 4167.891
+  type: 'suite'
+  ...
+# (node:24328) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: send claims against the real database
+    # Subtest: races two workers: exactly one owns the delivery
+    ok 1 - races two workers: exactly one owns the delivery
+      ---
+      duration_ms: 441.2942
+      ...
+    # Subtest: gates settle and recover on the live token, caps attempts, refuses terminal rows
+    ok 2 - gates settle and recover on the live token, caps attempts, refuses terminal rows
+      ---
+      duration_ms: 306.8582
+      ...
+    # Subtest: rolls a claim and its attempt reservation back together
+    ok 3 - rolls a claim and its attempt reservation back together
+      ---
+      duration_ms: 259.3509
+      ...
+    1..3
+ok 4 - send claims against the real database
+  ---
+  duration_ms: 1479.1672
+  type: 'suite'
+  ...
+# (node:33232) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: M13.2 P8 — sender-to-Mailpit integration
+    # Subtest: claim → reserve → render → SMTP → settle (rows inserted directly)
+        # Subtest: D1: sends a member.create email and settles the row as sent, once
+        ok 1 - D1: sends a member.create email and settles the row as sent, once
+          ---
+          duration_ms: 415.1829
+          ...
+        # Subtest: D2: renders and sends an officer_invitation.accept email
+        ok 2 - D2: renders and sends an officer_invitation.accept email
+          ---
+          duration_ms: 1349.0958
+          ...
+        # Subtest: E4: a sent row is terminal — a second sender call claims nothing and does not call the provider
+        ok 3 - E4: a sent row is terminal — a second sender call claims nothing and does not call the provider
+          ---
+          duration_ms: 1033.77
+          ...
+        # Subtest: E9: an SMTP-unreachable adapter schedules a transient retry (provider_unreachable) and nothing is settled as sent
+        ok 4 - E9: an SMTP-unreachable adapter schedules a transient retry (provider_unreachable) and nothing is settled as sent
+          ---
+          duration_ms: 605.3891
+          ...
+        1..4
+    ok 1 - claim → reserve → render → SMTP → settle (rows inserted directly)
+      ---
+      duration_ms: 3406.7754
+      type: 'suite'
+      ...
+    1..1
+ok 5 - M13.2 P8 — sender-to-Mailpit integration
+  ---
+  duration_ms: 3724.957
+  type: 'suite'
+  ...
+# (node:20220) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: email sender runtime against the real database
+    # Subtest: sends a pending delivery and records it as sent
+    ok 1 - sends a pending delivery and records it as sent
+      ---
+      duration_ms: 406.645
+      ...
+    # Subtest: does not re-send a sent row on replay (no duplicate send)
+    ok 2 - does not re-send a sent row on replay (no duplicate send)
+      ---
+      duration_ms: 961.9604
+      ...
+    # Subtest: permanent failure → dead with that code, one call only
+    ok 3 - permanent failure → dead with that code, one call only
+      ---
+      duration_ms: 1096.1771
+      ...
+    # Subtest: transient failure retries with a ~5-minute next_retry_at, then succeeds
+    ok 4 - transient failure retries with a ~5-minute next_retry_at, then succeeds
+      ---
+      duration_ms: 2085.2518
+      ...
+    # Subtest: retry exhaustion → dead/retries_exhausted after exactly 3 calls, never a 4th
+    ok 5 - retry exhaustion → dead/retries_exhausted after exactly 3 calls, never a 4th
+      ---
+      duration_ms: 3139.6867
+      ...
+    # Subtest: ambiguous outcome with provider idempotency retries with the same key (one message)
+    ok 6 - ambiguous outcome with provider idempotency retries with the same key (one message)
+      ---
+      duration_ms: 2081.0609
+      ...
+    # Subtest: ambiguous outcome WITHOUT idempotency → dead/outcome_unknown, never retried
+    ok 7 - ambiguous outcome WITHOUT idempotency → dead/outcome_unknown, never retried
+      ---
+      duration_ms: 1003.0055
+      ...
+    # Subtest: rate-limit deferral: a community over L2 defers at reservation, consuming no attempt
+    ok 8 - rate-limit deferral: a community over L2 defers at reservation, consuming no attempt
+      ---
+      duration_ms: 130.9437
+      ...
+    # Subtest: L5 defers a per-second-cap breach with a short retry, consuming no attempt (P9-3)
+    ok 9 - L5 defers a per-second-cap breach with a short retry, consuming no attempt (P9-3)
+      ---
+      duration_ms: 86.9936
+      ...
+    # Subtest: L4 defers a per-class daily-cap breach to the oldest counted attempt + 24 h, keeping the address (P9-3)
+    ok 10 - L4 defers a per-class daily-cap breach to the oldest counted attempt + 24 h, keeping the address (P9-3)
+      ---
+      duration_ms: 132.2231
+      ...
+    # Subtest: recovers a crashed worker's expired lease back to pending
+    ok 11 - recovers a crashed worker's expired lease back to pending
+      ---
+      duration_ms: 740.9403
+      ...
+    # Subtest: P9-4: non-idempotent provider sends an expired lease to dead/outcome_unknown instead of pending
+    ok 12 - P9-4: non-idempotent provider sends an expired lease to dead/outcome_unknown instead of pending
+      ---
+      duration_ms: 137.7131
+      ...
+    # Subtest: paused: runSenderTick claims nothing and preserves the queued row
+    ok 13 - paused: runSenderTick claims nothing and preserves the queued row
+      ---
+      duration_ms: 113.2655
+      ...
+    # Subtest: 72-hour expiry turns a stale pending row into dead/event_too_old; a sending row is untouched
+    ok 14 - 72-hour expiry turns a stale pending row into dead/event_too_old; a sending row is untouched
+      ---
+      duration_ms: 131.2593
+      ...
+    # Subtest: maintenance (lease recovery, expiry) runs even while paused
+    ok 15 - maintenance (lease recovery, expiry) runs even while paused
+      ---
+      duration_ms: 114.2075
+      ...
+    # Subtest: health output reflects outcomes and leaks no recipient address
+    ok 16 - health output reflects outcomes and leaks no recipient address
+      ---
+      duration_ms: 1678.306
+      ...
+    # Subtest: claim eligibility (no provider call)
+        # Subtest: D3: loadSendContext returns event type and payload for a row in the sending state (lease simulated)
+        ok 1 - D3: loadSendContext returns event type and payload for a row in the sending state (lease simulated)
+          ---
+          duration_ms: 92.7192
+          ...
+        # Subtest: E6: a skipped row is never claimed and the provider is never called
+        ok 2 - E6: a skipped row is never claimed and the provider is never called
+          ---
+          duration_ms: 114.3364
+          ...
+        # Subtest: E7: a dead row is never claimed
+        ok 3 - E7: a dead row is never claimed
+          ---
+          duration_ms: 252.1703
+          ...
+        1..3
+    ok 17 - claim eligibility (no provider call)
+      ---
+      duration_ms: 460.2519
+      type: 'suite'
+      ...
+    1..17
+ok 6 - email sender runtime against the real database
+  ---
+  duration_ms: 15024.1353
+  type: 'suite'
+  ...
+# (node:30148) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: recipient suppression against the real database
+    # Subtest: a claimed delivery whose address is permanently suppressed reserves address_suppressed
+    ok 1 - a claimed delivery whose address is permanently suppressed reserves address_suppressed
+      ---
+      duration_ms: 171.8193
+      ...
+    # Subtest: a claimed delivery whose address is transiently suppressed (future expiry) reserves address_suppressed
+    ok 2 - a claimed delivery whose address is transiently suppressed (future expiry) reserves address_suppressed
+      ---
+      duration_ms: 133.1677
+      ...
+    # Subtest: a claimed delivery whose address is NOT suppressed reserves granted
+    ok 3 - a claimed delivery whose address is NOT suppressed reserves granted
+      ---
+      duration_ms: 146.4522
+      ...
+    # Subtest: the suppression check is case-folded and whitespace-trimmed
+    ok 4 - the suppression check is case-folded and whitespace-trimmed
+      ---
+      duration_ms: 134.0823
+      ...
+    # Subtest: set_email_suppression under a client role is refused with 42501
+    ok 5 - set_email_suppression under a client role is refused with 42501
+      ---
+      duration_ms: 118.6576
+      ...
+    # Subtest: clear_email_suppression under a client role is refused with 42501
+    ok 6 - clear_email_suppression under a client role is refused with 42501
+      ---
+      duration_ms: 126.4617
+      ...
+    # Subtest: list_email_suppressions_masked never leaks the raw address
+    ok 7 - list_email_suppressions_masked never leaks the raw address
+      ---
+      duration_ms: 138.4485
+      ...
+    # Subtest: after clearing the suppression, the same address reserves granted
+    ok 8 - after clearing the suppression, the same address reserves granted
+      ---
+      duration_ms: 175.3469
+      ...
+    1..8
+ok 7 - recipient suppression against the real database
+  ---
+  duration_ms: 1485.0424
+  type: 'suite'
+  ...
+1..7
+# tests 41
+# suites 9
+# pass 41
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 43593.3216
+Integration lane passed: 41/41 test(s) in 7 file(s), none skipped.

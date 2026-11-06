@@ -1,0 +1,59 @@
+BEGIN
+read_at
+2026-11-06 10:14:17.311078+00
+(1 row)
+k | n | oldest | newest
+total | 254 | 2026-11-04 15:50:01.131089+00 | 2026-11-06 09:05:22.28117+00
+(1 row)
+utc_hour | send_class | rows | communities | first | last | purge_eligible_from | all_eligible_by
+2026-11-04 15:00:00+00 | transactional | 68 | 40 | 2026-11-04 15:50:01.131089+00 | 2026-11-04 15:53:41.666291+00 | 2026-11-06 15:50:01.131089+00 | 2026-11-06 15:53:41.666291+00
+2026-11-04 16:00:00+00 | transactional | 63 | 42 | 2026-11-04 16:20:47.779003+00 | 2026-11-04 16:23:51.317389+00 | 2026-11-06 16:20:47.779003+00 | 2026-11-06 16:23:51.317389+00
+2026-11-05 16:00:00+00 | transactional | 22 | 15 | 2026-11-05 16:11:13.03208+00 | 2026-11-05 16:11:46.644637+00 | 2026-11-07 16:11:13.03208+00 | 2026-11-07 16:11:46.644637+00
+2026-11-05 17:00:00+00 | transactional | 22 | 18 | 2026-11-05 17:37:04.448291+00 | 2026-11-05 17:58:43.947335+00 | 2026-11-07 17:37:04.448291+00 | 2026-11-07 17:58:43.947335+00
+2026-11-05 18:00:00+00 | transactional | 67 | 48 | 2026-11-05 18:03:32.589768+00 | 2026-11-05 18:29:32.552886+00 | 2026-11-07 18:03:32.589768+00 | 2026-11-07 18:29:32.552886+00
+2026-11-06 08:00:00+00 | transactional | 3 | 3 | 2026-11-06 08:59:08.846733+00 | 2026-11-06 08:59:37.08993+00 | 2026-11-08 08:59:08.846733+00 | 2026-11-08 08:59:37.08993+00
+2026-11-06 09:00:00+00 | transactional | 9 | 6 | 2026-11-06 09:04:29.487981+00 | 2026-11-06 09:05:22.28117+00 | 2026-11-08 09:04:29.487981+00 | 2026-11-08 09:05:22.28117+00
+(7 rows)
+older_than_48h_now
+0
+(1 row)
+in_l4_window | l4_cap
+123 | 180
+(1 row)
+non_itest_ledger_rows
+0
+(1 row)
+deliveries_referenced | sent | dead
+254 | 142 | 112
+(1 row)
+pg_get_functiondef
+CREATE OR REPLACE FUNCTION app.purge_stale_send_attempts()
+ RETURNS bigint
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO ''
+AS $function$
+declare
+  v_deleted bigint;
+begin
+  -- Signal the append-only trigger to allow this DELETE.
+  perform set_config('app.send_attempts_purging', 'true', true);
+
+  delete from public.notification_send_attempts
+  where attempted_at < now() - interval '48 hours';
+
+  get diagnostics v_deleted = row_count;
+
+  perform set_config('app.send_attempts_purging', 'false', true);
+
+  return v_deleted;
+end;
+$function$
+
+(1 row)
+tgname | tgenabled
+notification_send_attempts_no_update | O
+notification_send_attempts_no_delete | O
+notification_send_attempts_no_truncate | O
+(3 rows)
+ROLLBACK

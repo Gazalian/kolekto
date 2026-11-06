@@ -1,0 +1,4 @@
+start 2026-11-06 10:50:49 UTC
+end 2026-11-06 11:03:06 UTC
+exit 0
+command npm run test:integration -- --worker-reliability

@@ -1,0 +1,3357 @@
+(node:2836) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+TAP version 13
+# (node:476) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: dead-letter threshold (P6)
+    # Subtest: MAX_READ_CT is 5 (decision record §10.4)
+    ok 1 - MAX_READ_CT is 5 (decision record §10.4)
+      ---
+      duration_ms: 4.4542
+      ...
+    # Subtest: does not dead-letter a message on its first read
+    ok 2 - does not dead-letter a message on its first read
+      ---
+      duration_ms: 0.5804
+      ...
+    # Subtest: does not dead-letter at exactly the threshold
+    ok 3 - does not dead-letter at exactly the threshold
+      ---
+      duration_ms: 0.3532
+      ...
+    # Subtest: dead-letters one past the threshold
+    ok 4 - dead-letters one past the threshold
+      ---
+      duration_ms: 0.3711
+      ...
+    # Subtest: dead-letters well past the threshold
+    ok 5 - dead-letters well past the threshold
+      ---
+      duration_ms: 0.6891
+      ...
+    # Subtest: does not dead-letter a zero read count
+    ok 6 - does not dead-letter a zero read count
+      ---
+      duration_ms: 0.3826
+      ...
+    1..6
+ok 1 - dead-letter threshold (P6)
+  ---
+  duration_ms: 11.3903
+  type: 'suite'
+  ...
+# Subtest: event-loop dead-letter path (P6)
+    # Subtest: a poison message (read_ct > threshold) is archived, not processed
+    ok 1 - a poison message (read_ct > threshold) is archived, not processed
+      ---
+      duration_ms: 2.9527
+      ...
+    # Subtest: a normal message (read_ct at threshold) is processed and deleted, not archived
+    ok 2 - a normal message (read_ct at threshold) is processed and deleted, not archived
+      ---
+      duration_ms: 7.7401
+      ...
+    # Subtest: a batch continues after one message is dead-lettered
+    ok 3 - a batch continues after one message is dead-lettered
+      ---
+      duration_ms: 3.9662
+      ...
+    1..3
+ok 2 - event-loop dead-letter path (P6)
+  ---
+  duration_ms: 15.997
+  type: 'suite'
+  ...
+# (node:24128) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: acceptance guard — the narrow set_config exception
+    # Subtest: allows exactly the transaction-local request.jwt.claims setup the processor test uses
+    ok 1 - allows exactly the transaction-local request.jwt.claims setup the processor test uses
+      ---
+      duration_ms: 56.4059
+      ...
+    # Subtest: the real processor integration file passes: its three calls are the allowed form
+    ok 2 - the real processor integration file passes: its three calls are the allowed form
+      ---
+      duration_ms: 6.9165
+      ...
+    # Subtest: rejects every other configuration mutation, scope, name or handle
+    ok 3 - rejects every other configuration mutation, scope, name or handle
+      ---
+      duration_ms: 78.8247
+      ...
+    # Subtest: counts every violating call and ignores allowed calls beside it
+    ok 4 - counts every violating call and ignores allowed calls beside it
+      ---
+      duration_ms: 0.6796
+      ...
+    1..4
+ok 3 - acceptance guard — the narrow set_config exception
+  ---
+  duration_ms: 156.0369
+  type: 'suite'
+  ...
+# Subtest: acceptance guard — the other criterion-1 rules
+    # Subtest: reports: trigger disable
+    ok 1 - reports: trigger disable
+      ---
+      duration_ms: 1.3943
+      ...
+    # Subtest: reports: trigger enable
+    ok 2 - reports: trigger enable
+      ---
+      duration_ms: 0.5218
+      ...
+    # Subtest: reports: ledger delete
+    ok 3 - reports: ledger delete
+      ---
+      duration_ms: 0.7109
+      ...
+    # Subtest: reports: quoted ledger delete
+    ok 4 - reports: quoted ledger delete
+      ---
+      duration_ms: 6.3295
+      ...
+    # Subtest: reports: event delete
+    ok 5 - reports: event delete
+      ---
+      duration_ms: 0.7623
+      ...
+    # Subtest: reports: ledger filler insert
+    ok 6 - reports: ledger filler insert
+      ---
+      duration_ms: 0.8251
+      ...
+    # Subtest: reports: purge flag
+    ok 7 - reports: purge flag
+      ---
+      duration_ms: 0.4051
+      ...
+    # Subtest: reports: replication role
+    ok 8 - reports: replication role
+      ---
+      duration_ms: 0.2883
+      ...
+    # Subtest: reports: Mailpit delete-all
+    ok 9 - reports: Mailpit delete-all
+      ---
+      duration_ms: 0.3197
+      ...
+    # Subtest: reports: inbox-wide total
+    ok 10 - reports: inbox-wide total
+      ---
+      duration_ms: 0.3096
+      ...
+    # Subtest: reports: switch setter
+    ok 11 - reports: switch setter
+      ---
+      duration_ms: 0.3874
+      ...
+    # Subtest: reports: switch SQL setter
+    ok 12 - reports: switch SQL setter
+      ---
+      duration_ms: 0.2801
+      ...
+    # Subtest: does not report reads, rollback sentinels, the quarantine UPDATE or deletes from mutable tables
+    ok 13 - does not report reads, rollback sentinels, the quarantine UPDATE or deletes from mutable tables
+      ---
+      duration_ms: 1.048
+      ...
+    1..13
+ok 4 - acceptance guard — the other criterion-1 rules
+  ---
+  duration_ms: 15.8814
+  type: 'suite'
+  ...
+# Subtest: acceptance guard — the rollback-only ledger filler exception (Phase 4)
+    # Subtest: allows exactly one insert in the filler helper, after the rollback assertion in the same function
+    ok 1 - allows exactly one insert in the filler helper, after the rollback assertion in the same function
+      ---
+      duration_ms: 2.001
+      ...
+    # Subtest: still reports the insert anywhere else, unguarded, guarded from another function, or twice
+    ok 2 - still reports the insert anywhere else, unguarded, guarded from another function, or twice
+      ---
+      duration_ms: 1.1038
+      ...
+    # Subtest: the real helper is guarded, and the exception hides nothing else in it
+    ok 3 - the real helper is guarded, and the exception hides nothing else in it
+      ---
+      duration_ms: 5.5812
+      ...
+    1..3
+ok 5 - acceptance guard — the rollback-only ledger filler exception (Phase 4)
+  ---
+  duration_ms: 9.2667
+  type: 'suite'
+  ...
+# Subtest: acceptance guard — pgmq writes and the owned-message archive exception (Phase 6A)
+    # Subtest: reports every queue-writing or consuming pgmq call, anywhere
+    ok 1 - reports every queue-writing or consuming pgmq call, anywhere
+      ---
+      duration_ms: 2.3981
+      ...
+    # Subtest: reports direct DML on pgmq tables
+    ok 2 - reports direct DML on pgmq tables
+      ---
+      duration_ms: 0.836
+      ...
+    # Subtest: does not report read-only queue selects
+    ok 3 - does not report read-only queue selects
+      ---
+      duration_ms: 0.7562
+      ...
+    # Subtest: allows exactly one owned archive in the queue helper, after the ownership assertion in the same function
+    ok 4 - allows exactly one owned archive in the queue helper, after the ownership assertion in the same function
+      ---
+      duration_ms: 0.8522
+      ...
+    # Subtest: still reports the archive anywhere else, unguarded, guarded from another function, twice, or in any other form
+    ok 5 - still reports the archive anywhere else, unguarded, guarded from another function, twice, or in any other form
+      ---
+      duration_ms: 1.0855
+      ...
+    # Subtest: the real queue helper is guarded, and the exception hides nothing else in it
+    ok 6 - the real queue helper is guarded, and the exception hides nothing else in it
+      ---
+      duration_ms: 4.3423
+      ...
+    # Subtest: the end-to-end file holds no pgmq write of its own and only the allowed set_config form
+    ok 7 - the end-to-end file holds no pgmq write of its own and only the allowed set_config form
+      ---
+      duration_ms: 4.6559
+      ...
+    1..7
+ok 6 - acceptance guard — pgmq writes and the owned-message archive exception (Phase 6A)
+  ---
+  duration_ms: 17.0658
+  type: 'suite'
+  ...
+# Subtest: acceptance guard — the Phase 7 exceptions
+    # Subtest: allows one owned seed in its helper, and reports it anywhere else or in any other form
+    ok 1 - allows one owned seed in its helper, and reports it anywhere else or in any other form
+      ---
+      duration_ms: 1.3256
+      ...
+    # Subtest: allows the guarded switch write in its helper only, with the disable in a finally
+    ok 2 - allows the guarded switch write in its helper only, with the disable in a finally
+      ---
+      duration_ms: 2.3224
+      ...
+    # Subtest: the real helpers carry the guards, and each exception hides nothing else
+    ok 3 - the real helpers carry the guards, and each exception hides nothing else
+      ---
+      duration_ms: 12.7997
+      ...
+    # Subtest: Phase 8: allows one owned release in its helper, and reports it anywhere else or in any other form
+    ok 4 - Phase 8: allows one owned release in its helper, and reports it anywhere else or in any other form
+      ---
+      duration_ms: 2.982
+      ...
+    1..4
+ok 7 - acceptance guard — the Phase 7 exceptions
+  ---
+  duration_ms: 20.6059
+  type: 'suite'
+  ...
+# Subtest: acceptance guard — apps/worker/test/** (criterion 1)
+    # Subtest: the tree holds exactly the known violations: none new, none silently fixed
+    ok 1 - the tree holds exactly the known violations: none new, none silently fixed
+      ---
+      duration_ms: 177.4235
+      ...
+    # Subtest: no harness module, no integration file and no unit test outside the guard's own samples (and the fake-SQL dead-letter test) has a violation
+    ok 2 - no harness module, no integration file and no unit test outside the guard's own samples (and the fake-SQL dead-letter test) has a violation
+      ---
+      duration_ms: 181.9957
+      ...
+    # Subtest: the Mailpit file no longer holds the unscoped ledger wipe or an inbox-wide total
+    ok 3 - the Mailpit file no longer holds the unscoped ledger wipe or an inbox-wide total
+      ---
+      duration_ms: 2.8836
+      ...
+    1..3
+ok 8 - acceptance guard — apps/worker/test/** (criterion 1)
+  ---
+  duration_ms: 363.3866
+  type: 'suite'
+  ...
+# (node:19516) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: identity probe — mocked query results
+    # Subtest: accepts the correct test-database identity and closes its session
+    ok 1 - accepts the correct test-database identity and closes its session
+      ---
+      duration_ms: 26.9666
+      ...
+    # Subtest: refuses an incorrect login role
+    ok 2 - refuses an incorrect login role
+      ---
+      duration_ms: 3.5963
+      ...
+    # Subtest: refuses a built-in role (developer database or SET ROLE)
+    ok 3 - refuses a built-in role (developer database or SET ROLE)
+      ---
+      duration_ms: 3.2432
+      ...
+    # Subtest: refuses a missing stack ID
+    ok 4 - refuses a missing stack ID
+      ---
+      duration_ms: 3.7737
+      ...
+    # Subtest: refuses a mismatched stack ID
+    ok 5 - refuses a mismatched stack ID
+      ---
+      duration_ms: 5.0999
+      ...
+    # Subtest: refuses an incorrect connection configuration
+    ok 6 - refuses an incorrect connection configuration
+      ---
+      duration_ms: 6.4099
+      ...
+    # Subtest: refuses the developer database as it would answer (stock role, no markers)
+    ok 7 - refuses the developer database as it would answer (stock role, no markers)
+      ---
+      duration_ms: 1.2016
+      ...
+    # Subtest: treats any malformed result as inconclusive (fail closed)
+    ok 8 - treats any malformed result as inconclusive (fail closed)
+      ---
+      duration_ms: 37.296
+      ...
+    # Subtest: maps rows without coercing types
+    ok 9 - maps rows without coercing types
+      ---
+      duration_ms: 1.0939
+      ...
+    # Subtest: a failing query is a redacted refusal and the session is still closed
+    ok 10 - a failing query is a redacted refusal and the session is still closed
+      ---
+      duration_ms: 4.9648
+      ...
+    1..10
+ok 9 - identity probe — mocked query results
+  ---
+  duration_ms: 99.362
+  type: 'suite'
+  ...
+# Subtest: pause-switch reader — mocked query results
+    # Subtest: passes when exactly one row reads false, and reads again after the file
+    ok 1 - passes when exactly one row reads false, and reads again after the file
+      ---
+      duration_ms: 3.244
+      ...
+    # Subtest: fails when the switch is true, before or after the file
+    ok 2 - fails when the switch is true, before or after the file
+      ---
+      duration_ms: 3.3162
+      ...
+    # Subtest: fails on a missing switch row
+    ok 3 - fails on a missing switch row
+      ---
+      duration_ms: 1.1705
+      ...
+    # Subtest: fails on duplicate switch rows
+    ok 4 - fails on duplicate switch rows
+      ---
+      duration_ms: 2.4495
+      ...
+    # Subtest: fails on a malformed result
+    ok 5 - fails on a malformed result
+      ---
+      duration_ms: 7.3248
+      ...
+    # Subtest: only ever runs the read-only select: no update or insert path exists
+    ok 6 - only ever runs the read-only select: no update or insert path exists
+      ---
+      duration_ms: 11.0908
+      ...
+    # Subtest: maps rows into the state checkPauseSwitch judges
+    ok 7 - maps rows into the state checkPauseSwitch judges
+      ---
+      duration_ms: 0.9052
+      ...
+    1..7
+ok 10 - pause-switch reader — mocked query results
+  ---
+  duration_ms: 30.7179
+  type: 'suite'
+  ...
+# Subtest: connection factory — only verified environments, explicit options
+    # Subtest: builds test-connection options field by field, never from the URL string
+    ok 1 - builds test-connection options field by field, never from the URL string
+      ---
+      duration_ms: 2.4655
+      ...
+    # Subtest: strips the brackets of an IPv6 loopback literal
+    ok 2 - strips the brackets of an IPv6 loopback literal
+      ---
+      duration_ms: 1.1883
+      ...
+    # Subtest: connectVerified hands the driver an options object for a verified environment
+    ok 3 - connectVerified hands the driver an options object for a verified environment
+      ---
+      duration_ms: 1.1697
+      ...
+    # Subtest: makes no database connection for an unverified environment
+    ok 4 - makes no database connection for an unverified environment
+      ---
+      duration_ms: 1.0911
+      ...
+    # Subtest: refuses an out-of-range pool size
+    ok 5 - refuses an out-of-range pool size
+      ---
+      duration_ms: 3.4797
+      ...
+    # Subtest: the probe connection is read-only, single-use and only for the gate's own target
+    ok 6 - the probe connection is read-only, single-use and only for the gate's own target
+      ---
+      duration_ms: 4.5805
+      ...
+    # Subtest: openProbeSession refuses an unissued endpoint before constructing the driver
+    ok 7 - openProbeSession refuses an unissued endpoint before constructing the driver
+      ---
+      duration_ms: 3.3536
+      ...
+    # Subtest: a probe session runs only the two constant statements, each in `begin read only`
+    ok 8 - a probe session runs only the two constant statements, each in `begin read only`
+      ---
+      duration_ms: 2.4954
+      ...
+    # Subtest: makes no database connection when the configuration is invalid
+    ok 9 - makes no database connection when the configuration is invalid
+      ---
+      duration_ms: 8.0831
+      ...
+    # Subtest: liveGateDeps wires the real probes but connects to nothing on its own
+    ok 10 - liveGateDeps wires the real probes but connects to nothing on its own
+      ---
+      duration_ms: 0.7202
+      ...
+    1..10
+ok 11 - connection factory — only verified environments, explicit options
+  ---
+  duration_ms: 29.9058
+  type: 'suite'
+  ...
+# (node:2652) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: .env.itest — location and parsing
+    # Subtest: is read from the repository root, and .env.* is git-ignored there
+    ok 1 - is read from the repository root, and .env.* is git-ignored there
+      ---
+      duration_ms: 91.4701
+      ...
+    # Subtest: parses the bootstrap's KEY=value lines into a configuration the gate accepts
+    ok 2 - parses the bootstrap's KEY=value lines into a configuration the gate accepts
+      ---
+      duration_ms: 9.3398
+      ...
+    # Subtest: tolerates CRLF line endings, blank lines, comments and one leading BOM
+    ok 3 - tolerates CRLF line endings, blank lines, comments and one leading BOM
+      ---
+      duration_ms: 1.1179
+      ...
+    # Subtest: refuses anything but the four KOLEKTO_ITEST_* keys, naming the line or key, never the value
+    ok 4 - refuses anything but the four KOLEKTO_ITEST_* keys, naming the line or key, never the value
+      ---
+      duration_ms: 12.3005
+      ...
+    # Subtest: refuses an oversized file
+    ok 5 - refuses an oversized file
+      ---
+      duration_ms: 2.2568
+      ...
+    # Subtest: an incomplete file is refused by the gate's own rules (ENV_MISSING), with no default
+    ok 6 - an incomplete file is refused by the gate's own rules (ENV_MISSING), with no default
+      ---
+      duration_ms: 1.2342
+      ...
+    1..6
+ok 12 - .env.itest — location and parsing
+  ---
+  duration_ms: 123.1672
+  type: 'suite'
+  ...
+# Subtest: .env.itest — loading fails closed, with no fallback
+    # Subtest: loads exactly one file, the .env.itest path, and adds its four values to the environment
+    ok 1 - loads exactly one file, the .env.itest path, and adds its four values to the environment
+      ---
+      duration_ms: 2.9754
+      ...
+    # Subtest: a missing .env.itest is a refusal; the developer database URL and Mailpit are never used instead
+    ok 2 - a missing .env.itest is a refusal; the developer database URL and Mailpit are never used instead
+      ---
+      duration_ms: 9.2508
+      ...
+    # Subtest: an unreadable file is a refusal with an errno only
+    ok 3 - an unreadable file is a refusal with an errno only
+      ---
+      duration_ms: 2.5915
+      ...
+    # Subtest: refuses any ambient KOLEKTO_ITEST_* variable before reading the file, so a shell export can never override it
+    ok 4 - refuses any ambient KOLEKTO_ITEST_* variable before reading the file, so a shell export can never override it
+      ---
+      duration_ms: 10.3004
+      ...
+    1..4
+ok 13 - .env.itest — loading fails closed, with no fallback
+  ---
+  duration_ms: 26.4732
+  type: 'suite'
+  ...
+# Subtest: integration entry point — refuses to list or start tests without .env.itest
+    # Subtest: a missing .env.itest exits 1 before listing or spawning anything
+    ok 1 - a missing .env.itest exits 1 before listing or spawning anything
+      ---
+      duration_ms: 2.7982
+      ...
+    # Subtest: an ambient KOLEKTO_ITEST_* variable exits 1 without reading the file
+    ok 2 - an ambient KOLEKTO_ITEST_* variable exits 1 without reading the file
+      ---
+      duration_ms: 0.6611
+      ...
+    # Subtest: a malformed or incomplete file exits 1 before listing anything, without echoing values
+    ok 3 - a malformed or incomplete file exits 1 before listing anything, without echoing values
+      ---
+      duration_ms: 1.7241
+      ...
+    # Subtest: with a valid file the lane runs, and the child gets the file's values but no developer variable
+    ok 4 - with a valid file the lane runs, and the child gets the file's values but no developer variable
+      ---
+      duration_ms: 19.1228
+      ...
+    # Subtest: the default entry dependencies read the repository-root .env.itest with the real lane
+    ok 5 - the default entry dependencies read the repository-root .env.itest with the real lane
+      ---
+      duration_ms: 1.1283
+      ...
+    1..5
+ok 14 - integration entry point — refuses to list or start tests without .env.itest
+  ---
+  duration_ms: 26.3259
+  type: 'suite'
+  ...
+# (node:9156) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: integration environment — valid identity
+    # Subtest: accepts a complete, consistent test-stack configuration
+    ok 1 - accepts a complete, consistent test-stack configuration
+      ---
+      duration_ms: 4.5908
+      ...
+    # Subtest: accepts the IPv6 loopback literal
+    ok 2 - accepts the IPv6 loopback literal
+      ---
+      duration_ms: 2.5504
+      ...
+    # Subtest: passes live identity when role, database, port and stack ID all match
+    ok 3 - passes live identity when role, database, port and stack ID all match
+      ---
+      duration_ms: 1.8622
+      ...
+    1..3
+ok 15 - integration environment — valid identity
+  ---
+  duration_ms: 14.7533
+  type: 'suite'
+  ...
+# Subtest: integration environment — missing configuration
+    # Subtest: refuses when KOLEKTO_ITEST_DB_URL is missing or empty
+    ok 1 - refuses when KOLEKTO_ITEST_DB_URL is missing or empty
+      ---
+      duration_ms: 2.4049
+      ...
+    # Subtest: refuses when KOLEKTO_ITEST_SMTP_PORT is missing or empty
+    ok 2 - refuses when KOLEKTO_ITEST_SMTP_PORT is missing or empty
+      ---
+      duration_ms: 1.2404
+      ...
+    # Subtest: refuses when KOLEKTO_ITEST_MAILPIT_API is missing or empty
+    ok 3 - refuses when KOLEKTO_ITEST_MAILPIT_API is missing or empty
+      ---
+      duration_ms: 1.1314
+      ...
+    # Subtest: refuses when KOLEKTO_ITEST_STACK_ID is missing or empty
+    ok 4 - refuses when KOLEKTO_ITEST_STACK_ID is missing or empty
+      ---
+      duration_ms: 1.4622
+      ...
+    # Subtest: refuses an empty environment with one violation per variable
+    ok 5 - refuses an empty environment with one violation per variable
+      ---
+      duration_ms: 4.7767
+      ...
+    # Subtest: missing Mailpit configuration is a refusal, not a default to the developer inbox
+    ok 6 - missing Mailpit configuration is a refusal, not a default to the developer inbox
+      ---
+      duration_ms: 1.0222
+      ...
+    # Subtest: never falls back to the developer variables
+    ok 7 - never falls back to the developer variables
+      ---
+      duration_ms: 7.6144
+      ...
+    # Subtest: ignores developer variables that sit alongside a valid test configuration
+    ok 8 - ignores developer variables that sit alongside a valid test configuration
+      ---
+      duration_ms: 1.072
+      ...
+    1..8
+ok 16 - integration environment — missing configuration
+  ---
+  duration_ms: 23.117
+  type: 'suite'
+  ...
+# Subtest: integration environment — malformed variables
+    # Subtest: refuses values with surrounding whitespace or control characters
+    ok 1 - refuses values with surrounding whitespace or control characters
+      ---
+      duration_ms: 1.394
+      ...
+    # Subtest: refuses SMTP port "abc"
+    ok 2 - refuses SMTP port "abc"
+      ---
+      duration_ms: 0.6774
+      ...
+    # Subtest: refuses SMTP port "0"
+    ok 3 - refuses SMTP port "0"
+      ---
+      duration_ms: 0.479
+      ...
+    # Subtest: refuses SMTP port "055425"
+    ok 4 - refuses SMTP port "055425"
+      ---
+      duration_ms: 1.6389
+      ...
+    # Subtest: refuses SMTP port "55425abc"
+    ok 5 - refuses SMTP port "55425abc"
+      ---
+      duration_ms: 0.6618
+      ...
+    # Subtest: refuses SMTP port "70000"
+    ok 6 - refuses SMTP port "70000"
+      ---
+      duration_ms: 0.4264
+      ...
+    # Subtest: refuses SMTP port "-55425"
+    ok 7 - refuses SMTP port "-55425"
+      ---
+      duration_ms: 0.7594
+      ...
+    # Subtest: refuses SMTP port "5.5"
+    ok 8 - refuses SMTP port "5.5"
+      ---
+      duration_ms: 0.5372
+      ...
+    # Subtest: refuses a database URL that does not parse or uses another scheme
+    ok 9 - refuses a database URL that does not parse or uses another scheme
+      ---
+      duration_ms: 3.8016
+      ...
+    # Subtest: refuses query parameters that could override host, port or user
+    ok 10 - refuses query parameters that could override host, port or user
+      ---
+      duration_ms: 1.5977
+      ...
+    # Subtest: refuses a database URL without an explicit port
+    ok 11 - refuses a database URL without an explicit port
+      ---
+      duration_ms: 0.5627
+      ...
+    # Subtest: refuses a missing, nested or non-identifier database name
+    ok 12 - refuses a missing, nested or non-identifier database name
+      ---
+      duration_ms: 1.1462
+      ...
+    # Subtest: refuses any role other than the test role
+    ok 13 - refuses any role other than the test role
+      ---
+      duration_ms: 0.6396
+      ...
+    # Subtest: refuses a missing or short password
+    ok 14 - refuses a missing or short password
+      ---
+      duration_ms: 0.7962
+      ...
+    # Subtest: refuses malformed percent-encoding in the credentials
+    ok 15 - refuses malformed percent-encoding in the credentials
+      ---
+      duration_ms: 1.3891
+      ...
+    # Subtest: refuses stack ID "on"
+    ok 16 - refuses stack ID "on"
+      ---
+      duration_ms: 0.642
+      ...
+    # Subtest: refuses stack ID "true"
+    ok 17 - refuses stack ID "true"
+      ---
+      duration_ms: 1.1095
+      ...
+    # Subtest: refuses stack ID "00000000-0000-0000-0000-000000000000"
+    ok 18 - refuses stack ID "00000000-0000-0000-0000-000000000000"
+      ---
+      duration_ms: 1.7562
+      ...
+    # Subtest: refuses stack ID "<uppercase uuid>"
+    ok 19 - refuses stack ID "<uppercase uuid>"
+      ---
+      duration_ms: 0.6343
+      ...
+    # Subtest: refuses stack ID "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    ok 20 - refuses stack ID "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+      ---
+      duration_ms: 0.5379
+      ...
+    # Subtest: refuses stack ID "bbe1c971-69ab-4144-9c27-8486da60112"
+    ok 21 - refuses stack ID "bbe1c971-69ab-4144-9c27-8486da60112"
+      ---
+      duration_ms: 0.4884
+      ...
+    # Subtest: refuses a Mailpit API that is not a bare http origin with an explicit port
+    ok 22 - refuses a Mailpit API that is not a bare http origin with an explicit port
+      ---
+      duration_ms: 1.4411
+      ...
+    # Subtest: refuses ports outside the test-stack range
+    ok 23 - refuses ports outside the test-stack range
+      ---
+      duration_ms: 0.9411
+      ...
+    # Subtest: refuses endpoints that share a port (split or copied configuration)
+    ok 24 - refuses endpoints that share a port (split or copied configuration)
+      ---
+      duration_ms: 0.9287
+      ...
+    # Subtest: refuses ambient libpq variables that could redirect the connection
+    ok 25 - refuses ambient libpq variables that could redirect the connection
+      ---
+      duration_ms: 1.0808
+      ...
+    1..25
+ok 17 - integration environment — malformed variables
+  ---
+  duration_ms: 29.485
+  type: 'suite'
+  ...
+# Subtest: integration environment — developer database rejection
+    # Subtest: refuses the developer stack's own URL
+    ok 1 - refuses the developer stack's own URL
+      ---
+      duration_ms: 2.2088
+      ...
+    # Subtest: refuses a developer port even with test-role credentials
+    ok 2 - refuses a developer port even with test-role credentials
+      ---
+      duration_ms: 1.3473
+      ...
+    # Subtest: refuses developer credentials even on a test port
+    ok 3 - refuses developer credentials even on a test port
+      ---
+      duration_ms: 1.0091
+      ...
+    # Subtest: refuses a live connection that carries no stack marker (the developer database)
+    ok 4 - refuses a live connection that carries no stack marker (the developer database)
+      ---
+      duration_ms: 1.4791
+      ...
+    # Subtest: refuses a live connection authenticated as a stock Supabase role
+    ok 5 - refuses a live connection authenticated as a stock Supabase role
+      ---
+      duration_ms: 0.715
+      ...
+    1..5
+ok 18 - integration environment — developer database rejection
+  ---
+  duration_ms: 8.3444
+  type: 'suite'
+  ...
+# Subtest: integration environment — staging and production rejection
+    # Subtest: refuses hosted Supabase aws-0-eu-west-1.pooler.supabase.com:6543
+    ok 1 - refuses hosted Supabase aws-0-eu-west-1.pooler.supabase.com:6543
+      ---
+      duration_ms: 3.6491
+      ...
+    # Subtest: refuses hosted Supabase db.abcdefghijklmnopqrst.supabase.co:5432
+    ok 2 - refuses hosted Supabase db.abcdefghijklmnopqrst.supabase.co:5432
+      ---
+      duration_ms: 0.5469
+      ...
+    # Subtest: refuses hosted Supabase db.abcdefghijklmnopqrst.supabase.co:55422
+    ok 3 - refuses hosted Supabase db.abcdefghijklmnopqrst.supabase.co:55422
+      ---
+      duration_ms: 0.3841
+      ...
+    # Subtest: refuses non-literal-loopback host staging-db.kolekto.example
+    ok 4 - refuses non-literal-loopback host staging-db.kolekto.example
+      ---
+      duration_ms: 0.7525
+      ...
+    # Subtest: refuses non-literal-loopback host prod.internal
+    ok 5 - refuses non-literal-loopback host prod.internal
+      ---
+      duration_ms: 0.7669
+      ...
+    # Subtest: refuses non-literal-loopback host 10.0.0.5
+    ok 6 - refuses non-literal-loopback host 10.0.0.5
+      ---
+      duration_ms: 0.4378
+      ...
+    # Subtest: refuses non-literal-loopback host 192.168.1.20
+    ok 7 - refuses non-literal-loopback host 192.168.1.20
+      ---
+      duration_ms: 0.5508
+      ...
+    # Subtest: refuses non-literal-loopback host 127.0.0.2
+    ok 8 - refuses non-literal-loopback host 127.0.0.2
+      ---
+      duration_ms: 0.9658
+      ...
+    # Subtest: refuses non-literal-loopback host localhost
+    ok 9 - refuses non-literal-loopback host localhost
+      ---
+      duration_ms: 1.3213
+      ...
+    # Subtest: refuses non-literal-loopback host 0.0.0.0
+    ok 10 - refuses non-literal-loopback host 0.0.0.0
+      ---
+      duration_ms: 2.484
+      ...
+    # Subtest: refuses a remote Mailpit API host
+    ok 11 - refuses a remote Mailpit API host
+      ---
+      duration_ms: 3.6001
+      ...
+    1..11
+ok 19 - integration environment — staging and production rejection
+  ---
+  duration_ms: 17.0978
+  type: 'suite'
+  ...
+# Subtest: integration environment — developer Mailpit rejection
+    # Subtest: refuses the developer Mailpit web/API endpoint
+    ok 1 - refuses the developer Mailpit web/API endpoint
+      ---
+      duration_ms: 0.6588
+      ...
+    # Subtest: refuses the developer Mailpit SMTP listener
+    ok 2 - refuses the developer Mailpit SMTP listener
+      ---
+      duration_ms: 2.55
+      ...
+    # Subtest: refuses any developer-range Mailpit port
+    ok 3 - refuses any developer-range Mailpit port
+      ---
+      duration_ms: 0.9172
+      ...
+    1..3
+ok 20 - integration environment — developer Mailpit rejection
+  ---
+  duration_ms: 4.6534
+  type: 'suite'
+  ...
+# Subtest: integration environment — live identity mismatches
+    # Subtest: refuses a different stack ID (another or stale test stack)
+    ok 1 - refuses a different stack ID (another or stale test stack)
+      ---
+      duration_ms: 0.9162
+      ...
+    # Subtest: refuses the legacy boolean marker value
+    ok 2 - refuses the legacy boolean marker value
+      ---
+      duration_ms: 0.5599
+      ...
+    # Subtest: refuses a session that switched role (session_user differs)
+    ok 3 - refuses a session that switched role (session_user differs)
+      ---
+      duration_ms: 0.4806
+      ...
+    # Subtest: refuses a database or declared host port that differs from the URL
+    ok 4 - refuses a database or declared host port that differs from the URL
+      ---
+      duration_ms: 0.6712
+      ...
+    # Subtest: treats a null server port, a wrong row count or a malformed result as inconclusive
+    ok 5 - treats a null server port, a wrong row count or a malformed result as inconclusive
+      ---
+      duration_ms: 1.5641
+      ...
+    # Subtest: reports every mismatch at once
+    ok 6 - reports every mismatch at once
+      ---
+      duration_ms: 0.6826
+      ...
+    # Subtest: probe SQL is a single read-only select of the stack setting
+    ok 7 - probe SQL is a single read-only select of the stack setting
+      ---
+      duration_ms: 0.8471
+      ...
+    1..7
+ok 21 - integration environment — live identity mismatches
+  ---
+  duration_ms: 6.5385
+  type: 'suite'
+  ...
+# Subtest: integration environment — secret-safe errors
+    # Subtest: never prints the password, the URL or the stack ID in a refusal
+    ok 1 - never prints the password, the URL or the stack ID in a refusal
+      ---
+      duration_ms: 8.9174
+      ...
+    # Subtest: redacts secrets when a validated configuration is logged or serialised
+    ok 2 - redacts secrets when a validated configuration is logged or serialised
+      ---
+      duration_ms: 1.041
+      ...
+    1..2
+ok 22 - integration environment — secret-safe errors
+  ---
+  duration_ms: 10.2879
+  type: 'suite'
+  ...
+# Subtest: integration environment — Phase 1b connection identity
+    # Subtest: checks inet_server_port() against the container port, never the host port
+    ok 1 - checks inet_server_port() against the container port, never the host port
+      ---
+      duration_ms: 0.6966
+      ...
+    # Subtest: matches the dialled host port against the port recorded in the test database
+    ok 2 - matches the dialled host port against the port recorded in the test database
+      ---
+      duration_ms: 0.9091
+      ...
+    # Subtest: refuses a probe that did not run read-only
+    ok 3 - refuses a probe that did not run read-only
+      ---
+      duration_ms: 0.7803
+      ...
+    # Subtest: refuses every built-in Postgres or Supabase role, including after SET ROLE
+    ok 4 - refuses every built-in Postgres or Supabase role, including after SET ROLE
+      ---
+      duration_ms: 1.1479
+      ...
+    # Subtest: refuses built-in roles in the URL as developer credentials
+    ok 5 - refuses built-in roles in the URL as developer credentials
+      ---
+      duration_ms: 0.7629
+      ...
+    # Subtest: the probe reads the stack ID, the declared host port and transaction_read_only, and nothing else
+    ok 6 - the probe reads the stack ID, the declared host port and transaction_read_only, and nothing else
+      ---
+      duration_ms: 0.7418
+      ...
+    1..6
+ok 23 - integration environment — Phase 1b connection identity
+  ---
+  duration_ms: 41.6994
+  type: 'suite'
+  ...
+# Subtest: integration environment — Phase 1b developer counterparts and URL overrides
+    # Subtest: refuses a test URL that reuses the developer URL's host and port
+    ok 1 - refuses a test URL that reuses the developer URL's host and port
+      ---
+      duration_ms: 0.9012
+      ...
+    # Subtest: refuses a test URL that reuses the developer password, without printing it
+    ok 2 - refuses a test URL that reuses the developer password, without printing it
+      ---
+      duration_ms: 0.6014
+      ...
+    # Subtest: refuses Mailpit or SMTP ports copied from the developer variables
+    ok 3 - refuses Mailpit or SMTP ports copied from the developer variables
+      ---
+      duration_ms: 0.7651
+      ...
+    # Subtest: refuses every ambient PG* variable postgres.js or libpq would read, by name only
+    ok 4 - refuses every ambient PG* variable postgres.js or libpq would read, by name only
+      ---
+      duration_ms: 0.7549
+      ...
+    # Subtest: refuses URL query strings, multi-host URLs and encoded host lists
+    ok 5 - refuses URL query strings, multi-host URLs and encoded host lists
+      ---
+      duration_ms: 1.2641
+      ...
+    # Subtest: keeps the decoded password as a redacted Secret
+    ok 6 - keeps the decoded password as a redacted Secret
+      ---
+      duration_ms: 0.894
+      ...
+    1..6
+ok 24 - integration environment — Phase 1b developer counterparts and URL overrides
+  ---
+  duration_ms: 8.9569
+  type: 'suite'
+  ...
+# (node:10508) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: integration gate — explicit verification
+    # Subtest: verifies a valid environment, issues it once and runs read-only checks only
+    ok 1 - verifies a valid environment, issues it once and runs read-only checks only
+      ---
+      duration_ms: 51.599
+      ...
+    # Subtest: concurrent verify() calls share one probe
+    ok 2 - concurrent verify() calls share one probe
+      ---
+      duration_ms: 1.954
+      ...
+    # Subtest: refuses to hand out the environment before verify() succeeds
+    ok 3 - refuses to hand out the environment before verify() succeeds
+      ---
+      duration_ms: 8.6248
+      ...
+    # Subtest: refuses unless started by the integration runner (KOLEKTO_ITEST_REQUIRED=1)
+    ok 4 - refuses unless started by the integration runner (KOLEKTO_ITEST_REQUIRED=1)
+      ---
+      duration_ms: 13.1251
+      ...
+    # Subtest: refuses invalid static configuration without probing anything
+    ok 5 - refuses invalid static configuration without probing anything
+      ---
+      duration_ms: 3.4173
+      ...
+    # Subtest: refuses a live identity mismatch and stays refused
+    ok 6 - refuses a live identity mismatch and stays refused
+      ---
+      duration_ms: 10.0175
+      ...
+    # Subtest: turns a probe failure into a refusal that withholds driver details
+    ok 7 - turns a probe failure into a refusal that withholds driver details
+      ---
+      duration_ms: 3.9194
+      ...
+    # Subtest: drops error codes that are not a SQLSTATE or errno
+    ok 8 - drops error codes that are not a SQLSTATE or errno
+      ---
+      duration_ms: 21.8404
+      ...
+    # Subtest: treats a probe that never answers as a refusal (timeout), not a hang or a skip
+    ok 9 - treats a probe that never answers as a refusal (timeout), not a hang or a skip
+      ---
+      duration_ms: 62.174
+      ...
+    # Subtest: only accepts environments it issued itself
+    ok 10 - only accepts environments it issued itself
+      ---
+      duration_ms: 3.2034
+      ...
+    1..10
+ok 25 - integration gate — explicit verification
+  ---
+  duration_ms: 209.9933
+  type: 'suite'
+  ...
+# Subtest: integration gate — pause-switch guard (mocked reader)
+    # Subtest: refuses to start when the switch is ON and never tries to correct it
+    ok 1 - refuses to start when the switch is ON and never tries to correct it
+      ---
+      duration_ms: 1.7622
+      ...
+    # Subtest: fails the file when the switch is ON after it
+    ok 2 - fails the file when the switch is ON after it
+      ---
+      duration_ms: 1.1779
+      ...
+    # Subtest: refuses a missing switch row (a missing row reads as off)
+    ok 3 - refuses a missing switch row (a missing row reads as off)
+      ---
+      duration_ms: 0.93
+      ...
+    # Subtest: treats anything but exactly one boolean false as inconclusive
+    ok 4 - treats anything but exactly one boolean false as inconclusive
+      ---
+      duration_ms: 1.3549
+      ...
+# (node:10508) ExperimentalWarning: globSync is an experimental feature and might change at any time
+    # Subtest: a failing or hanging switch read is a refusal
+    ok 5 - a failing or hanging switch read is a refusal
+      ---
+      duration_ms: 31.2887
+      ...
+    # Subtest: the switch probe is a read-only select of the singleton row
+    ok 6 - the switch probe is a read-only select of the singleton row
+      ---
+      duration_ms: 1.6001
+      ...
+    # Subtest: detects every form of pause-switch write
+    ok 7 - detects every form of pause-switch write
+      ---
+      duration_ms: 7.3969
+      ...
+    1..7
+ok 26 - integration gate — pause-switch guard (mocked reader)
+  ---
+  duration_ms: 46.5007
+  type: 'suite'
+  ...
+# Subtest: integration lane — fails instead of silently skipping
+    # Subtest: exits non-zero without the KOLEKTO_ITEST_* environment and spawns nothing
+    ok 1 - exits non-zero without the KOLEKTO_ITEST_* environment and spawns nothing
+      ---
+      duration_ms: 1.8507
+      ...
+    # Subtest: exits non-zero for a developer-database URL
+    ok 2 - exits non-zero for a developer-database URL
+      ---
+      duration_ms: 14.0463
+      ...
+    # Subtest: exits non-zero when test/integration/ holds no test files
+    ok 3 - exits non-zero when test/integration/ holds no test files
+      ---
+      duration_ms: 28.0632
+      ...
+    # Subtest: exits non-zero when a file does not go through the gate
+    ok 4 - exits non-zero when a file does not go through the gate
+      ---
+      duration_ms: 13.567
+      ...
+    # Subtest: exits non-zero when a file contains a pause-switch write
+    ok 5 - exits non-zero when a file contains a pause-switch write
+      ---
+      duration_ms: 1.0359
+      ...
+    # Subtest: exits non-zero for a failing test
+    ok 6 - exits non-zero for a failing test
+      ---
+      duration_ms: 3.03
+      ...
+    # Subtest: exits non-zero for a non-zero exit with a clean summary
+    ok 7 - exits non-zero for a non-zero exit with a clean summary
+      ---
+      duration_ms: 0.8826
+      ...
+    # Subtest: exits non-zero for skipped tests
+    ok 8 - exits non-zero for skipped tests
+      ---
+      duration_ms: 1.4551
+      ...
+    # Subtest: exits non-zero for todo tests
+    ok 9 - exits non-zero for todo tests
+      ---
+      duration_ms: 1.0366
+      ...
+    # Subtest: exits non-zero for zero tests
+    ok 10 - exits non-zero for zero tests
+      ---
+      duration_ms: 1.05
+      ...
+    # Subtest: exits non-zero for cancelled tests
+    ok 11 - exits non-zero for cancelled tests
+      ---
+      duration_ms: 0.7072
+      ...
+    # Subtest: exits non-zero for no TAP summary
+    ok 12 - exits non-zero for no TAP summary
+      ---
+      duration_ms: 1.8754
+      ...
+    # Subtest: exits non-zero for a partial TAP summary
+    ok 13 - exits non-zero for a partial TAP summary
+      ---
+      duration_ms: 1.2068
+      ...
+    # Subtest: exits non-zero for pass count below test count
+    ok 14 - exits non-zero for pass count below test count
+      ---
+      duration_ms: 0.7086
+      ...
+    # Subtest: exits non-zero for a killed process
+    ok 15 - exits non-zero for a killed process
+      ---
+      duration_ms: 5.2396
+      ...
+    # Subtest: exits zero only for a run where every counted test passed
+    ok 16 - exits zero only for a run where every counted test passed
+      ---
+      duration_ms: 0.9437
+      ...
+    # Subtest: forwards only an allow-listed environment: no developer endpoint, provider credential or app secret
+    ok 17 - forwards only an allow-listed environment: no developer endpoint, provider credential or app secret
+      ---
+      duration_ms: 0.7561
+      ...
+    # Subtest: runs the files serially, by explicit path, with the TAP reporter the canary reads
+    ok 18 - runs the files serially, by explicit path, with the TAP reporter the canary reads
+      ---
+      duration_ms: 0.5814
+      ...
+    # Subtest: parses node:test's TAP summary and ignores indented subtest lines
+    ok 19 - parses node:test's TAP summary and ignores indented subtest lines
+      ---
+      duration_ms: 1.1719
+      ...
+    # Subtest: counts SKIP/TODO directives at any depth, but not an escaped '\#' in a test name
+    ok 20 - counts SKIP/TODO directives at any depth, but not an escaped '\#' in a test name
+      ---
+      duration_ms: 0.685
+      ...
+    # Subtest: checkIntegrationFiles returns the paths of a fully gated set
+    ok 21 - checkIntegrationFiles returns the paths of a fully gated set
+      ---
+      duration_ms: 0.6532
+      ...
+    1..21
+ok 27 - integration lane — fails instead of silently skipping
+  ---
+  duration_ms: 83.3743
+  type: 'suite'
+  ...
+# Subtest: integration lane — against real node:test output (mocked gate, no database)
+    # Subtest: a gate refusal in before() fails every test in the file — nothing is skipped
+    ok 1 - a gate refusal in before() fails every test in the file — nothing is skipped
+      ---
+      duration_ms: 3317.6485
+      ...
+    # Subtest: an all-skipped file passes node:test but fails the lane canary
+    ok 2 - an all-skipped file passes node:test but fails the lane canary
+      ---
+      duration_ms: 3460.5954
+      ...
+    # Subtest: a skipped suite beside a passing test fails the lane although node:test counts 0 skipped
+    ok 3 - a skipped suite beside a passing test fails the lane although node:test counts 0 skipped
+      ---
+      duration_ms: 1385.1221
+      ...
+    1..3
+ok 28 - integration lane — against real node:test output (mocked gate, no database)
+  ---
+  duration_ms: 8164.0157
+  type: 'suite'
+  ...
+# Subtest: integration lane — repository guards
+    # Subtest: npm test runs unit files only; test:integration runs the gated runner
+    ok 1 - npm test runs unit files only; test:integration runs the gated runner
+      ---
+      duration_ms: 1.0052
+      ...
+    # Subtest: the unit glob matches no integration or support file, and the lanes do not overlap
+    ok 2 - the unit glob matches no integration or support file, and the lanes do not overlap
+      ---
+      duration_ms: 26.2452
+      ...
+    # Subtest: no harness or integration file can write the pause switch, except the one guarded helper (Phase 7)
+    ok 3 - no harness or integration file can write the pause switch, except the one guarded helper (Phase 7)
+      ---
+      duration_ms: 28.5146
+      ...
+    # Subtest: every integration test file goes through the gate
+    ok 4 - every integration test file goes through the gate
+      ---
+      duration_ms: 8.9912
+      ...
+    # Subtest: only itest-db.ts may import the database driver; no harness file opens SMTP or HTTP
+    ok 5 - only itest-db.ts may import the database driver; no harness file opens SMTP or HTTP
+      ---
+      duration_ms: 21.4675
+      ...
+    1..5
+ok 29 - integration lane — repository guards
+  ---
+  duration_ms: 87.3624
+  type: 'suite'
+  ...
+# Subtest: integration lane — Phase 1b relocation and connection enforcement
+    # Subtest: the integration files (six from Phase 1b, the Phase 6A end-to-end file and the Phase 7 real-worker file) live in test/integration/ under their approved names
+    ok 1 - the integration files (six from Phase 1b, the Phase 6A end-to-end file and the Phase 7 real-worker file) live in test/integration/ under their approved names
+      ---
+      duration_ms: 4.4709
+      ...
+    # Subtest: no integration file is left at the top level of test/
+    ok 2 - no integration file is left at the top level of test/
+      ---
+      duration_ms: 2.3604
+      ...
+    # Subtest: every integration file imports the gate, wires liveGateDeps() and connects only through connectVerified()
+    ok 3 - every integration file imports the gate, wires liveGateDeps() and connects only through connectVerified()
+      ---
+      duration_ms: 18.4385
+      ...
+    # Subtest: the lane's own file check accepts exactly the real integration set
+    ok 4 - the lane's own file check accepts exactly the real integration set
+      ---
+      duration_ms: 175.4445
+      ...
+    # Subtest: a file missing from, or added outside, the manifest fails the lane
+    ok 5 - a file missing from, or added outside, the manifest fails the lane
+      ---
+      duration_ms: 1.1957
+      ...
+    # Subtest: detects direct driver use, ambient endpoints, developer ports and skips
+    ok 6 - detects direct driver use, ambient endpoints, developer ports and skips
+      ---
+      duration_ms: 0.8502
+      ...
+    # Subtest: the lane refuses a file that opens its own connection, before spawning anything
+    ok 7 - the lane refuses a file that opens its own connection, before spawning anything
+      ---
+      duration_ms: 0.7763
+      ...
+    # Subtest: the real lane refuses without verified test-stack configuration and lists or spawns nothing
+    ok 8 - the real lane refuses without verified test-stack configuration and lists or spawns nothing
+      ---
+      duration_ms: 0.8181
+      ...
+    # Subtest: the test:integration entry point exits non-zero in a scrubbed environment (static refusal, no connection possible)
+    ok 9 - the test:integration entry point exits non-zero in a scrubbed environment (static refusal, no connection possible)
+      ---
+      duration_ms: 1224.5541
+      ...
+    1..9
+ok 30 - integration lane — Phase 1b relocation and connection enforcement
+  ---
+  duration_ms: 1430.8349
+  type: 'suite'
+  ...
+# Subtest: integration lane — Phase 4 explicit SMTP mode
+    # Subtest: parses exactly one of --with-smtp / --without-smtp and refuses anything else
+    ok 1 - parses exactly one of --with-smtp / --without-smtp and refuses anything else
+      ---
+      duration_ms: 1.1284
+      ...
+    # Subtest: refuses without a mode when the manifest holds SMTP files, and starts nothing
+    ok 2 - refuses without a mode when the manifest holds SMTP files, and starts nothing
+      ---
+      duration_ms: 1.1899
+      ...
+    # Subtest: --without-smtp starts only the non-SMTP files and labels the run as partial, naming the withheld file
+    ok 3 - --without-smtp starts only the non-SMTP files and labels the run as partial, naming the withheld file
+      ---
+      duration_ms: 0.8036
+      ...
+    # Subtest: --without-smtp still checks the withheld file: an unsafe SMTP file blocks the whole lane
+    ok 4 - --without-smtp still checks the withheld file: an unsafe SMTP file blocks the whole lane
+      ---
+      duration_ms: 0.4578
+      ...
+    # Subtest: --with-smtp starts every file
+    ok 5 - --with-smtp starts every file
+      ---
+      duration_ms: 0.4585
+      ...
+    # Subtest: refuses a file outside the SMTP set that uses the SMTP adapter or endpoints (FILE_SMTP_UNDECLARED)
+    ok 6 - refuses a file outside the SMTP set that uses the SMTP adapter or endpoints (FILE_SMTP_UNDECLARED)
+      ---
+      duration_ms: 0.7479
+      ...
+    # Subtest: the real lane declares exactly the sender-to-Mailpit, end-to-end and real-worker files as SMTP, and only they use SMTP
+    ok 7 - the real lane declares exactly the sender-to-Mailpit, end-to-end and real-worker files as SMTP, and only they use SMTP
+      ---
+      duration_ms: 6.296
+      ...
+    1..7
+ok 31 - integration lane — Phase 4 explicit SMTP mode
+  ---
+  duration_ms: 11.657
+  type: 'suite'
+  ...
+# (node:23932) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: run-unique fixtures — ids and tags
+    # Subtest: issues fresh v4 ids and run-tagged slugs, addresses, event keys and application name
+    ok 1 - issues fresh v4 ids and run-tagged slugs, addresses, event keys and application name
+      ---
+      duration_ms: 6.9795
+      ...
+    # Subtest: is deterministic under an injected UUID source (reproducible tests), and random by default
+    ok 2 - is deterministic under an injected UUID source (reproducible tests), and random by default
+      ---
+      duration_ms: 35.2573
+      ...
+    # Subtest: two runs share no id, slug, address, event key or tag (cross-run contamination)
+    ok 3 - two runs share no id, slug, address, event key or tag (cross-run contamination)
+      ---
+      duration_ms: 1.3673
+      ...
+    # Subtest: ownership is exact: a scope owns only what it issued, never another run's values or the P8 residue
+    ok 4 - ownership is exact: a scope owns only what it issued, never another run's values or the P8 residue
+      ---
+      duration_ms: 7.6289
+      ...
+    # Subtest: refuses a repeated id instead of silently reusing it
+    ok 5 - refuses a repeated id instead of silently reusing it
+      ---
+      duration_ms: 48.142
+      ...
+    # Subtest: refuses the P8 residue ids and the fixed-id shape of the old integration fixtures
+    ok 6 - refuses the P8 residue ids and the fixed-id shape of the old integration fixtures
+      ---
+      duration_ms: 11.6606
+      ...
+    # Subtest: refuses a UUID source that returns anything but a lowercase v4 UUID
+    ok 7 - refuses a UUID source that returns anything but a lowercase v4 UUID
+      ---
+      duration_ms: 1.1235
+      ...
+    # Subtest: refuses file labels that are not a short lowercase name
+    ok 8 - refuses file labels that are not a short lowercase name
+      ---
+      duration_ms: 1.2958
+      ...
+    # Subtest: generated slugs satisfy the community slug constraint; addresses pass the real email validator
+    ok 9 - generated slugs satisfy the community slug constraint; addresses pass the real email validator
+      ---
+      duration_ms: 4.2339
+      ...
+    1..9
+ok 32 - run-unique fixtures — ids and tags
+  ---
+  duration_ms: 128.6629
+  type: 'suite'
+  ...
+# Subtest: quarantine SQL builder — parameterised, scoped, never a delete
+    # Subtest: builds one UPDATE to dead/itest_quarantined for the run's own email rows, ids as parameters only
+    ok 1 - builds one UPDATE to dead/itest_quarantined for the run's own email rows, ids as parameters only
+      ---
+      duration_ms: 1.7665
+      ...
+    # Subtest: the SQL text depends only on the number of ids, never on their values
+    ok 2 - the SQL text depends only on the number of ids, never on their values
+      ---
+      duration_ms: 2.1426
+      ...
+    # Subtest: is not a cleanup bypass: no delete, trigger, configuration, ledger, event or switch access
+    ok 3 - is not a cleanup bypass: no delete, trigger, configuration, ledger, event or switch access
+      ---
+      duration_ms: 9.6142
+      ...
+    # Subtest: refuses SQL-injection attempts and malformed ids without building anything
+    ok 4 - refuses SQL-injection attempts and malformed ids without building anything
+      ---
+      duration_ms: 1.9326
+      ...
+    # Subtest: targets only records created by the current run: foreign, residue, duplicate and oversized scopes are refused
+    ok 5 - targets only records created by the current run: foreign, residue, duplicate and oversized scopes are refused
+      ---
+      duration_ms: 42.3543
+      ...
+    1..5
+ok 33 - quarantine SQL builder — parameterised, scoped, never a delete
+  ---
+  duration_ms: 59.0644
+  type: 'suite'
+  ...
+# Subtest: Mailpit exact-match helper — injected JSON only
+    # Subtest: derives the adapter's Message-ID (sha256 of the delivery id, 32 hex, @kolekto.invalid)
+    ok 1 - derives the adapter's Message-ID (sha256 of the delivery id, 32 hex, @kolekto.invalid)
+      ---
+      duration_ms: 56.1178
+      ...
+    # Subtest: selects exactly our message among other runs' and developer messages, in any order, ignoring inbox totals
+    ok 2 - selects exactly our message among other runs' and developer messages, in any order, ignoring inbox totals
+      ---
+      duration_ms: 4.9218
+      ...
+    # Subtest: wrong recipient, subject or run identifier is not a match (no substring matching)
+    ok 3 - wrong recipient, subject or run identifier is not a match (no substring matching)
+      ---
+      duration_ms: 2.105
+      ...
+    # Subtest: the expected Message-ID on a different recipient or subject, or on a multi-recipient message, is ambiguous
+    ok 4 - the expected Message-ID on a different recipient or subject, or on a multi-recipient message, is ambiguous
+      ---
+      duration_ms: 1.2268
+      ...
+    # Subtest: two exact matches are a duplicate send, never 'pick the newest'
+    ok 5 - two exact matches are a duplicate send, never 'pick the newest'
+      ---
+      duration_ms: 0.4739
+      ...
+    # Subtest: no match is reported, with only a count in the message
+    ok 6 - no match is reported, with only a count in the message
+      ---
+      duration_ms: 0.4336
+      ...
+    # Subtest: a malformed response is inconclusive, never silently skipped
+    ok 7 - a malformed response is inconclusive, never silently skipped
+      ---
+      duration_ms: 1.1846
+      ...
+    # Subtest: refuses expectations that are not run-scoped or well-formed
+    ok 8 - refuses expectations that are not run-scoped or well-formed
+      ---
+      duration_ms: 1.2158
+      ...
+    # Subtest: absence by run-scoped recipient: passes on other mail, fails on any message to that recipient
+    ok 9 - absence by run-scoped recipient: passes on other mail, fails on any message to that recipient
+      ---
+      duration_ms: 1.1918
+      ...
+    # Subtest: checks required Text and HTML fragments of the identified message only
+    ok 10 - checks required Text and HTML fragments of the identified message only
+      ---
+      duration_ms: 1.3458
+      ...
+    1..10
+ok 34 - Mailpit exact-match helper — injected JSON only
+  ---
+  duration_ms: 71.5282
+  type: 'suite'
+  ...
+# Subtest: suite mutex — bounded pg_try_advisory_lock poll (fake clock)
+    # Subtest: acquires on the first attempt without sleeping
+    ok 1 - acquires on the first attempt without sleeping
+      ---
+      duration_ms: 3.5704
+      ...
+    # Subtest: acquires after the holder releases, sleeping exactly the interval between attempts
+    ok 2 - acquires after the holder releases, sleeping exactly the interval between attempts
+      ---
+      duration_ms: 1.5697
+      ...
+    # Subtest: times out with a clear refusal naming the holder, never sleeping past the deadline
+    ok 3 - times out with a clear refusal naming the holder, never sleeping past the deadline
+      ---
+      duration_ms: 1.7417
+      ...
+    # Subtest: withholds an unsafe holder name and survives a failing holder lookup
+    ok 4 - withholds an unsafe holder name and survives a failing holder lookup
+      ---
+      duration_ms: 2.9418
+      ...
+    # Subtest: an unexpected error stops at once: not retried, not swallowed, details withheld
+    ok 5 - an unexpected error stops at once: not retried, not swallowed, details withheld
+      ---
+      duration_ms: 2.6906
+      ...
+    # Subtest: a non-boolean lock result is inconclusive, not 'not yet'
+    ok 6 - a non-boolean lock result is inconclusive, not 'not yet'
+      ---
+      duration_ms: 1.7196
+      ...
+    # Subtest: terminates even if the clock never advances (hard attempt cap)
+    ok 7 - terminates even if the clock never advances (hard attempt cap)
+      ---
+      duration_ms: 19.0507
+      ...
+    # Subtest: a clock that runs backwards or is not finite is a refusal
+    ok 8 - a clock that runs backwards or is not finite is a refusal
+      ---
+      duration_ms: 1.322
+      ...
+    # Subtest: refuses unbounded or arbitrary-long options before trying the lock
+    ok 9 - refuses unbounded or arbitrary-long options before trying the lock
+      ---
+      duration_ms: 2.5807
+      ...
+    # Subtest: pollBounded: generic success, PollTimeout for callers, and an unexpected attempt shape is inconclusive
+    ok 10 - pollBounded: generic success, PollTimeout for callers, and an unexpected attempt shape is inconclusive
+      ---
+      duration_ms: 1.1698
+      ...
+    # Subtest: works with the real clock under a short bound (no database involved)
+    ok 11 - works with the real clock under a short bound (no database involved)
+      ---
+      duration_ms: 192.5095
+      ...
+    # Subtest: loss detection: exactly one held lock in this session, anything else stops the file
+    ok 12 - loss detection: exactly one held lock in this session, anything else stops the file
+      ---
+      duration_ms: 1.051
+      ...
+    # Subtest: the mutex statements are constant, non-blocking and use key (918273, 1), clear of the migrations' keys 1-5
+    ok 13 - the mutex statements are constant, non-blocking and use key (918273, 1), clear of the migrations' keys 1-5
+      ---
+      duration_ms: 4.8601
+      ...
+    1..13
+ok 35 - suite mutex — bounded pg_try_advisory_lock poll (fake clock)
+  ---
+  duration_ms: 238.313
+  type: 'suite'
+  ...
+# (node:23852) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: inRollback — always rolls back
+    # Subtest: returns the callback's value, never commits, and the handle is a rollback handle only while the callback runs
+    ok 1 - returns the callback's value, never commits, and the handle is a rollback handle only while the callback runs
+      ---
+      duration_ms: 5.074
+      ...
+    # Subtest: rethrows the callback's own error unchanged (and still rolls back)
+    ok 2 - rethrows the callback's own error unchanged (and still rolls back)
+      ---
+      duration_ms: 1.7603
+      ...
+    1..2
+ok 36 - inRollback — always rolls back
+  ---
+  duration_ms: 9.9111
+  type: 'suite'
+  ...
+# Subtest: insertLedgerFillers — fillers can never commit
+    # Subtest: refuses a handle that is not a live inRollback transaction, before any query
+    ok 1 - refuses a handle that is not a live inRollback transaction, before any query
+      ---
+      duration_ms: 3.2176
+      ...
+    # Subtest: refuses ids this run did not issue, and malformed or oversized filler sets
+    ok 2 - refuses ids this run did not issue, and malformed or oversized filler sets
+      ---
+      duration_ms: 4.2056
+      ...
+    # Subtest: inside inRollback, writes the whole set in one parameterised transactional insert
+    ok 3 - inside inRollback, writes the whole set in one parameterised transactional insert
+      ---
+      duration_ms: 1.89
+      ...
+    # Subtest: refuses when the database wrote a different number of rows
+    ok 4 - refuses when the database wrote a different number of rows
+      ---
+      duration_ms: 0.9571
+      ...
+    1..4
+ok 37 - insertLedgerFillers — fillers can never commit
+  ---
+  duration_ms: 13.0252
+  type: 'suite'
+  ...
+# Subtest: waitForL5Headroom — real pacing, bounded
+    # Subtest: polls the server-side per-second count until it is zero
+    ok 1 - polls the server-side per-second count until it is zero
+      ---
+      duration_ms: 241.4871
+      ...
+    # Subtest: refuses with L5_HEADROOM_TIMEOUT when the window never empties
+    ok 2 - refuses with L5_HEADROOM_TIMEOUT when the window never empties
+      ---
+      duration_ms: 316.0241
+      ...
+    # Subtest: refuses a non-numeric count instead of guessing
+    ok 3 - refuses a non-numeric count instead of guessing
+      ---
+      duration_ms: 1.1536
+      ...
+    1..3
+ok 38 - waitForL5Headroom — real pacing, bounded
+  ---
+  duration_ms: 560.8957
+  type: 'suite'
+  ...
+# Subtest: runPreflight — checklist §7.6, read-only, fail closed
+    # Subtest: passes on a quiet test stack and issues only the five constant selects
+    ok 1 - passes on a quiet test stack and issues only the five constant selects
+      ---
+      duration_ms: 8.1872
+      ...
+    # Subtest: refuses on an open email row (PREFLIGHT_OPEN_DELIVERIES)
+    ok 2 - refuses on an open email row (PREFLIGHT_OPEN_DELIVERIES)
+      ---
+      duration_ms: 1.8092
+      ...
+    # Subtest: refuses on a fresh heartbeat (PREFLIGHT_LIVE_WORKER)
+    ok 3 - refuses on a fresh heartbeat (PREFLIGHT_LIVE_WORKER)
+      ---
+      duration_ms: 1.5953
+      ...
+    # Subtest: refuses on a null heartbeat flag (PREFLIGHT_LIVE_WORKER)
+    ok 4 - refuses on a null heartbeat flag (PREFLIGHT_LIVE_WORKER)
+      ---
+      duration_ms: 6.7774
+      ...
+    # Subtest: refuses on read queue messages (PREFLIGHT_QUEUE_CONSUMED)
+    ok 5 - refuses on read queue messages (PREFLIGHT_QUEUE_CONSUMED)
+      ---
+      duration_ms: 0.9449
+      ...
+    # Subtest: refuses on an unread queued message (Phase 6A) (PREFLIGHT_QUEUE_NOT_EMPTY)
+    ok 6 - refuses on an unread queued message (Phase 6A) (PREFLIGHT_QUEUE_NOT_EMPTY)
+      ---
+      duration_ms: 0.677
+      ...
+    # Subtest: refuses on a non-numeric queue length (Phase 6A) (PREFLIGHT_INCONCLUSIVE)
+    ok 7 - refuses on a non-numeric queue length (Phase 6A) (PREFLIGHT_INCONCLUSIVE)
+      ---
+      duration_ms: 0.4699
+      ...
+    # Subtest: refuses on L4 above cap − 40 (PREFLIGHT_L4_HEADROOM)
+    ok 8 - refuses on L4 above cap − 40 (PREFLIGHT_L4_HEADROOM)
+      ---
+      duration_ms: 0.933
+      ...
+    # Subtest: refuses on a missing sender-state row (PREFLIGHT_INCONCLUSIVE)
+    ok 9 - refuses on a missing sender-state row (PREFLIGHT_INCONCLUSIVE)
+      ---
+      duration_ms: 2.4724
+      ...
+    # Subtest: refuses on two open-count rows (PREFLIGHT_INCONCLUSIVE)
+    ok 10 - refuses on two open-count rows (PREFLIGHT_INCONCLUSIVE)
+      ---
+      duration_ms: 0.7943
+      ...
+    # Subtest: refuses on a non-numeric L4 read (PREFLIGHT_INCONCLUSIVE)
+    ok 11 - refuses on a non-numeric L4 read (PREFLIGHT_INCONCLUSIVE)
+      ---
+      duration_ms: 2.0904
+      ...
+    # Subtest: refuses on a failing read (PREFLIGHT_INCONCLUSIVE)
+    ok 12 - refuses on a failing read (PREFLIGHT_INCONCLUSIVE)
+      ---
+      duration_ms: 3.6022
+      ...
+    # Subtest: allows exactly cap − 40 transactional attempts
+    ok 13 - allows exactly cap − 40 transactional attempts
+      ---
+      duration_ms: 1.1312
+      ...
+    1..13
+ok 39 - runPreflight — checklist §7.6, read-only, fail closed
+  ---
+  duration_ms: 36.3989
+  type: 'suite'
+  ...
+# (node:28844) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: assertQueueEmpty — the queue holds no message at all (read-only)
+    # Subtest: passes on an empty queue with one constant read-only select
+    ok 1 - passes on an empty queue with one constant read-only select
+      ---
+      duration_ms: 24.6734
+      ...
+    # Subtest: refuses an unread queued message with a stage-specific code
+    ok 2 - refuses an unread queued message with a stage-specific code
+      ---
+      duration_ms: 8.4172
+      ...
+    # Subtest: refuses a read message with both codes (queued and consumed)
+    ok 3 - refuses a read message with both codes (queued and consumed)
+      ---
+      duration_ms: 1.0533
+      ...
+    # Subtest: refuses malformed or failing counts instead of guessing, and withholds driver text
+    ok 4 - refuses malformed or failing counts instead of guessing, and withholds driver text
+      ---
+      duration_ms: 4.6896
+      ...
+    1..4
+ok 40 - assertQueueEmpty — the queue holds no message at all (read-only)
+  ---
+  duration_ms: 43.4419
+  type: 'suite'
+  ...
+# Subtest: findOwnQueueMessages — reads only the owner's communities
+    # Subtest: returns only messages of the named owned communities, as frozen handles
+    ok 1 - returns only messages of the named owned communities, as frozen handles
+      ---
+      duration_ms: 8.5155
+      ...
+    # Subtest: builds one placeholder per community and never interpolates ids
+    ok 2 - builds one placeholder per community and never interpolates ids
+      ---
+      duration_ms: 0.9492
+      ...
+    # Subtest: refuses, before any query, a community the owner does not own, a malformed id, a duplicate or too many
+    ok 3 - refuses, before any query, a community the owner does not own, a malformed id, a duplicate or too many
+      ---
+      duration_ms: 89.6385
+      ...
+    # Subtest: an empty list issues no query
+    ok 4 - an empty list issues no query
+      ---
+      duration_ms: 1.2177
+      ...
+    # Subtest: refuses a row the database returned for another community, and malformed rows
+    ok 5 - refuses a row the database returned for another community, and malformed rows
+      ---
+      duration_ms: 2.8508
+      ...
+    1..5
+ok 41 - findOwnQueueMessages — reads only the owner's communities
+  ---
+  duration_ms: 105.0837
+  type: 'suite'
+  ...
+# Subtest: waitForOwnQueueMessage — bounded poll, exactly one
+    # Subtest: polls until the community's single message appears
+    ok 1 - polls until the community's single message appears
+      ---
+      duration_ms: 228.8808
+      ...
+    # Subtest: refuses with QUEUE_MESSAGE_TIMEOUT when nothing arrives, and QUEUE_MESSAGE_AMBIGUOUS on two messages
+    ok 2 - refuses with QUEUE_MESSAGE_TIMEOUT when nothing arrives, and QUEUE_MESSAGE_AMBIGUOUS on two messages
+      ---
+      duration_ms: 180.3637
+      ...
+    # Subtest: refuses a community the owner does not own before polling
+    ok 3 - refuses a community the owner does not own before polling
+      ---
+      duration_ms: 0.6692
+      ...
+    1..3
+ok 42 - waitForOwnQueueMessage — bounded poll, exactly one
+  ---
+  duration_ms: 411.3586
+  type: 'suite'
+  ...
+# Subtest: archiveOwnQueueMessage — one owned message, archived (never deleted), re-checked in the database
+    # Subtest: locks and archives exactly that msg_id in one committed transaction; nothing else changes
+    ok 1 - locks and archives exactly that msg_id in one committed transaction; nothing else changes
+      ---
+      duration_ms: 3.7079
+      ...
+    # Subtest: refuses a hand-built message, before any query
+    ok 2 - refuses a hand-built message, before any query
+      ---
+      duration_ms: 1.4279
+      ...
+    # Subtest: refuses a message read for another owner (another test or file), before any query
+    ok 3 - refuses a message read for another owner (another test or file), before any query
+      ---
+      duration_ms: 0.9825
+      ...
+    # Subtest: refuses when the owner no longer owns the community (the next test started), before any query
+    ok 4 - refuses when the owner no longer owns the community (the next test started), before any query
+      ---
+      duration_ms: 1.2032
+      ...
+    # Subtest: refuses and rolls back when the database row is gone or carries another community; nothing is archived
+    ok 5 - refuses and rolls back when the database row is gone or carries another community; nothing is archived
+      ---
+      duration_ms: 1.7139
+      ...
+    # Subtest: refuses (and rolls back) when the archive does not report exactly one archived row
+    ok 6 - refuses (and rolls back) when the archive does not report exactly one archived row
+      ---
+      duration_ms: 2.7126
+      ...
+    # Subtest: readArchivedQueueMessage returns null before the archive and refuses a forged handle
+    ok 7 - readArchivedQueueMessage returns null before the archive and refuses a forged handle
+      ---
+      duration_ms: 0.6883
+      ...
+    1..7
+ok 43 - archiveOwnQueueMessage — one owned message, archived (never deleted), re-checked in the database
+  ---
+  duration_ms: 13.2885
+  type: 'suite'
+  ...
+# Subtest: recoverOwnQueueMessages — afterEach recovery archives only the owner's leftovers
+    # Subtest: archives every leftover of the named owned communities and nothing else
+    ok 1 - archives every leftover of the named owned communities and nothing else
+      ---
+      duration_ms: 1.4654
+      ...
+    # Subtest: refuses communities it does not own and archives nothing
+    ok 2 - refuses communities it does not own and archives nothing
+      ---
+      duration_ms: 0.7658
+      ...
+    1..2
+ok 44 - recoverOwnQueueMessages — afterEach recovery archives only the owner's leftovers
+  ---
+  duration_ms: 2.739
+  type: 'suite'
+  ...
+# Subtest: createFileHarness — queue isolation wiring (Phase 6A)
+    # Subtest: start() refuses when the queue holds a message (PREFLIGHT_QUEUE_NOT_EMPTY)
+    ok 1 - start() refuses when the queue holds a message (PREFLIGHT_QUEUE_NOT_EMPTY)
+      ---
+      duration_ms: 3.7923
+      ...
+    # Subtest: checkpoint() refuses a queued message (ISOLATION_FOREIGN_QUEUE) and finish() reports one (QUEUE_RESIDUE), still releasing the mutex
+    ok 2 - checkpoint() refuses a queued message (ISOLATION_FOREIGN_QUEUE) and finish() reports one (QUEUE_RESIDUE), still releasing the mutex
+      ---
+      duration_ms: 3.3902
+      ...
+    # Subtest: testOwner owns only the communities tracked since the last checkpoint
+    ok 3 - testOwner owns only the communities tracked since the last checkpoint
+      ---
+      duration_ms: 1.9587
+      ...
+    # Subtest: a handle read in one test cannot be archived after the next checkpoint
+    ok 4 - a handle read in one test cannot be archived after the next checkpoint
+      ---
+      duration_ms: 2.5926
+      ...
+    # Subtest: recoverOwnQueue() archives only the current test's leftovers; earlier tests' and foreign messages stay
+    ok 5 - recoverOwnQueue() archives only the current test's leftovers; earlier tests' and foreign messages stay
+      ---
+      duration_ms: 78.9621
+      ...
+    # Subtest: recoverOwnQueue() records a failure instead of throwing, and the next checkpoint reports it
+    ok 6 - recoverOwnQueue() records a failure instead of throwing, and the next checkpoint reports it
+      ---
+      duration_ms: 2.3494
+      ...
+    # Subtest: a clean file passes start, checkpoint, recovery and finish without any queue write
+    ok 7 - a clean file passes start, checkpoint, recovery and finish without any queue write
+      ---
+      duration_ms: 1.6338
+      ...
+    1..7
+ok 45 - createFileHarness — queue isolation wiring (Phase 6A)
+  ---
+  duration_ms: 95.4871
+  type: 'suite'
+  ...
+# (node:6500) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the worker child's environment
+    # Subtest: is built from nothing: dangerous ambient variables never reach the child
+    ok 1 - is built from nothing: dangerous ambient variables never reach the child
+      ---
+      duration_ms: 127.6332
+      ...
+    # Subtest: connects as the worker role to the verified endpoint, never with the owner password
+    ok 2 - connects as the worker role to the verified endpoint, never with the owner password
+      ---
+      duration_ms: 5.7638
+      ...
+    # Subtest: the invalid-configuration targets stay on loopback, and a port override only changes the port
+    ok 3 - the invalid-configuration targets stay on loopback, and a port override only changes the port
+      ---
+      duration_ms: 5.9091
+      ...
+    # Subtest: never points the worker at a developer-stack port, even a closed one
+    ok 4 - never points the worker at a developer-stack port, even a closed one
+      ---
+      duration_ms: 1.4519
+      ...
+    # Subtest: refuses an environment no gate issued
+    ok 5 - refuses an environment no gate issued
+      ---
+      duration_ms: 1.2335
+      ...
+    # Subtest: builds with the package's own esbuild flags, to a git-ignored path
+    ok 6 - builds with the package's own esbuild flags, to a git-ignored path
+      ---
+      duration_ms: 1.5523
+      ...
+    1..6
+ok 46 - the worker child's environment
+  ---
+  duration_ms: 148.9452
+  type: 'suite'
+  ...
+# Subtest: the worker log scan
+    # Subtest: finds every sensitive shape and exact secret, and passes ordinary log lines
+    ok 1 - finds every sensitive shape and exact secret, and passes ordinary log lines
+      ---
+      duration_ms: 3.227
+      ...
+    1..1
+ok 47 - the worker log scan
+  ---
+  duration_ms: 4.474
+  type: 'suite'
+  ...
+# Subtest: the lane's worker-runtime group
+    # Subtest: parses --worker-runtime, alone, and still refuses anything else
+    ok 1 - parses --worker-runtime, alone, and still refuses anything else
+      ---
+      duration_ms: 31.0641
+      ...
+    # Subtest: --worker-runtime starts only that file, says the run is partial, and grants the switch to that child
+    ok 2 - --worker-runtime starts only that file, says the run is partial, and grants the switch to that child
+      ---
+      duration_ms: 77.9695
+      ...
+    # Subtest: --with-smtp runs everything and grants the switch; --without-smtp withholds the file and grants nothing
+    ok 3 - --with-smtp runs everything and grants the switch; --without-smtp withholds the file and grants nothing
+      ---
+      duration_ms: 7.9796
+      ...
+    # Subtest: the grant cannot come from the shell: the real entry refuses an ambient KOLEKTO_ITEST_* variable
+    ok 4 - the grant cannot come from the shell: the real entry refuses an ambient KOLEKTO_ITEST_* variable
+      ---
+      duration_ms: 3.0852
+      ...
+    # Subtest: --worker-reliability starts only the F-13, F-14 and F-15 file, says the run is partial, and grants the switch to that child
+    ok 5 - --worker-reliability starts only the F-13, F-14 and F-15 file, says the run is partial, and grants the switch to that child
+      ---
+      duration_ms: 3.84
+      ...
+    1..5
+ok 48 - the lane's worker-runtime group
+  ---
+  duration_ms: 126.3575
+  type: 'suite'
+  ...
+# Subtest: the remote-address sampler
+    # Subtest: reads only this process's TCP connections and ignores listeners
+    ok 1 - reads only this process's TCP connections and ignores listeners
+      ---
+      duration_ms: 1.3185
+      ...
+    1..1
+ok 49 - the remote-address sampler
+  ---
+  duration_ms: 1.8581
+  type: 'suite'
+  ...
+# Subtest: the pause-switch helper refuses before touching anything
+    # Subtest: without the lane's grant no statement runs
+    ok 1 - without the lane's grant no statement runs
+      ---
+      duration_ms: 3.3959
+      ...
+    1..1
+ok 50 - the pause-switch helper refuses before touching anything
+  ---
+  duration_ms: 3.7409
+  type: 'suite'
+  ...
+# Subtest: the owned queue seed
+    # Subtest: refuses a message for a community the current test did not create
+    ok 1 - refuses a message for a community the current test did not create
+      ---
+      duration_ms: 1.1222
+      ...
+    1..1
+ok 51 - the owned queue seed
+  ---
+  duration_ms: 1.4822
+  type: 'suite'
+  ...
+# Subtest: the SMTP fault proxy
+    # Subtest: passes a whole conversation through and records verbs only
+    ok 1 - passes a whole conversation through and records verbs only
+      ---
+      duration_ms: 598.0904
+      ...
+    # Subtest: answers a scripted rejection itself; nothing reaches the upstream body
+    ok 2 - answers a scripted rejection itself; nothing reaches the upstream body
+      ---
+      duration_ms: 99.0851
+      ...
+    # Subtest: deliver-then-drop: the upstream accepts the body, the client never sees the reply
+    ok 3 - deliver-then-drop: the upstream accepts the body, the client never sees the reply
+      ---
+      duration_ms: 53.2088
+      ...
+    # Subtest: hold-after-data: the body never reaches the upstream and the client hears nothing
+    ok 4 - hold-after-data: the body never reaches the upstream and the client hears nothing
+      ---
+      duration_ms: 277.7009
+      ...
+    # Subtest: hold-until-released: the body waits, then reaches the upstream, and the client hears the reply
+    ok 5 - hold-until-released: the body waits, then reaches the upstream, and the client hears the reply
+      ---
+      duration_ms: 262.5854
+      ...
+    # Subtest: a later script applies to the next connection only
+    ok 6 - a later script applies to the next connection only
+      ---
+      duration_ms: 25.4184
+      ...
+    # Subtest: cannot forward anywhere but loopback: the host is a constant, and the public entry needs a verified environment
+    ok 7 - cannot forward anywhere but loopback: the host is a constant, and the public entry needs a verified environment
+      ---
+      duration_ms: 12.0327
+      ...
+    1..7
+ok 52 - the SMTP fault proxy
+  ---
+  duration_ms: 1329.93
+  type: 'suite'
+  ...
+# (node:14508) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: backoff schedule
+    # Subtest: is 5 minutes after attempt 1 and 30 minutes after attempt 2 (no jitter at rng=0.5)
+    ok 1 - is 5 minutes after attempt 1 and 30 minutes after attempt 2 (no jitter at rng=0.5)
+      ---
+      duration_ms: 2.4424
+      ...
+    # Subtest: keeps jitter within ±20%
+    ok 2 - keeps jitter within ±20%
+      ---
+      duration_ms: 0.9966
+      ...
+    # Subtest: refuses a schedule for a 3rd (terminal) attempt
+    ok 3 - refuses a schedule for a 3rd (terminal) attempt
+      ---
+      duration_ms: 1.8426
+      ...
+    # Subtest: nextRetryAt adds the jittered delay to now
+    ok 4 - nextRetryAt adds the jittered delay to now
+      ---
+      duration_ms: 0.8939
+      ...
+    1..4
+ok 53 - backoff schedule
+  ---
+  duration_ms: 9.8134
+  type: 'suite'
+  ...
+# Subtest: failure classification
+    # Subtest: permanent → dead with that code, never retried
+    ok 1 - permanent → dead with that code, never retried
+      ---
+      duration_ms: 8.4363
+      ...
+    # Subtest: adapter_misconfigured → halt
+    ok 2 - adapter_misconfigured → halt
+      ---
+      duration_ms: 0.5326
+      ...
+    # Subtest: ordinary transient retries while attempts remain
+    ok 3 - ordinary transient retries while attempts remain
+      ---
+      duration_ms: 0.8856
+      ...
+    # Subtest: transient on the last attempt → dead/retries_exhausted, no 4th
+    ok 4 - transient on the last attempt → dead/retries_exhausted, no 4th
+      ---
+      duration_ms: 13.2689
+      ...
+    # Subtest: ambiguous + provider idempotency → retry (same key reused)
+    ok 5 - ambiguous + provider idempotency → retry (same key reused)
+      ---
+      duration_ms: 1.9388
+      ...
+    # Subtest: ambiguous + provider idempotency at the cap → dead/retries_exhausted
+    ok 6 - ambiguous + provider idempotency at the cap → dead/retries_exhausted
+      ---
+      duration_ms: 1.1871
+      ...
+    # Subtest: ambiguous + NO idempotency → dead/outcome_unknown, never retried, even on attempt 1
+    ok 7 - ambiguous + NO idempotency → dead/outcome_unknown, never retried, even on attempt 1
+      ---
+      duration_ms: 1.4768
+      ...
+    # Subtest: non-ambiguous transient + NO idempotency still retries (only ambiguity blocks retry)
+    ok 8 - non-ambiguous transient + NO idempotency still retries (only ambiguity blocks retry)
+      ---
+      duration_ms: 1.1324
+      ...
+    1..8
+ok 54 - failure classification
+  ---
+  duration_ms: 30.8098
+  type: 'suite'
+  ...
+# (node:10368) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: isEmailEvaluationEvent
+    # Subtest: evaluation events always file an email row
+    ok 1 - evaluation events always file an email row
+      ---
+      duration_ms: 1.832
+      ...
+    # Subtest: rejections, redemptions, collection lifecycle and unwatched actions file no email row
+    ok 2 - rejections, redemptions, collection lifecycle and unwatched actions file no email row
+      ---
+      duration_ms: 0.5304
+      ...
+    1..2
+ok 55 - isEmailEvaluationEvent
+  ---
+  duration_ms: 5.8504
+  type: 'suite'
+  ...
+# Subtest: emailDedupeKey
+    # Subtest: creation and approval for one member share one confirmation key
+    ok 1 - creation and approval for one member share one confirmation key
+      ---
+      duration_ms: 1.0752
+      ...
+    # Subtest: officer notices and non-evaluation events carry no dedupe key
+    ok 2 - officer notices and non-evaluation events carry no dedupe key
+      ---
+      duration_ms: 0.4756
+      ...
+    # Subtest: the confirmation key satisfies the delivery-table dedupe format
+    ok 3 - the confirmation key satisfies the delivery-table dedupe format
+      ---
+      duration_ms: 0.9386
+      ...
+    1..3
+ok 56 - emailDedupeKey
+  ---
+  duration_ms: 3.243
+  type: 'suite'
+  ...
+# (node:24832) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: escapeHtml
+    # Subtest: escapes the five dangerous characters
+    ok 1 - escapes the five dangerous characters
+      ---
+      duration_ms: 5.7486
+      ...
+    # Subtest: leaves safe text alone
+    ok 2 - leaves safe text alone
+      ---
+      duration_ms: 0.6211
+      ...
+    # Subtest: handles empty string
+    ok 3 - handles empty string
+      ---
+      duration_ms: 0.8437
+      ...
+    1..3
+ok 57 - escapeHtml
+  ---
+  duration_ms: 10.3652
+  type: 'suite'
+  ...
+# Subtest: hasTemplate
+    # Subtest: returns true for the four email-evaluation events
+    ok 1 - returns true for the four email-evaluation events
+      ---
+      duration_ms: 0.6393
+      ...
+    # Subtest: returns false for non-template events
+    ok 2 - returns false for non-template events
+      ---
+      duration_ms: 0.6336
+      ...
+    1..2
+ok 58 - hasTemplate
+  ---
+  duration_ms: 1.8233
+  type: 'suite'
+  ...
+# Subtest: renderTemplate — subjects
+    # Subtest: member.create: membership confirmation subject
+    ok 1 - member.create: membership confirmation subject
+      ---
+      duration_ms: 1.7447
+      ...
+    # Subtest: member.approve_join: approval subject
+    ok 2 - member.approve_join: approval subject
+      ---
+      duration_ms: 0.7831
+      ...
+    # Subtest: officer_invitation.accept: appointment subject
+    ok 3 - officer_invitation.accept: appointment subject
+      ---
+      duration_ms: 0.9051
+      ...
+    # Subtest: officer_term.end: term end subject
+    ok 4 - officer_term.end: term end subject
+      ---
+      duration_ms: 2.5591
+      ...
+    # Subtest: returns null for unsupported event types
+    ok 5 - returns null for unsupported event types
+      ---
+      duration_ms: 0.8328
+      ...
+    1..5
+ok 59 - renderTemplate — subjects
+  ---
+  duration_ms: 8.069
+  type: 'suite'
+  ...
+# Subtest: renderTemplate — HTML content
+    # Subtest: member.create HTML contains community name and member code
+    ok 1 - member.create HTML contains community name and member code
+      ---
+      duration_ms: 0.5938
+      ...
+    # Subtest: officer_invitation.accept HTML contains role and community
+    ok 2 - officer_invitation.accept HTML contains role and community
+      ---
+      duration_ms: 0.4564
+      ...
+    1..2
+ok 60 - renderTemplate — HTML content
+  ---
+  duration_ms: 1.4831
+  type: 'suite'
+  ...
+# Subtest: renderTemplate — plain-text alternatives
+    # Subtest: member.create text contains the same essential info as HTML
+    ok 1 - member.create text contains the same essential info as HTML
+      ---
+      duration_ms: 2.1044
+      ...
+    # Subtest: officer_term.end text contains role and community
+    ok 2 - officer_term.end text contains role and community
+      ---
+      duration_ms: 0.3755
+      ...
+    # Subtest: every template produces a non-empty text alternative
+    ok 3 - every template produces a non-empty text alternative
+      ---
+      duration_ms: 0.5148
+      ...
+    1..3
+ok 61 - renderTemplate — plain-text alternatives
+  ---
+  duration_ms: 5.2866
+  type: 'suite'
+  ...
+# Subtest: HTML escaping — community names
+    # Subtest: escapes <script>alert(1)</script>
+    ok 1 - escapes <script>alert(1)</script>
+      ---
+      duration_ms: 0.5601
+      ...
+    # Subtest: escapes <img src=x onerror=alert(1)>
+    ok 2 - escapes <img src=x onerror=alert(1)>
+      ---
+      duration_ms: 0.7088
+      ...
+    # Subtest: escapes "'><svg onload=alert(1)>
+    ok 3 - escapes "'><svg onload=alert(1)>
+      ---
+      duration_ms: 0.3868
+      ...
+    1..3
+ok 62 - HTML escaping — community names
+  ---
+  duration_ms: 2.0941
+  type: 'suite'
+  ...
+# Subtest: HTML escaping — member codes with HTML
+    # Subtest: escapes HTML in member_code
+    ok 1 - escapes HTML in member_code
+      ---
+      duration_ms: 0.3808
+      ...
+    1..1
+ok 63 - HTML escaping — member codes with HTML
+  ---
+  duration_ms: 0.6039
+  type: 'suite'
+  ...
+# Subtest: HTML escaping — quotes and apostrophes
+    # Subtest: handles names with quotes safely
+    ok 1 - handles names with quotes safely
+      ---
+      duration_ms: 0.398
+      ...
+    1..1
+ok 64 - HTML escaping — quotes and apostrophes
+  ---
+  duration_ms: 0.6182
+  type: 'suite'
+  ...
+# Subtest: newline handling
+    # Subtest: newlines in community name do not break HTML structure
+    ok 1 - newlines in community name do not break HTML structure
+      ---
+      duration_ms: 0.5276
+      ...
+    1..1
+ok 65 - newline handling
+  ---
+  duration_ms: 0.7699
+  type: 'suite'
+  ...
+# Subtest: long user-provided names
+    # Subtest: renders without error for a very long community name
+    ok 1 - renders without error for a very long community name
+      ---
+      duration_ms: 0.8306
+      ...
+    # Subtest: renders without error for a very long officer role
+    ok 2 - renders without error for a very long officer role
+      ---
+      duration_ms: 1.3815
+      ...
+    1..2
+ok 66 - long user-provided names
+  ---
+  duration_ms: 3.3382
+  type: 'suite'
+  ...
+# Subtest: empty or missing values
+    # Subtest: handles missing community_name gracefully
+    ok 1 - handles missing community_name gracefully
+      ---
+      duration_ms: 1.5718
+      ...
+    # Subtest: handles missing member_code gracefully
+    ok 2 - handles missing member_code gracefully
+      ---
+      duration_ms: 0.7738
+      ...
+    # Subtest: handles missing officer_role gracefully
+    ok 3 - handles missing officer_role gracefully
+      ---
+      duration_ms: 7.8948
+      ...
+    # Subtest: handles completely empty payload
+    ok 4 - handles completely empty payload
+      ---
+      duration_ms: 1.1468
+      ...
+    1..4
+ok 67 - empty or missing values
+  ---
+  duration_ms: 16.229
+  type: 'suite'
+  ...
+# Subtest: content safety — no forbidden PII
+    # Subtest: membership confirmation never claims the address is verified
+    ok 1 - membership confirmation never claims the address is verified
+      ---
+      duration_ms: 0.8221
+      ...
+    # Subtest: no template contains recipient addresses in the body
+    ok 2 - no template contains recipient addresses in the body
+      ---
+      duration_ms: 4.4472
+      ...
+    # Subtest: internal IDs never appear in rendered output
+    ok 3 - internal IDs never appear in rendered output
+      ---
+      duration_ms: 1.1676
+      ...
+    1..3
+ok 68 - content safety — no forbidden PII
+  ---
+  duration_ms: 8.3315
+  type: 'suite'
+  ...
+# Subtest: plain-text adversarial safety
+    # Subtest: script tags appear as literal text, not markup
+    ok 1 - script tags appear as literal text, not markup
+      ---
+      duration_ms: 5.451
+      ...
+    # Subtest: img onerror appears as literal text
+    ok 2 - img onerror appears as literal text
+      ---
+      duration_ms: 0.5344
+      ...
+    1..2
+ok 69 - plain-text adversarial safety
+  ---
+  duration_ms: 6.9525
+  type: 'suite'
+  ...
+# Subtest: buildEmailMessage
+    # Subtest: uses templates when event context is provided
+    ok 1 - uses templates when event context is provided
+      ---
+      duration_ms: 0.7311
+      ...
+    # Subtest: falls back to placeholder when context is null
+    ok 2 - falls back to placeholder when context is null
+      ---
+      duration_ms: 0.4285
+      ...
+    # Subtest: falls back to placeholder for unknown event types
+    ok 3 - falls back to placeholder for unknown event types
+      ---
+      duration_ms: 0.4112
+      ...
+    1..3
+ok 70 - buildEmailMessage
+  ---
+  duration_ms: 2.0911
+  type: 'suite'
+  ...
+# Subtest: email request validation
+    # Subtest: member.create: passes adapter validation
+    ok 1 - member.create: passes adapter validation
+      ---
+      duration_ms: 2.2825
+      ...
+    # Subtest: member.approve_join: passes adapter validation
+    ok 2 - member.approve_join: passes adapter validation
+      ---
+      duration_ms: 1.5098
+      ...
+    # Subtest: officer_invitation.accept: passes adapter validation
+    ok 3 - officer_invitation.accept: passes adapter validation
+      ---
+      duration_ms: 0.4394
+      ...
+    # Subtest: officer_term.end: passes adapter validation
+    ok 4 - officer_term.end: passes adapter validation
+      ---
+      duration_ms: 0.3547
+      ...
+    # Subtest: placeholder message passes validation
+    ok 5 - placeholder message passes validation
+      ---
+      duration_ms: 0.5668
+      ...
+    # Subtest: adversarial-name template passes validation
+    ok 6 - adversarial-name template passes validation
+      ---
+      duration_ms: 0.9333
+      ...
+    1..6
+ok 71 - email request validation
+  ---
+  duration_ms: 7.3176
+  type: 'suite'
+  ...
+# Subtest: placeholder message backward compatibility
+    # Subtest: placeholder has no HTML part
+    ok 1 - placeholder has no HTML part
+      ---
+      duration_ms: 0.77
+      ...
+    # Subtest: placeholder subject is unchanged
+    ok 2 - placeholder subject is unchanged
+      ---
+      duration_ms: 0.3315
+      ...
+    # Subtest: placeholder puts address only in to, never in body
+    ok 3 - placeholder puts address only in to, never in body
+      ---
+      duration_ms: 0.3968
+      ...
+    1..3
+ok 72 - placeholder message backward compatibility
+  ---
+  duration_ms: 2.9148
+  type: 'suite'
+  ...
+# (node:10528) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: what each action does
+    # Subtest: member.create: an event, and a skipped email row when no account is linked
+    ok 1 - member.create: an event, and a skipped email row when no account is linked
+      ---
+      duration_ms: 11.517
+      ...
+    # Subtest: member.create: one in-app delivery when the member does have an account
+    ok 2 - member.create: one in-app delivery when the member does have an account
+      ---
+      duration_ms: 1.6187
+      ...
+    # Subtest: member.approve_join keeps its M13.1 payload keys and recipient
+    ok 3 - member.approve_join keeps its M13.1 payload keys and recipient
+      ---
+      duration_ms: 1.8493
+      ...
+    # Subtest: R1: member.join_via_invite tells the officers who admit members, never the joiner
+    ok 4 - R1: member.join_via_invite tells the officers who admit members, never the joiner
+      ---
+      duration_ms: 4.8275
+      ...
+    # Subtest: member.reject_join: an event with the requester's NAME only, and no email row
+    ok 5 - member.reject_join: an event with the requester's NAME only, and no email row
+      ---
+      duration_ms: 2.5025
+      ...
+    # Subtest: officer_invitation.accept and officer_term.end: one in-app delivery to the officer whose term it is
+    ok 6 - officer_invitation.accept and officer_term.end: one in-app delivery to the officer whose term it is
+      ---
+      duration_ms: 3.0538
+      ...
+    # Subtest: collection.publish: unchanged — audience members who have accounts
+    ok 7 - collection.publish: unchanged — audience members who have accounts
+      ---
+      duration_ms: 2.3091
+      ...
+    1..7
+ok 73 - what each action does
+  ---
+  duration_ms: 40.5725
+  type: 'suite'
+  ...
+# Subtest: what is skipped, and that skipping touches nothing
+    # Subtest: a system actor on a membership action
+    ok 1 - a system actor on a membership action
+      ---
+      duration_ms: 2.7063
+      ...
+    # Subtest: a message older than 72 hours
+    ok 2 - a message older than 72 hours
+      ---
+      duration_ms: 1.3982
+      ...
+    # Subtest: an unwatched action, and a malformed message — neither throws
+    ok 3 - an unwatched action, and a malformed message — neither throws
+      ---
+      duration_ms: 2.0194
+      ...
+    # Subtest: an imported or migrated member: no event, no delivery
+    ok 4 - an imported or migrated member: no event, no delivery
+      ---
+      duration_ms: 3.689
+      ...
+    # Subtest: an archived or merged member (decision record F-3): no event, no delivery
+    ok 5 - an archived or merged member (decision record F-3): no event, no delivery
+      ---
+      duration_ms: 3.8441
+      ...
+    # Subtest: but a pending-approval joiner IS available: officers must still be told someone applied
+    ok 6 - but a pending-approval joiner IS available: officers must still be told someone applied
+      ---
+      duration_ms: 0.9904
+      ...
+    # Subtest: a member who no longer exists (rejected or deleted before processing)
+    ok 7 - a member who no longer exists (rejected or deleted before processing)
+      ---
+      duration_ms: 1.6731
+      ...
+    1..7
+ok 74 - what is skipped, and that skipping touches nothing
+  ---
+  duration_ms: 18.0382
+  type: 'suite'
+  ...
+# Subtest: P4 email rows: evaluation events file one, everything else files none
+    # Subtest: eligible membership confirmations: pending with address, assurance and the shared dedupe key
+    ok 1 - eligible membership confirmations: pending with address, assurance and the shared dedupe key
+      ---
+      duration_ms: 1.6216
+      ...
+    # Subtest: ineligible evaluations: skipped with a stable reason and no stored address
+    ok 2 - ineligible evaluations: skipped with a stable reason and no stored address
+      ---
+      duration_ms: 3.1728
+      ...
+    # Subtest: non-evaluation events: no email row and no eligibility call
+    ok 3 - non-evaluation events: no email row and no eligibility call
+      ---
+      duration_ms: 1.9468
+      ...
+    # Subtest: every in-app delivery the processor inserts is still in_app
+    ok 4 - every in-app delivery the processor inserts is still in_app
+      ---
+      duration_ms: 15.8373
+      ...
+    # Subtest: no event payload contains an address, for any action, even when one is handed to it
+    ok 5 - no event payload contains an address, for any action, even when one is handed to it
+      ---
+      duration_ms: 2.6153
+      ...
+    1..5
+ok 75 - P4 email rows: evaluation events file one, everything else files none
+  ---
+  duration_ms: 26.2766
+  type: 'suite'
+  ...
+# Subtest: replay safety
+    # Subtest: the event insert and the delivery insert are both idempotent statements
+    ok 1 - the event insert and the delivery insert are both idempotent statements
+      ---
+      duration_ms: 1.5315
+      ...
+    # Subtest: processing the same message twice issues the same statements twice (the database dedupes)
+    ok 2 - processing the same message twice issues the same statements twice (the database dedupes)
+      ---
+      duration_ms: 6.1786
+      ...
+    1..2
+ok 76 - replay safety
+  ---
+  duration_ms: 11.7676
+  type: 'suite'
+  ...
+# Subtest: P8 processor skip decisions (moved from the sender-to-Mailpit integration file)
+    # Subtest: E1: unknown event type produces no email delivery row
+    ok 1 - E1: unknown event type produces no email delivery row
+      ---
+      duration_ms: 1.4015
+      ...
+    # Subtest: E2: invalid/malformed message is skipped, not thrown
+    ok 2 - E2: invalid/malformed message is skipped, not thrown
+      ---
+      duration_ms: 1.0089
+      ...
+    # Subtest: E3: empty payload message is skipped
+    ok 3 - E3: empty payload message is skipped
+      ---
+      duration_ms: 9.3871
+      ...
+    # Subtest: E8: event too old (>72h) is skipped by the processor
+    ok 4 - E8: event too old (>72h) is skipped by the processor
+      ---
+      duration_ms: 4.0609
+      ...
+    1..4
+ok 77 - P8 processor skip decisions (moved from the sender-to-Mailpit integration file)
+  ---
+  duration_ms: 18.8207
+  type: 'suite'
+  ...
+# (node:9232) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: reserveEmailAttempt
+    # Subtest: maps a granted reservation
+    ok 1 - maps a granted reservation
+      ---
+      duration_ms: 6.7828
+      ...
+    # Subtest: maps an address_limited result
+    ok 2 - maps an address_limited result
+      ---
+      duration_ms: 1.311
+      ...
+    # Subtest: maps a community_deferred result with retry_at
+    ok 3 - maps a community_deferred result with retry_at
+      ---
+      duration_ms: 1.2097
+      ...
+    # Subtest: converts a Date retry_at to an ISO string
+    ok 4 - converts a Date retry_at to an ISO string
+      ---
+      duration_ms: 2.5668
+      ...
+    # Subtest: maps a backlog_full result
+    ok 5 - maps a backlog_full result
+      ---
+      duration_ms: 0.6464
+      ...
+    # Subtest: maps an address_suppressed result (P9-1)
+    ok 6 - maps an address_suppressed result (P9-1)
+      ---
+      duration_ms: 0.6089
+      ...
+    # Subtest: maps a provider_daily_limited result (P9-3 L4)
+    ok 7 - maps a provider_daily_limited result (P9-3 L4)
+      ---
+      duration_ms: 0.9001
+      ...
+    # Subtest: maps a provider_rate_limited result (P9-3 L5)
+    ok 8 - maps a provider_rate_limited result (P9-3 L5)
+      ---
+      duration_ms: 0.8493
+      ...
+    # Subtest: throws when the function returns no row
+    ok 9 - throws when the function returns no row
+      ---
+      duration_ms: 2.6543
+      ...
+    1..9
+ok 78 - reserveEmailAttempt
+  ---
+  duration_ms: 38.5738
+  type: 'suite'
+  ...
+# Subtest: getSendLimits
+    # Subtest: maps the approved transactional configuration values
+    ok 1 - maps the approved transactional configuration values
+      ---
+      duration_ms: 2.3739
+      ...
+    # Subtest: maps the zero bulk caps
+    ok 2 - maps the zero bulk caps
+      ---
+      duration_ms: 12.8634
+      ...
+    # Subtest: throws when the function returns no row
+    ok 3 - throws when the function returns no row
+      ---
+      duration_ms: 0.5954
+      ...
+    1..3
+ok 79 - getSendLimits
+  ---
+  duration_ms: 17.6911
+  type: 'suite'
+  ...
+# Subtest: purgeStaleSendAttempts
+    # Subtest: returns the number of purged rows
+    ok 1 - returns the number of purged rows
+      ---
+      duration_ms: 1.0978
+      ...
+    # Subtest: returns 0 when nothing was purged
+    ok 2 - returns 0 when nothing was purged
+      ---
+      duration_ms: 1.9059
+      ...
+    # Subtest: returns 0 on an empty result
+    ok 3 - returns 0 on an empty result
+      ---
+      duration_ms: 0.6224
+      ...
+    1..3
+ok 80 - purgeStaleSendAttempts
+  ---
+  duration_ms: 10.5552
+  type: 'suite'
+  ...
+# (node:23184) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the watched actions
+    # Subtest: are exactly the ten approved ones (M13.3: + remind, remind_unpaid, publish_remind_unpaid)
+    ok 1 - are exactly the ten approved ones (M13.3: + remind, remind_unpaid, publish_remind_unpaid)
+      ---
+      duration_ms: 7.8178
+      ...
+    # Subtest: do not include restore, archive or update, which must never notify
+    ok 2 - do not include restore, archive or update, which must never notify
+      ---
+      duration_ms: 0.8279
+      ...
+    # Subtest: event keys are action:object_id for most actions, action:audit_log_id for reminders
+    ok 3 - event keys are action:object_id for most actions, action:audit_log_id for reminders
+      ---
+      duration_ms: 1.3226
+      ...
+    1..3
+ok 81 - the watched actions
+  ---
+  duration_ms: 16.4994
+  type: 'suite'
+  ...
+# Subtest: parseAuditMessage: a queued message is untrusted input
+    # Subtest: accepts a well-formed message
+    ok 1 - accepts a well-formed message
+      ---
+      duration_ms: 1.4342
+      ...
+    # Subtest: rejects, without throwing, everything that is not a usable message
+    ok 2 - rejects, without throwing, everything that is not a usable message
+      ---
+      duration_ms: 3.5793
+      ...
+    # Subtest: copies out only the fields it uses
+    ok 3 - copies out only the fields it uses
+      ---
+      duration_ms: 0.7995
+      ...
+    # Subtest: treats a non-object after_state or before_state as absent
+    ok 4 - treats a non-object after_state or before_state as absent
+      ---
+      duration_ms: 4.3087
+      ...
+    # Subtest: drops an actor_user_id that is not a uuid
+    ok 5 - drops an actor_user_id that is not a uuid
+      ---
+      duration_ms: 2.9928
+      ...
+    1..5
+ok 82 - parseAuditMessage: a queued message is untrusted input
+  ---
+  duration_ms: 16.5942
+  type: 'suite'
+  ...
+# Subtest: admission
+    # Subtest: admits each watched action from a person actor
+    ok 1 - admits each watched action from a person actor
+      ---
+      duration_ms: 11.4832
+      ...
+    # Subtest: ignores an unwatched action
+    ok 2 - ignores an unwatched action
+      ---
+      duration_ms: 1.2962
+      ...
+    # Subtest: ignores a system, contributor or staff actor on every membership action
+    ok 3 - ignores a system, contributor or staff actor on every membership action
+      ---
+      duration_ms: 1.3696
+      ...
+    # Subtest: but a system actor on collection.publish or an officer-access change is still admitted
+    ok 4 - but a system actor on collection.publish or an officer-access change is still admitted
+      ---
+      duration_ms: 0.8179
+      ...
+    # Subtest: drops a message older than 72 hours, and keeps one just inside it
+    ok 5 - drops a message older than 72 hours, and keeps one just inside it
+      ---
+      duration_ms: 2.1503
+      ...
+    1..5
+ok 83 - admission
+  ---
+  duration_ms: 19.2858
+  type: 'suite'
+  ...
+# Subtest: isImportedMember
+    # Subtest: refuses an imported or migrated member and accepts an ordinary one
+    ok 1 - refuses an imported or migrated member and accepts an ordinary one
+      ---
+      duration_ms: 0.4235
+      ...
+    1..1
+ok 84 - isImportedMember
+  ---
+  duration_ms: 0.6392
+  type: 'suite'
+  ...
+# Subtest: recipientPlan
+    # Subtest: tells the right in-app audience for each action
+    ok 1 - tells the right in-app audience for each action
+      ---
+      duration_ms: 1.3864
+      ...
+    # Subtest: R1: an invite joiner is never a recipient; the officers who admit members are
+    ok 2 - R1: an invite joiner is never a recipient; the officers who admit members are
+      ---
+      duration_ms: 0.3931
+      ...
+    # Subtest: a rejected requester has no in-app recipient (they have no account)
+    ok 3 - a rejected requester has no in-app recipient (they have no account)
+      ---
+      duration_ms: 0.327
+      ...
+    # Subtest: an unknown action has nobody
+    ok 4 - an unknown action has nobody
+      ---
+      duration_ms: 0.3075
+      ...
+    1..4
+ok 85 - recipientPlan
+  ---
+  duration_ms: 3.13
+  type: 'suite'
+  ...
+# Subtest: narrowRequester
+    # Subtest: returns exactly three fields and drops everything else, even if it arrived
+    ok 1 - returns exactly three fields and drops everything else, even if it arrived
+      ---
+      duration_ms: 1.5655
+      ...
+    # Subtest: believes an address only if the requester typed it themselves
+    ok 2 - believes an address only if the requester typed it themselves
+      ---
+      duration_ms: 3.8611
+      ...
+    # Subtest: clamps lengths and tolerates garbage
+    ok 3 - clamps lengths and tolerates garbage
+      ---
+      duration_ms: 0.8082
+      ...
+    1..3
+ok 86 - narrowRequester
+  ---
+  duration_ms: 7.6164
+  type: 'suite'
+  ...
+# Subtest: buildPayload: names, codes and slugs only
+    # Subtest: has a fixed key set per action
+    ok 1 - has a fixed key set per action
+      ---
+      duration_ms: 2.6654
+      ...
+    # Subtest: has no key that could carry a contact detail or a note, for any action
+    ok 2 - has no key that could carry a contact detail or a note, for any action
+      ---
+      duration_ms: 1.8961
+      ...
+    # Subtest: cannot be made to carry an address by a hostile fact object
+    ok 3 - cannot be made to carry an address by a hostile fact object
+      ---
+      duration_ms: 0.8266
+      ...
+    # Subtest: redacts an email address typed as a name, and clamps long values
+    ok 4 - redacts an email address typed as a name, and clamps long values
+      ---
+      duration_ms: 2.1227
+      ...
+    # Subtest: copes with absent facts
+    ok 5 - copes with absent facts
+      ---
+      duration_ms: 0.4907
+      ...
+    1..5
+ok 87 - buildPayload: names, codes and slugs only
+  ---
+  duration_ms: 10.3364
+  type: 'suite'
+  ...
+# (node:33712) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: send-claim constants and pure helpers
+    # Subtest: fixes the five-minute lease and the three-attempt cap
+    ok 1 - fixes the five-minute lease and the three-attempt cap
+      ---
+      duration_ms: 1.8739
+      ...
+    # Subtest: treats sent, dead and skipped as terminal and nothing else as terminal
+    ok 2 - treats sent, dead and skipped as terminal and nothing else as terminal
+      ---
+      duration_ms: 0.5515
+      ...
+    # Subtest: reads lease expiry off the timestamp, not the clock
+    ok 3 - reads lease expiry off the timestamp, not the clock
+      ---
+      duration_ms: 2.0031
+      ...
+    1..3
+ok 88 - send-claim constants and pure helpers
+  ---
+  duration_ms: 9.2779
+  type: 'suite'
+  ...
+# Subtest: claim wrappers
+    # Subtest: maps a successful by-id claim, passing only the id and lease
+    ok 1 - maps a successful by-id claim, passing only the id and lease
+      ---
+      duration_ms: 1.9743
+      ...
+    # Subtest: maps a refused claim without inventing a token
+    ok 2 - maps a refused claim without inventing a token
+      ---
+      duration_ms: 0.7422
+      ...
+    # Subtest: claims next oldest-first and reports the delivery id
+    ok 3 - claims next oldest-first and reports the delivery id
+      ---
+      duration_ms: 0.8913
+      ...
+    # Subtest: settles with the token and maps the outcome
+    ok 4 - settles with the token and maps the outcome
+      ---
+      duration_ms: 4.291
+      ...
+    # Subtest: reports a stale token as unsettled, never as an error
+    ok 5 - reports a stale token as unsettled, never as an error
+      ---
+      duration_ms: 1.3483
+      ...
+    # Subtest: recovers an expired lease and refuses a live one
+    ok 6 - recovers an expired lease and refuses a live one
+      ---
+      duration_ms: 1.4252
+      ...
+    1..6
+ok 89 - claim wrappers
+  ---
+  duration_ms: 16.5002
+  type: 'suite'
+  ...
+# (node:28440) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: placeholder message
+    # Subtest: is a valid email request
+    ok 1 - is a valid email request
+      ---
+      duration_ms: 2.2246
+      ...
+    # Subtest: puts the address only in `to`, never in the subject or body
+    ok 2 - puts the address only in `to`, never in the subject or body
+      ---
+      duration_ms: 0.5269
+      ...
+    # Subtest: carries no HTML part (templates are P7)
+    ok 3 - carries no HTML part (templates are P7)
+      ---
+      duration_ms: 1.4017
+      ...
+    1..3
+ok 90 - placeholder message
+  ---
+  duration_ms: 6.6962
+  type: 'suite'
+  ...
+# (node:33508) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: runSenderTick — pause switch
+    # Subtest: claims nothing and never calls the provider when email_sending_enabled is false
+    ok 1 - claims nothing and never calls the provider when email_sending_enabled is false
+      ---
+      duration_ms: 19.7307
+      ...
+    # Subtest: attempts a claim in a transaction when email_sending_enabled is true
+    ok 2 - attempts a claim in a transaction when email_sending_enabled is true
+      ---
+      duration_ms: 3.4487
+      ...
+    # Subtest: still blocks delivery when allowSend=false, even if the switch is on
+    ok 3 - still blocks delivery when allowSend=false, even if the switch is on
+      ---
+      duration_ms: 1.0329
+      ...
+    1..3
+ok 91 - runSenderTick — pause switch
+  ---
+  duration_ms: 28.4537
+  type: 'suite'
+  ...
+# Subtest: sender safety invariants (no database, no SMTP)
+    # Subtest: S2: the Mailpit adapter refuses a non-loopback host
+    ok 1 - S2: the Mailpit adapter refuses a non-loopback host
+      ---
+      duration_ms: 2.0631
+      ...
+    # Subtest: S3: the adapter rejects an empty recipient before connecting
+    ok 2 - S3: the adapter rejects an empty recipient before connecting
+      ---
+      duration_ms: 2.6623
+      ...
+    1..2
+ok 92 - sender safety invariants (no database, no SMTP)
+  ---
+  duration_ms: 6.0168
+  type: 'suite'
+  ...
+# Subtest: sendOneClaimed — non-granted reservations make no provider call
+    # Subtest: maps community_deferred to outcome "deferred" with its retry time, and never calls the provider
+    ok 1 - maps community_deferred to outcome "deferred" with its retry time, and never calls the provider
+      ---
+      duration_ms: 3.679
+      ...
+    # Subtest: maps provider_daily_limited to outcome "deferred" with its retry time, and never calls the provider
+    ok 2 - maps provider_daily_limited to outcome "deferred" with its retry time, and never calls the provider
+      ---
+      duration_ms: 22.7904
+      ...
+    # Subtest: maps provider_rate_limited to outcome "deferred" with its retry time, and never calls the provider
+    ok 3 - maps provider_rate_limited to outcome "deferred" with its retry time, and never calls the provider
+      ---
+      duration_ms: 4.8456
+      ...
+    # Subtest: maps address_suppressed to outcome "skipped", and never calls the provider
+    ok 4 - maps address_suppressed to outcome "skipped", and never calls the provider
+      ---
+      duration_ms: 4.4724
+      ...
+    # Subtest: maps address_limited to outcome "skipped", and never calls the provider
+    ok 5 - maps address_limited to outcome "skipped", and never calls the provider
+      ---
+      duration_ms: 2.4227
+      ...
+    # Subtest: maps backlog_full to outcome "skipped", and never calls the provider
+    ok 6 - maps backlog_full to outcome "skipped", and never calls the provider
+      ---
+      duration_ms: 0.9481
+      ...
+    1..6
+ok 93 - sendOneClaimed — non-granted reservations make no provider call
+  ---
+  duration_ms: 41.1404
+  type: 'suite'
+  ...
+# (node:16560) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: the three failures stay apart
+    # Subtest: success: processed, then acknowledged, then logged
+    ok 1 - success: processed, then acknowledged, then logged
+      ---
+      duration_ms: 19.0444
+      ...
+    # Subtest: a processing failure that is the message's own fault waits the ordinary timeout and counts as failed
+    ok 2 - a processing failure that is the message's own fault waits the ordinary timeout and counts as failed
+      ---
+      duration_ms: 1.8161
+      ...
+    # Subtest: a lock timeout during processing backs off, so a held lock does not use up the attempts
+    ok 3 - a lock timeout during processing backs off, so a held lock does not use up the attempts
+      ---
+      duration_ms: 1.119
+      ...
+    # Subtest: a failed delay is logged and changes nothing else: the visibility timeout still brings the message back
+    ok 4 - a failed delay is logged and changes nothing else: the visibility timeout still brings the message back
+      ---
+      duration_ms: 1.1653
+      ...
+    # Subtest: an acknowledgement failure after processing is not a processing failure, and marks the message
+    ok 5 - an acknowledgement failure after processing is not a processing failure, and marks the message
+      ---
+      duration_ms: 1.3694
+      ...
+    # Subtest: if the mark fails too it is only logged: the next read processes again, which is idempotent
+    ok 6 - if the mark fails too it is only logged: the next read processes again, which is idempotent
+      ---
+      duration_ms: 1.389
+      ...
+    # Subtest: a marked message is never processed again: only the acknowledgement is retried
+    ok 7 - a marked message is never processed again: only the acknowledgement is retried
+      ---
+      duration_ms: 1.3209
+      ...
+    # Subtest: a marked message past the poison threshold is still acknowledged, never dead-lettered
+    ok 8 - a marked message past the poison threshold is still acknowledged, never dead-lettered
+      ---
+      duration_ms: 1.0676
+      ...
+    # Subtest: an unmarked message past the threshold is dead-lettered, without being processed
+    ok 9 - an unmarked message past the threshold is dead-lettered, without being processed
+      ---
+      duration_ms: 1.5789
+      ...
+    # Subtest: an archive that found no row counts nothing
+    ok 10 - an archive that found no row counts nothing
+      ---
+      duration_ms: 1.7757
+      ...
+    1..10
+ok 94 - the three failures stay apart
+  ---
+  duration_ms: 36.6647
+  type: 'suite'
+  ...
+# Subtest: archive and acknowledgement failures are bounded
+    # Subtest: parks at PARK_READ_CT and not before, with a reason that says which failure it was
+    ok 1 - parks at PARK_READ_CT and not before, with a reason that says which failure it was
+      ---
+      duration_ms: 2.4854
+      ...
+    # Subtest: a released message gets one more attempt: success finishes it, and failure parks it again at once
+    ok 2 - a released message gets one more attempt: success finishes it, and failure parks it again at once
+      ---
+      duration_ms: 0.5995
+      ...
+    # Subtest: never deletes a message to hide an archive failure
+    ok 3 - never deletes a message to hide an archive failure
+      ---
+      duration_ms: 0.5654
+      ...
+    # Subtest: if parking keeps failing the disposition becomes stuck, which ends the process
+    ok 4 - if parking keeps failing the disposition becomes stuck, which ends the process
+      ---
+      duration_ms: 1.3093
+      ...
+    1..4
+ok 95 - archive and acknowledgement failures are bounded
+  ---
+  duration_ms: 7.4608
+  type: 'suite'
+  ...
+# Subtest: what reaches the log
+    # Subtest: a server error's text and the message body never do
+    ok 1 - a server error's text and the message body never do
+      ---
+      duration_ms: 2.2883
+      ...
+    # Subtest: an action outside the watched list is not printed
+    ok 2 - an action outside the watched list is not printed
+      ---
+      duration_ms: 0.5521
+      ...
+    1..2
+ok 96 - what reaches the log
+  ---
+  duration_ms: 3.1801
+  type: 'suite'
+  ...
+# Subtest: the backoff
+    # Subtest: doubles from 30 s to a 480 s cap
+    ok 1 - doubles from 30 s to a 480 s cap
+      ---
+      duration_ms: 0.5207
+      ...
+    # Subtest: gives the five attempts about 15 minutes, where the plain timeout gives about 3
+    ok 2 - gives the five attempts about 15 minutes, where the plain timeout gives about 3
+      ---
+      duration_ms: 0.3643
+      ...
+    1..2
+ok 97 - the backoff
+  ---
+  duration_ms: 1.2442
+  type: 'suite'
+  ...
+# (node:30528) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: safeErrorSummary — sensitive values never reach a log line (F-2)
+    # Subtest: a raw PostgresError would leak: this is what the summary exists to prevent
+    ok 1 - a raw PostgresError would leak: this is what the summary exists to prevent
+      ---
+      duration_ms: 5.449
+      ...
+    # Subtest: keeps only the SQLSTATE, severity and object names of a real PostgresError
+    ok 2 - keeps only the SQLSTATE, severity and object names of a real PostgresError
+      ---
+      duration_ms: 7.9463
+      ...
+    # Subtest: the JSON form holds no address, phone number or query text
+    ok 3 - the JSON form holds no address, phone number or query text
+      ---
+      duration_ms: 0.8679
+      ...
+    # Subtest: drops a server message that quotes the rejected value
+    ok 4 - drops a server message that quotes the rejected value
+      ---
+      duration_ms: 0.6585
+      ...
+    # Subtest: treats anything carrying a SQLSTATE as a server error even if renamed
+    ok 5 - treats anything carrying a SQLSTATE as a server error even if renamed
+      ---
+      duration_ms: 0.7394
+      ...
+    # Subtest: keeps a scrubbed message for a client error, and never its extra properties
+    ok 6 - keeps a scrubbed message for a client error, and never its extra properties
+      ---
+      duration_ms: 3.5313
+      ...
+    # Subtest: a URL parse error's input property is not carried
+    ok 7 - a URL parse error's input property is not carried
+      ---
+      duration_ms: 1.5307
+      ...
+    # Subtest: handles non-errors, hostile names and long messages without echoing them
+    ok 8 - handles non-errors, hostile names and long messages without echoing them
+      ---
+      duration_ms: 2.1103
+      ...
+    # Subtest: scrubText removes addresses, phone numbers, URLs and long tokens
+    ok 9 - scrubText removes addresses, phone numbers, URLs and long tokens
+      ---
+      duration_ms: 1.801
+      ...
+    1..9
+ok 98 - safeErrorSummary — sensitive values never reach a log line (F-2)
+  ---
+  duration_ms: 33.1024
+  type: 'suite'
+  ...
+# Subtest: invalid database configuration fails safely (F-7)
+    # Subtest: classifies what retrying cannot fix as fatal, and network failures as transient
+    ok 1 - classifies what retrying cannot fix as fatal, and network failures as transient
+      ---
+      duration_ms: 1.6967
+      ...
+    # Subtest: startup succeeds as soon as the probe answers, after retrying a transient failure
+    ok 2 - startup succeeds as soon as the probe answers, after retrying a transient failure
+      ---
+      duration_ms: 2.6769
+      ...
+    # Subtest: startup stops at once on a fatal failure
+    ok 3 - startup stops at once on a fatal failure
+      ---
+      duration_ms: 2.1567
+      ...
+    # Subtest: startup gives up after the bounded number of attempts and never logs the raw error
+    ok 4 - startup gives up after the bounded number of attempts and never logs the raw error
+      ---
+      duration_ms: 2.2789
+      ...
+    # Subtest: the poll tracker exits on a fatal failure and after the limit, and a success resets it
+    ok 5 - the poll tracker exits on a fatal failure and after the limit, and a success resets it
+      ---
+      duration_ms: 1.0364
+      ...
+    1..5
+ok 99 - invalid database configuration fails safely (F-7)
+  ---
+  duration_ms: 11.5293
+  type: 'suite'
+  ...
+# Subtest: event-stage health line (F-5)
+    # Subtest: reports counts only, and nulls when the queue could not be read
+    ok 1 - reports counts only, and nulls when the queue could not be read
+      ---
+      duration_ms: 0.9853
+      ...
+    1..1
+ok 100 - event-stage health line (F-5)
+  ---
+  duration_ms: 1.3349
+  type: 'suite'
+  ...
+# Subtest: database session bounds (F-14)
+    # Subtest: a lock wait ends before the statement limit, so it always reports as 55P03
+    ok 1 - a lock wait ends before the statement limit, so it always reports as 55P03
+      ---
+      duration_ms: 0.5532
+      ...
+    # Subtest: names every timeout the server is not applying, and only those
+    ok 2 - names every timeout the server is not applying, and only those
+      ---
+      duration_ms: 1.0851
+      ...
+    # Subtest: classifies a lock timeout, a statement timeout and a lost connection as transient, and a bad value or missing privilege as not
+    ok 3 - classifies a lock timeout, a statement timeout and a lost connection as transient, and a bad value or missing privilege as not
+      ---
+      duration_ms: 1.1295
+      ...
+    # Subtest: a probe that never answers is bounded, reported with a stable code, and retried
+    ok 4 - a probe that never answers is bounded, reported with a stable code, and retried
+      ---
+      duration_ms: 76.7646
+      ...
+    1..4
+ok 101 - database session bounds (F-14)
+  ---
+  duration_ms: 82.4933
+  type: 'suite'
+  ...
+1..101
+# tests 519
+# suites 101
+# pass 519
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 17483.7606

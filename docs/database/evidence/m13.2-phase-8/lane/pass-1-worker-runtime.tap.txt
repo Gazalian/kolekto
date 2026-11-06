@@ -1,0 +1,183 @@
+(node:6568) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:20852) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+TAP version 13
+# (node:33456) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: M13.2 Phase 8 — worker reliability
+    # Subtest: F-13: nothing broad can reach pg_net's outbound HTTP: the catalog says so, and the worker role is refused
+    ok 1 - F-13: nothing broad can reach pg_net's outbound HTTP: the catalog says so, and the worker role is refused
+      ---
+      duration_ms: 243.8298
+      ...
+    # Subtest: F14-LOCK: a held lock times out within the limit, is reported safely, leaves the message recoverable and the loop running, and recovery creates no duplicate
+    ok 2 - F14-LOCK: a held lock times out within the limit, is reported safely, leaves the message recoverable and the loop running, and recovery creates no duplicate
+      ---
+      duration_ms: 106070.1573
+      ...
+    # Subtest: F14-ACK: a lock on the queue row times out the acknowledgement; processing stays committed and the replay creates nothing new
+    ok 3 - F14-ACK: a lock on the queue row times out the acknowledgement; processing stays committed and the replay creates nothing new
+      ---
+      duration_ms: 33997.2067
+      ...
+    # Subtest: F14-SEND: a lock during reservation times out and rolls back the claim: no attempt used, no grant, no mail; then exactly one send
+    ok 4 - F14-SEND: a lock during reservation times out and rolls back the claim: no attempt used, no grant, no mail; then exactly one send
+      ---
+      duration_ms: 8213.138
+      ...
+    # Subtest: F14-SETTLE: a lock on the delivery after the provider accepted is retried, so a known outcome is recorded and nothing is sent twice
+    ok 5 - F14-SETTLE: a lock on the delivery after the provider accepted is retried, so a known outcome is recorded and nothing is sent twice
+      ---
+      duration_ms: 9507.6815
+      ...
+    # Subtest: F15-ACK: a delete that keeps failing is not poison: never reprocessed, even after a restart, parked at the bound, then released and acknowledged once
+    ok 6 - F15-ACK: a delete that keeps failing is not poison: never reprocessed, even after a restart, parked at the bound, then released and acknowledged once
+      ---
+      duration_ms: 258816.4499
+      ...
+    # Subtest: F15-ARCHIVE: a poison message whose archive keeps failing is parked at the bound, kept intact, not counted as dead-lettered, then released and archived
+    ok 7 - F15-ARCHIVE: a poison message whose archive keeps failing is parked at the bound, kept intact, not counted as dead-lettered, then released and archived
+      ---
+      duration_ms: 318494.7793
+      ...
+    1..7
+ok 1 - M13.2 Phase 8 — worker reliability
+  ---
+  duration_ms: 746911.2724
+  type: 'suite'
+  ...
+# (node:26784) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: M13.2 Phase 7 — the real worker process
+    # Subtest: RT-1: starts as the worker role on the verified stack, heartbeats while paused, and stops cleanly
+    ok 1 - RT-1: starts as the worker role on the verified stack, heartbeats while paused, and stops cleanly
+      ---
+      duration_ms: 7881.0676
+      ...
+    # Subtest: EV-1: member.create — queue → real worker → pending while OFF → sent once when ON, no restart → replay safe → OFF stops the next one
+    ok 2 - EV-1: member.create — queue → real worker → pending while OFF → sent once when ON, no restart → replay safe → OFF stops the next one
+      ---
+      duration_ms: 28415.5325
+      ...
+    # Subtest: EV-2: officer_term.end — real RPC → real worker → verified_account email to the term holder, once, replay safe
+    ok 3 - EV-2: officer_term.end — real RPC → real worker → verified_account email to the term holder, once, replay safe
+      ---
+      duration_ms: 9584.8519
+      ...
+    # Subtest: EV-3: officer_invitation.accept — real invitation and acceptance → real worker → email to the new officer, once, replay safe
+    ok 4 - EV-3: officer_invitation.accept — real invitation and acceptance → real worker → email to the new officer, once, replay safe
+      ---
+      duration_ms: 9431.2102
+      ...
+    # Subtest: RT-4: messages the processor refuses are acknowledged, create nothing, and leave a log line with a stable reason
+    ok 5 - RT-4: messages the processor refuses are acknowledged, create nothing, and leave a log line with a stable reason
+      ---
+      duration_ms: 825.9926
+      ...
+    # Subtest: RT-3: in-app-only events go through the role's remaining grants, create no email row and send nothing
+    ok 6 - RT-3: in-app-only events go through the role's remaining grants, create no email row and send nothing
+      ---
+      duration_ms: 4418.4026
+      ...
+    # Subtest: PS-RESTORE: the switch is restored and read back false when the code inside the window throws
+    ok 7 - PS-RESTORE: the switch is restored and read back false when the code inside the window throws
+      ---
+      duration_ms: 565.7751
+      ...
+    # Subtest: RC-LOCK: a lock released inside the limit only delays the worker: it completes on the first read, with no failure and no restart
+    ok 8 - RC-LOCK: a lock released inside the limit only delays the worker: it completes on the first read, with no failure and no restart
+      ---
+      duration_ms: 7154.5995
+      ...
+    # Subtest: RT-6: a stop request during blocked processing lets the in-flight message finish, then exits 0
+    ok 9 - RT-6: a stop request during blocked processing lets the in-flight message finish, then exits 0
+      ---
+      duration_ms: 2880.922
+      ...
+    # Subtest: RC-1: a worker killed during processing loses nothing; the message reappears only after the visibility timeout, with read_ct 2, and completes once
+    ok 10 - RC-1: a worker killed during processing loses nothing; the message reappears only after the visibility timeout, with read_ct 2, and completes once
+      ---
+      duration_ms: 34778.9091
+      ...
+    # Subtest: RC-2: if the acknowledgement fails after processing committed, the worker survives and the replay creates nothing new
+    ok 11 - RC-2: if the acknowledgement fails after processing committed, the worker survives and the replay creates nothing new
+      ---
+      duration_ms: 39166.398
+      ...
+    # Subtest: RC-5: a poison message is tried exactly 5 times, archived at read_ct 6 with no sensitive text logged, and a healthy message is unaffected
+    ok 12 - RC-5: a poison message is tried exactly 5 times, archived at read_ct 6 with no sensitive text logged, and a healthy message is unaffected
+      ---
+      duration_ms: 186004.1185
+      ...
+    # Subtest: SM-RETRY: a temporary rejection schedules a retry about 5 minutes out, then a retry succeeds with the same Message-ID, once
+    ok 13 - SM-RETRY: a temporary rejection schedules a retry about 5 minutes out, then a retry succeeds with the same Message-ID, once
+      ---
+      duration_ms: 10059.3441
+      ...
+    # Subtest: SM-EXHAUST: an unreachable provider backs off about 5 then about 30 minutes, then ends dead/retries_exhausted after 3 attempts
+    ok 14 - SM-EXHAUST: an unreachable provider backs off about 5 then about 30 minutes, then ends dead/retries_exhausted after 3 attempts
+      ---
+      duration_ms: 7438.0861
+      ...
+    # Subtest: SM-PERM: a permanent rejection is dead on the first attempt and never retried
+    ok 15 - SM-PERM: a permanent rejection is dead on the first attempt and never retried
+      ---
+      duration_ms: 5878.4597
+      ...
+    # Subtest: SM-AMBIG: delivered but the client never hears: dead/outcome_unknown, never retried, and Mailpit holds exactly one copy
+    ok 16 - SM-AMBIG: delivered but the client never hears: dead/outcome_unknown, never retried, and Mailpit holds exactly one copy
+      ---
+      duration_ms: 7651.3263
+      ...
+    # Subtest: SM-TIMEOUT: no reply after the body ends dead/outcome_unknown, and nothing reached Mailpit
+    ok 17 - SM-TIMEOUT: no reply after the body ends dead/outcome_unknown, and nothing reached Mailpit
+      ---
+      duration_ms: 13617.3509
+      ...
+    # Subtest: RC-SEND: a worker killed in the middle of a send never re-sends: the next worker's maintenance records dead/outcome_unknown
+    ok 18 - RC-SEND: a worker killed in the middle of a send never re-sends: the next worker's maintenance records dead/outcome_unknown
+      ---
+      duration_ms: 3474.1334
+      ...
+    # Subtest: CFG: every invalid database configuration exits non-zero, quickly, without printing the credential
+    ok 19 - CFG: every invalid database configuration exits non-zero, quickly, without printing the credential
+      ---
+      duration_ms: 10331.3618
+      ...
+    # Subtest: CFG-REVOKED: a credential revoked while running ends the process instead of polling forever
+    ok 20 - CFG-REVOKED: a credential revoked while running ends the process instead of polling forever
+      ---
+      duration_ms: 2998.9074
+      ...
+    # Subtest: CFG-SENDER: a refused sender configuration keeps the event stage working and sends nothing (finding F-4 recorded)
+    ok 21 - CFG-SENDER: a refused sender configuration keeps the event stage working and sends nothing (finding F-4 recorded)
+      ---
+      duration_ms: 7434.2759
+      ...
+    # Subtest: LP-3: the worker role is refused everything outside its grants, and holds only the listed tables
+    ok 22 - LP-3: the worker role is refused everything outside its grants, and holds only the listed tables
+      ---
+      duration_ms: 259.4402
+      ...
+    # Subtest: F-2: a real constraint failure's raw error carries a recipient address; the log summary does not
+    ok 23 - F-2: a real constraint failure's raw error carries a recipient address; the log summary does not
+      ---
+      duration_ms: 47.8469
+      ...
+    1..23
+ok 2 - M13.2 Phase 7 — the real worker process
+  ---
+  duration_ms: 458573.3393
+  type: 'suite'
+  ...
+1..2
+# tests 30
+# suites 2
+# pass 30
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 1257250.7623
+Integration lane passed WORKER RUNTIME ONLY (partial run, not the full suite): 30/30 test(s) in 2 of 9 file(s), none skipped.

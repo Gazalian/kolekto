@@ -1,0 +1,20 @@
+  before: PUBLIC grants on schema net and its objects: 30
+  before: anon: schema=true http_functions=true queue_insert=true response_select=true
+  before: authenticated: schema=true http_functions=true queue_insert=true response_select=true
+  before: authenticator: schema=true http_functions=true queue_insert=true response_select=true
+  before: kolekto_importer: schema=true http_functions=true queue_insert=true response_select=true
+  before: kolekto_itest_worker: schema=true http_functions=true queue_insert=true response_select=true
+  before: postgres: schema=true http_functions=true queue_insert=true response_select=true
+  before: service_role: schema=true http_functions=true queue_insert=true response_select=true
+  before: supabase_functions_admin: schema=true http_functions=true queue_insert=true response_select=true
+  after:  PUBLIC grants on schema net and its objects: 0
+  after:  anon: schema=false http_functions=false queue_insert=false response_select=false
+  after:  authenticated: schema=false http_functions=false queue_insert=false response_select=false
+  after:  authenticator: schema=false http_functions=false queue_insert=false response_select=false
+  after:  kolekto_importer: schema=false http_functions=false queue_insert=false response_select=false
+  after:  kolekto_itest_worker: schema=false http_functions=false queue_insert=false response_select=false
+  after:  postgres: schema=true http_functions=true queue_insert=false response_select=true
+  after:  service_role: schema=false http_functions=false queue_insert=false response_select=false
+  after:  supabase_functions_admin: schema=true http_functions=true queue_insert=false response_select=false
+  pause switch: exactly one row, email_sending_enabled = false (read only)
+itest:net-lockdown complete. No HTTP request was sent.

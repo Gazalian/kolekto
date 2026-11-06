@@ -1,0 +1,105 @@
+Output format is unaligned.
+Field separator is " | ".
+BEGIN
+read_at | declared_host_port
+2026-11-06 10:13:12.853059+00 | 55422
+(1 row)
+--- extension
+extname | extversion | ext_schema | owner | extrelocatable
+pg_net | 0.20.3 | extensions | supabase_admin | f
+(1 row)
+--- schema net owner and acl
+nspname | owner | nspacl
+net | supabase_admin | {supabase_admin=UC/supabase_admin,supabase_functions_admin=U/supabase_admin,postgres=U/supabase_admin}
+(1 row)
+--- objects in net
+relkind | relname | owner | relacl | relrowsecurity
+r | _http_response | supabase_admin | {supabase_admin=arwdDxtm/supabase_admin} | f
+r | http_request_queue | supabase_admin | {supabase_admin=arwdDxtm/supabase_admin} | f
+S | http_request_queue_id_seq | supabase_admin | {supabase_admin=rwU/supabase_admin} | f
+(3 rows)
+proname | args | owner | prosecdef | proacl
+_await_response | request_id bigint | supabase_admin | f | {supabase_admin=X/supabase_admin}
+_encode_url_with_params_array | url text, params_array text[] | supabase_admin | f | {supabase_admin=X/supabase_admin}
+_http_collect_response | request_id bigint, async boolean | supabase_admin | f | {supabase_admin=X/supabase_admin}
+_urlencode_string | string character varying | supabase_admin | f | {supabase_admin=X/supabase_admin}
+check_worker_is_up |  | supabase_admin | f | {supabase_admin=X/supabase_admin}
+http_collect_response | request_id bigint, async boolean | supabase_admin | f | {supabase_admin=X/supabase_admin}
+http_delete | url text, params jsonb, headers jsonb, timeout_milliseconds integer, body jsonb | supabase_admin | f | {supabase_admin=X/supabase_admin}
+http_get | url text, params jsonb, headers jsonb, timeout_milliseconds integer | supabase_admin | t | {supabase_admin=X/supabase_admin,supabase_functions_admin=X/supabase_admin,postgres=X/supabase_admin}
+http_post | url text, body jsonb, params jsonb, headers jsonb, timeout_milliseconds integer | supabase_admin | t | {supabase_admin=X/supabase_admin,supabase_functions_admin=X/supabase_admin,postgres=X/supabase_admin}
+wait_until_running |  | supabase_admin | f | {supabase_admin=X/supabase_admin}
+wake |  | supabase_admin | f | {supabase_admin=X/supabase_admin}
+worker_restart |  | supabase_admin | f | {supabase_admin=X/supabase_admin}
+(12 rows)
+--- privilege matrix (role, schema usage, get, post, delete, request queue select/insert, response select)
+rolname | schema_usage | http_get | http_post | http_delete | queue_select | queue_insert | response_select
+anon | f | f | f | f | f | f | f
+authenticated | f | f | f | f | f | f | f
+authenticator | f | f | f | f | f | f | f
+dashboard_user | f | f | f | f | f | f | f
+kolekto_importer | f | f | f | f | f | f | f
+kolekto_itest | t | t | t | f | t | f | t
+kolekto_itest_worker | f | f | f | f | f | f | f
+pg_checkpoint | f | f | f | f | f | f | f
+pg_create_subscription | f | f | f | f | f | f | f
+pg_database_owner | f | f | f | f | f | f | f
+pg_execute_server_program | f | f | f | f | f | f | f
+pg_maintain | f | f | f | f | f | f | f
+pg_monitor | f | f | f | f | f | f | f
+pg_read_all_data | t | f | f | f | t | f | t
+pg_read_all_settings | f | f | f | f | f | f | f
+pg_read_all_stats | f | f | f | f | f | f | f
+pg_read_server_files | f | f | f | f | f | f | f
+pg_signal_backend | f | f | f | f | f | f | f
+pg_stat_scan_tables | f | f | f | f | f | f | f
+pg_use_reserved_connections | f | f | f | f | f | f | f
+pg_write_all_data | t | f | f | f | f | t | f
+pg_write_server_files | f | f | f | f | f | f | f
+pgbouncer | f | f | f | f | f | f | f
+postgres | t | t | t | f | t | f | t
+service_role | f | f | f | f | f | f | f
+supabase_admin | t | t | t | t | t | t | t
+supabase_auth_admin | f | f | f | f | f | f | f
+supabase_etl_admin | t | f | f | f | t | f | t
+supabase_functions_admin | t | t | t | f | f | f | f
+supabase_privileged_role | f | f | f | f | f | f | f
+supabase_read_only_user | t | f | f | f | t | f | t
+supabase_realtime_admin | f | f | f | f | f | f | f
+supabase_replication_admin | f | f | f | f | f | f | f
+supabase_storage_admin | f | f | f | f | f | f | f
+(34 rows)
+--- default privileges that could re-grant on net
+ns | for_role | defaclobjtype | defaclacl
+(0 rows)
+--- event triggers that manage pg_net grants
+evtname | evtevent | evtenabled | fn | evttags
+issue_graphql_placeholder | sql_drop | O | set_graphql_placeholder() | {"DROP EXTENSION"}
+issue_pg_cron_access | ddl_command_end | O | grant_pg_cron_access() | {"CREATE EXTENSION"}
+issue_pg_graphql_access | ddl_command_end | O | grant_pg_graphql_access() | {"CREATE EXTENSION"}
+issue_pg_net_access | ddl_command_end | O | grant_pg_net_access() | {"CREATE EXTENSION"}
+pgrst_ddl_watch | ddl_command_end | O | pgrst_ddl_watch() | 
+pgrst_drop_watch | sql_drop | O | pgrst_drop_watch() | 
+(6 rows)
+--- any function outside net whose source mentions net.http or net._ (who would need it)
+nspname | proname | owner | prosecdef
+extensions | grant_pg_net_access | supabase_admin | f
+supabase_functions | http_request | supabase_functions_admin | t
+(2 rows)
+--- triggers using supabase_functions.http_request (webhooks)
+webhook_triggers
+0
+(1 row)
+--- pg_cron jobs that mention net
+cron_available
+1
+(1 row)
+--- pending or stored http traffic (counts only)
+queued_requests | stored_responses
+0 | 0
+(1 row)
+--- pg_stat_statements mentioning net.http, by role (counts only)
+rolname | statements | calls
+supabase_admin | 2 | 3
+(1 row)
+ROLLBACK

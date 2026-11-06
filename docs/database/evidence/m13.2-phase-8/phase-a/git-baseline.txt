@@ -1,0 +1,13 @@
+2026-11-06 09:46:06 UTC
+fix/auth-nav-and-cookie-forwarding
+ee9462b07997afb2419bfd18d6e397f33d8cfcc2
+--- stash
+stash@{0}: On m8.1-financial-foundation: pre-m13.1: unstaged M12A work
+--- index
+0
+--- objects
+commit
+commit
+--- porcelain
+59
+90f59a2eb1a672d765aaedc47da1fb59 *-
