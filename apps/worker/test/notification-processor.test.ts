@@ -334,3 +334,42 @@ describe("replay safety", () => {
     assert.deepEqual(a.log.map((r) => r.text), b.log.map((r) => r.text));
   });
 });
+
+/**
+ * Moved from test/integration/notification-sender-mailpit.integration.test.ts (M13.2 Phase 1c;
+ * review F13 / §4.3). parseAuditMessage and admission() return before any SQL, so these never
+ * needed a database. Titles are the integration file's; the inputs are the same messages. Each
+ * test now also proves that no statement at all was issued — a stronger assertion than the
+ * integration version, which could only check the returned outcome.
+ */
+describe("P8 processor skip decisions (moved from the sender-to-Mailpit integration file)", () => {
+  async function run(msg: Record<string, unknown>) {
+    const { sql, log } = fakeDb({ member: MEMBER });
+    const out = await processNotificationMessage(sql, msg, NOW);
+    return { out, log };
+  }
+
+  it("E1: unknown event type produces no email delivery row", async () => {
+    const { out, log } = await run(message("unknown.action.type"));
+    assert.deepEqual(out, { outcome: "skipped", reason: "unwatched_action" });
+    assert.equal(log.length, 0, "no SQL at all: no event, no delivery row");
+  });
+
+  it("E2: invalid/malformed message is skipped, not thrown", async () => {
+    const { out, log } = await run({ garbage: true, no_fields: "at all" });
+    assert.deepEqual(out, { outcome: "skipped", reason: "invalid_message" });
+    assert.equal(log.length, 0);
+  });
+
+  it("E3: empty payload message is skipped", async () => {
+    const { out, log } = await run({});
+    assert.deepEqual(out, { outcome: "skipped", reason: "invalid_message" });
+    assert.equal(log.length, 0);
+  });
+
+  it("E8: event too old (>72h) is skipped by the processor", async () => {
+    const { out, log } = await run(message("member.create", { created_at: new Date(NOW - 73 * 60 * 60 * 1000).toISOString() }));
+    assert.deepEqual(out, { outcome: "skipped", reason: "event_too_old" });
+    assert.equal(log.length, 0);
+  });
+});

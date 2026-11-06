@@ -1,0 +1,98 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Supabase local configuration — the DEDICATED INTEGRATION-TEST STACK (M13.2 Phase 3)
+#
+# This is not the developer stack. It is a second, disposable local stack with
+# its own containers, volumes, network, Postgres and Mailpit, used only by the
+# worker integration lane (`npm run test:integration`). It is written from a
+# clean template, never copied from `supabase/` (the developer work directory
+# is linked to a remote project; nothing here may inherit that link).
+#
+# Manage it ONLY through the guarded wrappers, which always pass
+# `--workdir supabase-itest` and refuse --linked, --db-url, --project-ref, --all:
+#
+#   npm run itest:up      start (and bootstrap once)
+#   npm run itest:status  containers, ports, migration hash, bootstrap state
+#   npm run itest:down    stop (data volume kept)
+#   npm run itest:reset   replay migrations + re-bootstrap (explicit confirm flag)
+#
+# Ports: everything in 55420–55429, outside the developer range 54320–54329
+# and outside the Windows-excluded TCP ranges.
+#
+#   55420 shadow db    55421 API (kong)   55422 db          55423 studio (off)
+#   55424 Mailpit UI   55425 Mailpit SMTP 55426 (reserved)  55427 analytics (off)
+#   55428 edge inspector (off)            55429 pooler (off)
+#
+# Migrations: `supabase-itest/supabase/migrations/` is a git-ignored copy of
+# `supabase/migrations/`, written by the wrapper and verified file by file by
+# SHA-256 before every start. Never edit it and never run `supabase migration
+# new` against this work directory; `supabase/migrations/` is the only source.
+#
+# No `[remotes]` section, no `env()` references, no seed, no auth SMTP: this
+# stack cannot reach a hosted project or a real mail server, and its Mailpit is
+# a catcher only.
+# ─────────────────────────────────────────────────────────────────────────────
+
+project_id = "kolekto-itest"
+
+[api]
+enabled = true
+port = 55421
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 55422
+shadow_port = 55420
+# Same major version as the developer stack, staging and production.
+major_version = 17
+
+[db.pooler]
+# Off: the suite mutex is a session-level advisory lock, which a transaction
+# pooler would break.
+enabled = false
+port = 55429
+
+[db.seed]
+# Off: the integration lane creates its own run-unique fixtures. The developer
+# seed would only add rows the tests could mistake for their own.
+enabled = false
+
+[realtime]
+enabled = true
+
+[studio]
+enabled = false
+port = 55423
+
+[local_smtp]
+enabled = true
+# Mailpit web UI and API.
+port = 55424
+# Mailpit SMTP listener (catcher only; nothing is relayed).
+smtp_port = 55425
+
+[storage]
+enabled = true
+file_size_limit = "5MiB"
+
+[storage.image_transformation]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+enable_signup = true
+enable_anonymous_sign_ins = false
+
+[auth.email]
+enable_signup = true
+enable_confirmations = false
+
+[analytics]
+enabled = false
+port = 55427
+
+[edge_runtime]
+enabled = false
+inspector_port = 55428

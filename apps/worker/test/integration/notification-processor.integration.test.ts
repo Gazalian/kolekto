@@ -3,43 +3,40 @@
  *
  * Drives REAL audited domain functions under REAL roles, takes the queue messages the
  * REAL trigger produced, runs them through the REAL processor, and asserts on what the
- * database then holds. Everything happens inside one transaction that is rolled back, so
- * it leaves no trace in the database it runs against.
+ * database then holds. Everything happens inside one transaction that is rolled back
+ * (inRollback, test/support/itest-isolation.ts), so it leaves no trace in the database it
+ * runs against.
  *
- * OPT-IN, and local only. It runs when BOTH are true:
- *   KOLEKTO_WORKER_INTEGRATION=1, and SUPABASE_DB_URL points at this machine.
- * Otherwise every test here is reported as skipped. It is NOT part of the CI "typecheck
- * and unit tests" job, which has no database; the pgTAP suite covers the database side
- * in CI, and the unit tests in this folder cover the processor's decisions. Run locally:
+ * M13.2 Phase 4: every id, slug and account email is run-unique (createRunScope), the
+ * file holds the suite mutex and passes the per-file preflight (itest-isolation.ts), and
+ * each test starts only when no pending or sending email row exists anywhere.
  *
- *   KOLEKTO_WORKER_INTEGRATION=1 SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:54322/postgres npm test --workspace apps/worker
+ * Integration lane only: it runs through `npm run test:integration --workspace apps/worker`
+ * against the dedicated kolekto-itest stack, never through `npm test` and never against
+ * the developer database (see test/integration/README.md). Without a verified test-stack
+ * environment the gate refuses and every test here fails; nothing is skipped. It is NOT
+ * part of the CI "typecheck and unit tests" job, which has no database; the pgTAP suite
+ * covers the database side in CI, and the unit tests cover the processor's decisions.
  */
 
-import { describe, it } from "node:test";
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 
-import postgres from "postgres";
+import type postgres from "postgres";
 
-import { processNotificationMessage } from "../src/notification-processor.ts";
+import { processNotificationMessage } from "../../src/notification-processor.ts";
 
-const URL_ENV = process.env["SUPABASE_DB_URL"] ?? "";
-const IS_LOOPBACK = (() => {
-  try {
-    return ["127.0.0.1", "localhost", "::1", "[::1]"].includes(new URL(URL_ENV).hostname);
-  } catch {
-    return false;
-  }
-})();
-const ENABLED = process.env["KOLEKTO_WORKER_INTEGRATION"] === "1" && IS_LOOPBACK;
-const SKIP = ENABLED ? false : "set KOLEKTO_WORKER_INTEGRATION=1 and a loopback SUPABASE_DB_URL to run";
+import { connectVerified, liveGateDeps } from "../support/itest-db.ts";
+import { createIntegrationGate } from "../support/itest-gate.ts";
+import { createFileHarness, inRollback } from "../support/itest-isolation.ts";
 
-class Rollback extends Error {}
-
-const OWNER = "b1000000-0000-4000-8000-000000000001";
-const ADMIN = "b1000000-0000-4000-8000-000000000002";
-const COMMUNITY = "b2000000-0000-4000-8000-00000000000a";
-const OWNER_TERM = "b3000000-0000-4000-8000-000000000001";
-const ADMIN_TERM = "b3000000-0000-4000-8000-000000000002";
+// Fail-closed gate (test/support/itest-gate.ts): verify() refuses — and every test in
+// this file fails, none skips — unless the run came through `npm run test:integration`
+// and the live identity of the dedicated kolekto-itest stack checked out. Every
+// connection below is opened with connectVerified(gate.verified(), …).
+const gate = createIntegrationGate(liveGateDeps());
+const harness = createFileHarness(() => gate.verified(), "processor");
+const { scope } = harness;
 
 type Tx = postgres.TransactionSql<Record<string, never>>;
 
@@ -49,27 +46,45 @@ function first<T>(rows: readonly T[]): T {
   return row;
 }
 
-describe("the processor against the real database", { skip: SKIP }, () => {
-  it("handles the approved events end to end, writes no email row, and is replay-safe", async () => {
-    const sql = postgres(URL_ENV, { prepare: false, transform: { undefined: null }, max: 1 });
-    const evidence: Record<string, unknown> = {};
+describe("the processor against the real database", () => {
+  before(async () => {
+    await gate.verify();
+    await harness.start();
+  });
+  beforeEach(() => harness.checkpoint());
+  afterEach(() => harness.quarantineOwn());
+  after(async () => {
     try {
-      await sql
-        .begin(async (rawTx) => {
-          const tx = rawTx as unknown as Tx;
+      await harness.finish();
+    } finally {
+      await gate.postflight();
+    }
+  });
 
+  it("handles the approved events end to end, writes pending email rows only for supplied-address membership confirmations, and is replay-safe", async () => {
+    const sql = connectVerified(gate.verified(), { max: 1 });
+    const evidence: Record<string, unknown> = {};
+    const OWNER = scope.uuid();
+    const ADMIN = scope.uuid();
+    const COMMUNITY = scope.uuid();
+    const OWNER_TERM = scope.uuid();
+    const ADMIN_TERM = scope.uuid();
+    const OWNER_EMAIL = scope.address();
+    const ADMIN_EMAIL = scope.address();
+    try {
+      await inRollback(sql, async (tx: Tx) => {
           // ── fixtures ──────────────────────────────────────────────────────────
           // OWNER's Auth email is confirmed; ADMIN's is not. Membership rows are
           // never linked to accounts (inventory F-1), so member confirmations
           // go to supplied addresses while the officer notice must skip.
           await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
-            (${OWNER}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'owner@itest.example.test', now()),
-            (${ADMIN}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'admin@itest.example.test', null)`;
+            (${OWNER}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${OWNER_EMAIL}, now()),
+            (${ADMIN}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${ADMIN_EMAIL}, null)`;
           await tx`insert into public.users (id, full_name, email) values
-            (${OWNER}, 'It Owner', 'owner@itest.example.test'), (${ADMIN}, 'It Admin', 'admin@itest.example.test')
+            (${OWNER}, 'It Owner', ${OWNER_EMAIL}), (${ADMIN}, 'It Admin', ${ADMIN_EMAIL})
             on conflict (id) do update set full_name = excluded.full_name`;
           await tx`insert into public.communities (id, slug, name, type, is_personal, created_by)
-            values (${COMMUNITY}, 'itest-worker', 'ITest Worker', 'social_group', false, ${OWNER})`;
+            values (${COMMUNITY}, ${scope.slug()}, 'ITest Worker', 'social_group', false, ${OWNER})`;
           await tx`insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
             (${OWNER_TERM}, ${COMMUNITY}, ${OWNER}, 'owner', 'It Owner', 'created'),
             (${ADMIN_TERM}, ${COMMUNITY}, ${ADMIN}, 'admin', 'It Admin', 'invited')`;
@@ -247,11 +262,7 @@ describe("the processor against the real database", { skip: SKIP }, () => {
 
           // created is referenced so the member.create path is demonstrably exercised
           assert.ok(created);
-          throw new Rollback();
-        })
-        .catch((e: unknown) => {
-          if (!(e instanceof Rollback)) throw e;
-        });
+      });
       console.log("integration evidence:", JSON.stringify(evidence));
     } finally {
       await sql.end({ timeout: 2 });
@@ -271,33 +282,32 @@ describe("the processor against the real database", { skip: SKIP }, () => {
     //            and members with paid/exempt/cancelled are excluded.
     //   none   → no pgmq message is enqueued; no delivery is created.
     //
-    // The test runs inside one transaction, rolled back at the end, so no
-    // row persists in the local database.
-    const sql = postgres(URL_ENV, { prepare: false, transform: { undefined: null }, max: 1 });
+    // The test runs inside one transaction, rolled back at the end (inRollback),
+    // so no row persists in the test database.
+    const sql = connectVerified(gate.verified(), { max: 1 });
     const evidence: Record<string, unknown> = {};
     try {
-      await sql
-        .begin(async (rawTx) => {
-          const tx = rawTx as unknown as Tx;
-
+      await inRollback(sql, async (tx: Tx) => {
           // ── Fixtures: two users, two members linked to them, three drafts.
-          const OWING = "b4000000-0000-4000-8000-000000000001";
-          const PAID = "b4000000-0000-4000-8000-000000000002";
-          const COMMUNITY2 = "b5000000-0000-4000-8000-00000000000a";
-          const OWNER_TERM2 = "b6000000-0000-4000-8000-000000000001";
-          const COL_ALL = "b7000000-0000-4000-8000-000000000a01";
-          const COL_UNPAID = "b7000000-0000-4000-8000-000000000a02";
-          const COL_NONE = "b7000000-0000-4000-8000-000000000a03";
+          const OWING = scope.uuid();
+          const PAID = scope.uuid();
+          const COMMUNITY2 = scope.uuid();
+          const OWNER_TERM2 = scope.uuid();
+          const COL_ALL = scope.uuid();
+          const COL_UNPAID = scope.uuid();
+          const COL_NONE = scope.uuid();
+          const OWING_EMAIL = scope.address();
+          const PAID_EMAIL = scope.address();
 
           await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
-            (${OWING}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'owing@m13-3.example.test', now()),
-            (${PAID},  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'paid@m13-3.example.test',  now())`;
+            (${OWING}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${OWING_EMAIL}, now()),
+            (${PAID},  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${PAID_EMAIL},  now())`;
           await tx`insert into public.users (id, full_name, email) values
-            (${OWING}, 'M13.3 Owing', 'owing@m13-3.example.test'),
-            (${PAID},  'M13.3 Paid',  'paid@m13-3.example.test')
+            (${OWING}, 'M13.3 Owing', ${OWING_EMAIL}),
+            (${PAID},  'M13.3 Paid',  ${PAID_EMAIL})
             on conflict (id) do update set full_name = excluded.full_name`;
           await tx`insert into public.communities (id, slug, name, type, is_personal, created_by)
-            values (${COMMUNITY2}, 'itest-pub', 'ITest Pub', 'social_group', false, ${OWING})`;
+            values (${COMMUNITY2}, ${scope.slug()}, 'ITest Pub', 'social_group', false, ${OWING})`;
           await tx`insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
             (${OWNER_TERM2}, ${COMMUNITY2}, ${OWING}, 'owner', 'M13.3 Owing', 'created')`;
 
@@ -332,7 +342,7 @@ describe("the processor against the real database", { skip: SKIP }, () => {
 
           // Three identical draft collections, one per branch.
           for (const id of [COL_ALL, COL_UNPAID, COL_NONE]) {
-            const slug = `itest-${id.slice(-4)}`;
+            const slug = scope.slug();
             await tx`insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, created_by, audience_mode)
               values (${id}, ${COMMUNITY2}, ${slug}, 'ITest Pub', 'dues', 'managed', 'fixed', 500000, 'draft', ${OWING}, 'all_members')`;
           }
@@ -403,12 +413,7 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           // There is no `collection.publish_silent` event or delivery.
           const silent = await tx<{ c: number }[]>`select count(*)::int as c from public.notification_events where community_id = ${COMMUNITY2} and event_type = 'collection.publish_silent'`;
           assert.equal(silent[0]?.c, 0, "silent publish wrote no notification_event");
-
-          throw new Rollback();
-        })
-        .catch((e: unknown) => {
-          if (!(e instanceof Rollback)) throw e;
-        });
+      });
       console.log("M13.3 integration evidence:", JSON.stringify(evidence));
     } finally {
       await sql.end({ timeout: 2 });
@@ -426,29 +431,28 @@ describe("the processor against the real database", { skip: SKIP }, () => {
     //   · email remains disabled: no delivery row is sent, no email is
     //     emitted (the processor would have surfaced that otherwise).
     //
-    // One transaction, rolled back at the end.
-    const sql = postgres(URL_ENV, { prepare: false, transform: { undefined: null }, max: 1 });
+    // One transaction, rolled back at the end (inRollback).
+    const sql = connectVerified(gate.verified(), { max: 1 });
     const evidence: Record<string, unknown> = {};
     try {
-      await sql
-        .begin(async (rawTx) => {
-          const tx = rawTx as unknown as Tx;
-
-          const OWING = "c4000000-0000-4000-8000-000000000001";
-          const PAID = "c4000000-0000-4000-8000-000000000002";
-          const COMMUNITY3 = "c5000000-0000-4000-8000-00000000000a";
-          const OWNER_TERM3 = "c6000000-0000-4000-8000-000000000001";
-          const COL = "c7000000-0000-4000-8000-000000000a01";
+      await inRollback(sql, async (tx: Tx) => {
+          const OWING = scope.uuid();
+          const PAID = scope.uuid();
+          const COMMUNITY3 = scope.uuid();
+          const OWNER_TERM3 = scope.uuid();
+          const COL = scope.uuid();
+          const OWING_EMAIL = scope.address();
+          const PAID_EMAIL = scope.address();
 
           await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
-            (${OWING}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'rem-owing@itest.example.test', now()),
-            (${PAID},  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'rem-paid@itest.example.test',  now())`;
+            (${OWING}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${OWING_EMAIL}, now()),
+            (${PAID},  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${PAID_EMAIL},  now())`;
           await tx`insert into public.users (id, full_name, email) values
-            (${OWING}, 'Rem Owing', 'rem-owing@itest.example.test'),
-            (${PAID},  'Rem Paid',  'rem-paid@itest.example.test')
+            (${OWING}, 'Rem Owing', ${OWING_EMAIL}),
+            (${PAID},  'Rem Paid',  ${PAID_EMAIL})
             on conflict (id) do update set full_name = excluded.full_name`;
           await tx`insert into public.communities (id, slug, name, type, is_personal, created_by)
-            values (${COMMUNITY3}, 'itest-reminders', 'ITest Reminders', 'social_group', false, ${OWING})`;
+            values (${COMMUNITY3}, ${scope.slug()}, 'ITest Reminders', 'social_group', false, ${OWING})`;
           await tx`insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
             (${OWNER_TERM3}, ${COMMUNITY3}, ${OWING}, 'owner', 'Rem Owing', 'created')`;
 
@@ -479,7 +483,7 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           // paid becomes exempt (stands in for 'paid' which only cash can
           // reach, same as the publish-time integration test above).
           await tx`insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, created_by, audience_mode, published_at, published_by)
-            values (${COL}, ${COMMUNITY3}, 'itest-reminder-col', 'ITest Reminder', 'dues', 'managed', 'fixed', 500000, 'active', ${OWING}, 'all_members', now(), ${OWING})`;
+            values (${COL}, ${COMMUNITY3}, ${scope.slug()}, 'ITest Reminder', 'dues', 'managed', 'fixed', 500000, 'active', ${OWING}, 'all_members', now(), ${OWING})`;
           await asOwner(() => tx`select app.assign_obligations(${COL}::uuid, array[${owingMemberId}::uuid, ${paidMemberId}::uuid])`);
           const paidObligationId = first(
             await tx<{ id: string }[]>`select id from public.obligations where collection_id = ${COL} and member_id = ${paidMemberId}`,
@@ -521,12 +525,15 @@ describe("the processor against the real database", { skip: SKIP }, () => {
           assert.equal(resUnpaid.created, true, "a fresh key is a fresh reminder");
 
           // ── Audit log check: exactly TWO reminder rows for this collection.
+          // Both rows are written in this one transaction, so created_at (now(), the
+          // transaction start) is identical and alone does not order them; `action`
+          // breaks the tie (M13.2 Phase 4: the order flipped on the test stack).
           const auditRows = await tx<{ action: string }[]>`
             select action from public.audit_logs
             where community_id = ${COMMUNITY3}
               and object_id = ${COL}
               and action like 'collection.remind%'
-            order by created_at`;
+            order by created_at, action`;
           evidence["audit_actions"] = auditRows.map((r) => r.action);
           assert.deepEqual(
             auditRows.map((r) => r.action),
@@ -589,12 +596,7 @@ describe("the processor against the real database", { skip: SKIP }, () => {
             emailDeliveries.every((e) => e.status !== "sent"),
             "no email was sent (email_sending_enabled is off in this environment)",
           );
-
-          throw new Rollback();
-        })
-        .catch((e: unknown) => {
-          if (!(e instanceof Rollback)) throw e;
-        });
+      });
       console.log("M13.3 reminder integration evidence:", JSON.stringify(evidence));
     } finally {
       await sql.end({ timeout: 2 });

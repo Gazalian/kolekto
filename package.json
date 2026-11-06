@@ -32,7 +32,13 @@
     "test:concurrency": "node scripts/verify/reference-concurrency.mjs",
     "rehearsal:up": "node scripts/migration/rehearsal-target.mjs up",
     "rehearsal:down": "node scripts/migration/rehearsal-target.mjs down",
-    "rehearsal:status": "node scripts/migration/rehearsal-target.mjs status"
+    "rehearsal:status": "node scripts/migration/rehearsal-target.mjs status",
+    "itest:up": "node scripts/itest/itest.mjs up",
+    "itest:down": "node scripts/itest/itest.mjs down",
+    "itest:status": "node scripts/itest/itest.mjs status",
+    "itest:reset": "node scripts/itest/itest.mjs reset",
+    "itest:worker-role": "node scripts/itest/itest.mjs worker-role",
+    "itest:net-lockdown": "node scripts/itest/itest.mjs net-lockdown"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
