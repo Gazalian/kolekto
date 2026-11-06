@@ -109,8 +109,8 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
 
 /**
  * Check the shape of a queued message and copy out only the fields the processor uses.
- * Never throws: a malformed message is a skip, not a poison message that would be
- * retried forever (there is no retry cap until P6).
+ * Never throws: a malformed message is a skip, not a poison message. The event
+ * loop (index.ts) archives messages past a read_ct threshold (P6).
  */
 export function parseAuditMessage(raw: unknown): ParseResult {
   const r = objectOrNull(raw);

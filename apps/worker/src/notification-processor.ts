@@ -27,7 +27,8 @@
  *
  * A message that cannot or should not be processed is SKIPPED (acknowledged, reported
  * through the return value), never thrown: a thrown error leaves the message in the
- * queue to reappear every 30 seconds, and there is no retry cap until P6.
+ * queue to reappear every 30 seconds. The event loop (index.ts) archives messages
+ * past a read_ct threshold so a poison message is not retried forever (P6).
  */
 
 import type postgres from "postgres";

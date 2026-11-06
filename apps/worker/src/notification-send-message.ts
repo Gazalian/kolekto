@@ -1,21 +1,22 @@
 /**
  * notification-send-message.ts — the message the sender hands the provider.
  *
- * Template rendering is P7 and deliberately out of scope here. This phase (P5)
- * builds the sender runtime, so it needs *a* valid message to exercise the
- * provider seam end to end. That message is a fixed, PII-free placeholder:
+ * P7 adds event-specific templates for the four email-evaluation events
+ * (member.create, member.approve_join, officer_invitation.accept,
+ * officer_term.end). When event context is available the sender calls
+ * buildEmailMessage, which renders the appropriate template. The placeholder
+ * remains as a fallback for events without a template.
  *
- *   · No name, member code, community name, event detail or free text — the
- *     delivery log and any provider echo must never become a place where
- *     someone's details sit (decision record §9.3). Only the recipient address
- *     is used, and only as the envelope `to`; it is never put in the body.
- *   · A non-empty plain-text part, as every adapter requires. No HTML.
- *
- * It passes assertValidEmailRequest. P7 replaces this with real per-event
- * templates; this module is the single place that changes when it does.
+ * Content restrictions (decision record §5, §7, §9.3):
+ *   · Community name, member code, officer role, action date only.
+ *   · Never: members.id, other members' data, collection/balance data,
+ *     contact addresses in the body, internal IDs.
+ *   · All user-controlled values are HTML-escaped before insertion.
  */
 
 import type { EmailMessage } from "@kolekto/adapters";
+
+import { buildTemplatedMessage, type EventContext } from "./notification-email-templates.ts";
 
 export const PLACEHOLDER_SUBJECT = "You have a new Kolekto notification";
 
@@ -39,4 +40,13 @@ export function buildPlaceholderMessage(recipientAddress: string): EmailMessage 
     subject: PLACEHOLDER_SUBJECT,
     text: PLACEHOLDER_TEXT,
   };
+}
+
+/**
+ * Build the email message for a delivery. Uses event-specific templates when
+ * the event type has one; falls back to the placeholder otherwise.
+ */
+export function buildEmailMessage(recipientAddress: string, ctx: EventContext | null): EmailMessage {
+  if (!ctx) return buildPlaceholderMessage(recipientAddress);
+  return buildTemplatedMessage(recipientAddress, ctx);
 }

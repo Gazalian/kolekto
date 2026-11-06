@@ -154,3 +154,34 @@ export async function loadSendAddress(sql: Db, deliveryId: string): Promise<stri
   `;
   return row?.recipient_address ?? null;
 }
+
+/**
+ * Read the recipient address together with the event type and payload for
+ * template rendering. The join to notification_events reads the frozen
+ * payload snapshot. Returns null when the delivery is no longer sending or
+ * carries no address.
+ */
+export interface SendContext {
+  readonly address: string;
+  readonly eventType: string;
+  readonly payload: Record<string, unknown>;
+}
+
+export async function loadSendContext(sql: Db, deliveryId: string): Promise<SendContext | null> {
+  const [row] = await sql<{
+    recipient_address: string | null;
+    event_type: string | null;
+    payload: Record<string, unknown> | null;
+  }[]>`
+    select d.recipient_address, e.event_type, e.payload
+    from public.notification_deliveries d
+    join public.notification_events e on e.id = d.notification_event_id
+    where d.id = ${deliveryId}::uuid and d.status = 'sending'
+  `;
+  if (!row?.recipient_address) return null;
+  return {
+    address: row.recipient_address,
+    eventType: row.event_type ?? "",
+    payload: row.payload ?? {},
+  };
+}
