@@ -613,6 +613,9 @@ const WORKER_ROLE_FUNCTIONS = Object.freeze([
   "app.community_communication_notice_attested(uuid)",
   "app.collection_announcement_context(uuid)",
   "app.evaluate_collection_email_recipients(uuid, text)",
+  // Member-announcement audience targeting and the publisher notice.
+  "app.evaluate_collection_email_recipients_targeted(uuid, text, text, uuid[])",
+  "app.evaluate_actor_email(uuid)",
   // Run by the insert path: the id default, the payload sanitiser trigger and the table's CHECK constraint.
   "app.uuid_generate_v7()",
   "extensions.gen_random_bytes(integer)",

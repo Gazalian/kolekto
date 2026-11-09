@@ -177,8 +177,79 @@ export async function processNotificationMessage(
       ? await evaluateCollectionEmail(tx, msg, event.id, category)
       : await evaluateEmail(tx, msg, facts.recipientHints, event.id);
 
+    // Publisher notice: when a collection is PUBLISHED, email the officer who
+    // published it (the actor) at their confirmed account email, as an
+    // essential confirmation. Publish only — not reminders or change
+    // announcements. Skipped silently when the actor-email function is not
+    // installed, when there is no officer actor, or when the same address is
+    // already queued as an audience member (no duplicate to one inbox).
+    if (msg.action === "collection.publish") {
+      await notifyPublisher(tx, msg, event.id);
+    }
+
     return { outcome: "processed", deliveries: recipients.length, email };
   });
+}
+
+// ── Publisher notice (collection.publish) ────────────────────────────────────
+
+/**
+ * Create one email delivery to the officer who published the collection, at
+ * their confirmed account email. Essential (transactional): it carries no
+ * communication_category, so the send-time recheck treats it as an
+ * account-addressed essential notice rather than member communication. Never
+ * creates a second delivery for an address already queued for this event, and
+ * never throws — a publisher-notice failure must not fail the whole message.
+ */
+async function notifyPublisher(sql: Db, msg: AuditMessage, eventId: string): Promise<void> {
+  if (msg.actor_type !== "officer" || !msg.actor_user_id) return;
+
+  // Feature-detect the helper so a worker on an older database (or without the
+  // grant) keeps processing the rest of the message.
+  const [probe] = await sql<{ available: boolean }[]>`
+    select coalesce(has_function_privilege(
+      to_regprocedure('app.evaluate_actor_email(uuid)'), 'execute'), false) as available
+  `;
+  if (probe?.available !== true) return;
+
+  const [actor] = await sql<{ address: string | null; assurance: string | null; skip_reason: string | null }[]>`
+    select address, assurance, skip_reason from app.evaluate_actor_email(${msg.actor_user_id}::uuid)
+  `;
+  if (!actor || actor.address === null || actor.assurance === null) return;
+
+  // Do not email the same address twice for one event (the publisher may also
+  // be an audience member). Compared case-insensitively, against rows already
+  // written in this transaction.
+  const [dup] = await sql<{ exists: boolean }[]>`
+    select exists (
+      select 1 from public.notification_deliveries
+      where notification_event_id = ${eventId}::uuid
+        and channel = 'email'
+        and recipient_address is not null
+        and lower(recipient_address) = lower(${actor.address})
+    ) as exists
+  `;
+  if (dup?.exists === true) return;
+
+  await sql`
+    insert into public.notification_deliveries (
+      notification_event_id, community_id,
+      recipient_member_id, recipient_user_id,
+      recipient_address, recipient_address_assurance,
+      channel, status, send_class
+    ) values (
+      ${eventId}::uuid,
+      ${msg.community_id}::uuid,
+      null,
+      ${msg.actor_user_id}::uuid,
+      ${actor.address},
+      ${actor.assurance},
+      'email',
+      'pending',
+      'transactional'
+    )
+    on conflict do nothing
+  `;
 }
 
 // ── Email evaluation (P4) ────────────────────────────────────────────────────

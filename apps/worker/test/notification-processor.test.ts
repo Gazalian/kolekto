@@ -33,6 +33,12 @@ interface World {
   context?: Record<string, unknown>;
   /** Canned answer for app.evaluate_collection_email_recipients. */
   collectionRecipients?: Array<{ member_id: string; user_id: string | null; eligible: boolean; address: string | null; assurance: string | null; skip_reason: string | null }>;
+  /** Publisher notice: whether app.evaluate_actor_email is installed/executable. Default: not installed. */
+  actorEmailFn?: boolean;
+  /** Publisher notice: canned answer for app.evaluate_actor_email. */
+  actorEmail?: { address: string | null; assurance: string | null; skip_reason: string | null };
+  /** Publisher notice: whether an email row for the actor's address already exists this event. */
+  publisherDup?: boolean;
 }
 
 function fakeDb(world: World) {
@@ -40,9 +46,18 @@ function fakeDb(world: World) {
   const tx = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("?").replace(/\s+/g, " ").trim();
     log.push({ text, values });
+    if (text.includes("has_function_privilege") && text.includes("evaluate_actor_email")) {
+      return [{ available: world.actorEmailFn === true }];
+    }
     if (text.includes("has_function_privilege")) {
       const a = world.announcement ?? { context: false, eligibility: false };
       return [{ context: a.context, eligibility: a.eligibility, notice: a.notice ?? false, targeted: a.targeted ?? false }];
+    }
+    if (text.includes("from app.evaluate_actor_email")) {
+      return [world.actorEmail ?? { address: null, assurance: null, skip_reason: "unverified_account_email" }];
+    }
+    if (text.includes("from public.notification_deliveries where notification_event_id") && text.includes("as exists")) {
+      return [{ exists: world.publisherDup === true }];
     }
     if (text.includes("app.community_communication_notice_attested")) return [{ attested: world.attested ?? null }];
     if (text.includes("from pg_catalog.pg_attribute")) return [{ supported: world.categoryColumn === true }];
@@ -713,4 +728,78 @@ describe("payment-status targeting is disabled", () => {
       assert.ok(!log.some((r) => r.text.includes("resolve_collection_audience")));
     });
   }
+});
+
+// ── Publisher notice (collection.publish emails the officer who published) ───
+
+describe("publisher notice on collection.publish", () => {
+  const COLLECTION = { name: "Annual Dues", slug: "annual-dues", community_slug: "kwasu" };
+  const CONTEXT = { community_name: "KWASU", description_excerpt: null, amount_model: "open", fixed_amount_kobo: null, deadline_at: null };
+  const installed = {
+    announcement: { context: true, eligibility: true, notice: true },
+    attested: true,
+    context: CONTEXT,
+    collection: COLLECTION,
+  };
+
+  function publisherRow(log: Recorded[]): Recorded | undefined {
+    return deliveryRows(log).find((r) => r.text.includes("'email'") && r.text.includes("'transactional'"));
+  }
+
+  it("emails the publisher at their confirmed account email (member_id null, user_id = actor, transactional, pending)", async () => {
+    const { sql, log } = fakeDb({
+      ...installed,
+      collectionRecipients: [],
+      actorEmailFn: true,
+      actorEmail: { address: "ada.officer@example.com", assurance: "verified_account", skip_reason: null },
+      publisherDup: false,
+    });
+    await processNotificationMessage(sql, message("collection.publish", { object_type: "collection" }), NOW);
+    const row = publisherRow(log);
+    assert.ok(row, "a transactional email row for the publisher is written");
+    assert.match(row!.text, /'pending'/);
+    assert.ok(row!.values.includes("ada.officer@example.com"), "to the actor's confirmed account email");
+    assert.ok(row!.values.includes(USER), "recipient_user_id is the actor");
+  });
+
+  it("writes no publisher row when the actor-email function is not installed", async () => {
+    const { sql, log } = fakeDb({
+      ...installed,
+      collectionRecipients: [],
+      actorEmailFn: false,
+      actorEmail: { address: "ada.officer@example.com", assurance: "verified_account", skip_reason: null },
+    });
+    await processNotificationMessage(sql, message("collection.publish", { object_type: "collection" }), NOW);
+    assert.equal(publisherRow(log), undefined);
+    assert.ok(!log.some((r) => r.text.includes("from app.evaluate_actor_email")), "the function is never called");
+  });
+
+  it("writes no publisher row when the actor's address is already queued as an audience member", async () => {
+    const { sql, log } = fakeDb({
+      ...installed,
+      collectionRecipients: [],
+      actorEmailFn: true,
+      actorEmail: { address: "ada.officer@example.com", assurance: "verified_account", skip_reason: null },
+      publisherDup: true,
+    });
+    await processNotificationMessage(sql, message("collection.publish", { object_type: "collection" }), NOW);
+    assert.equal(publisherRow(log), undefined, "no duplicate email to one inbox");
+  });
+
+  it("does not fire for reminders or change-announcements (publish only)", async () => {
+    for (const action of ["collection.remind", "collection.announce_update"]) {
+      const { sql, log } = fakeDb({
+        ...installed,
+        collectionRecipients: [],
+        actorEmailFn: true,
+        actorEmail: { address: "ada.officer@example.com", assurance: "verified_account", skip_reason: null },
+      });
+      await processNotificationMessage(
+        sql,
+        message(action, { object_type: "collection", after_state: { changed_fields: ["deadline"] } }),
+        NOW,
+      );
+      assert.ok(!log.some((r) => r.text.includes("from app.evaluate_actor_email")), `${action} does not notify the publisher`);
+    }
+  });
 });
