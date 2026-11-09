@@ -43,8 +43,18 @@ type Db = postgres.Sql<Record<string, never>> | postgres.TransactionSql<Record<s
  * `next_retry_at` on the delivery row, matching the `community_deferred`
  * pattern. They are deferrals, not retries — `attempt_count` is unchanged.
  */
+/*
+ * M13.3 R3 adds `ineligible`: the send-time eligibility recheck
+ * (app.recheck_delivery_eligibility, run first inside the reserve function)
+ * found the row may no longer be sent — the member opted out, the community
+ * notice was revoked, the member was archived, the address changed, the
+ * collection is no longer reachable, or the category is blocked. The database
+ * has already set the row skipped with the specific stable code, erased the
+ * address and undone the attempt. Terminal, like `address_suppressed`.
+ */
 export type ReservationOutcome =
   | "granted"
+  | "ineligible"
   | "address_suppressed"
   | "address_limited"
   | "community_deferred"

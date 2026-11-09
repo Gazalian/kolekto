@@ -234,3 +234,105 @@ describe("sendOneClaimed — non-granted reservations make no provider call", ()
     });
   }
 });
+
+// ── Member announcements: a collection email without a usable link is never sent ──
+
+function grantedSql(
+  eventType: string,
+  payload: Record<string, unknown>,
+  sendTimeRecheck = true,
+): { sql: Parameters<typeof sendOneClaimed>[0]; settles: unknown[][] } {
+  const settles: unknown[][] = [];
+  const base = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    const text = strings.join("?").replace(/\s+/g, " ").trim();
+    if (text.includes("from public.notification_deliveries d join public.notification_events e")) {
+      return [{ recipient_address: "chidi@example.com", event_type: eventType, payload, send_time_recheck: sendTimeRecheck }];
+    }
+    if (text.includes("app.resolve_notification_claim")) {
+      settles.push(values);
+      return [{ settled: true, reason: "settled" }];
+    }
+    throw new Error(`fakeSql: unexpected base query "${text}"`);
+  }) as unknown as Parameters<typeof sendOneClaimed>[0];
+  (base as unknown as { begin: unknown }).begin = async (cb: (tx: unknown) => unknown) => {
+    const tx = async (strings: TemplateStringsArray) => {
+      const text = strings.join("?").replace(/\s+/g, " ").trim();
+      if (text.includes("app.claim_next_notification_delivery")) {
+        return [{ delivery_id: "11111111-1111-4111-8111-111111111111", claimed: true, lease_token: "t".repeat(64), lease_expires_at: "2026-10-29T00:05:00Z", attempt_count: 0, reason: "claimed" }];
+      }
+      if (text.includes("app.reserve_email_attempt")) return [{ reservation: "granted", retry_at: null }];
+      throw new Error(`fakeSql tx: unexpected query "${text}"`);
+    };
+    return cb(tx);
+  };
+  return { sql: base, settles };
+}
+
+describe("sendOneClaimed — member announcements", () => {
+  const payload = { community_name: "KWASU", community_slug: "kwasu", collection_name: "Dues", collection_slug: "dues" };
+
+  it("a collection announcement with no APP_BASE_URL is resolved dead (collection_link_unavailable) without a provider call", async () => {
+    const { sql, settles } = grantedSql("collection.publish", payload);
+    const provider = recordingProvider();
+    const step = await sendOneClaimed(sql, { provider, now: () => Date.parse("2026-10-29T00:00:00Z"), rng: () => 0.5 });
+    assert.deepEqual(step, { outcome: "dead", deliveryId: "11111111-1111-4111-8111-111111111111", errorCode: "collection_link_unavailable" });
+    assert.equal(provider.attempts, 0, "no placeholder is sent to a member who has no account");
+    assert.equal(settles[0]?.[2], "dead");
+    assert.equal(settles[0]?.[3], "collection_link_unavailable");
+  });
+
+  it("with APP_BASE_URL it sends, and the sent outcome is 'sent' (accepted), never 'delivered'", async () => {
+    const { sql, settles } = grantedSql("collection.publish", payload);
+    const provider = recordingProvider();
+    const step = await sendOneClaimed(sql, { provider, now: () => Date.parse("2026-10-29T00:00:00Z"), rng: () => 0.5, appBaseUrl: "https://app.kolekto.example" });
+    assert.equal(step.outcome, "sent");
+    assert.equal(provider.attempts, 1);
+    assert.equal(settles[0]?.[2], "sent");
+  });
+});
+
+// ── M13.3 R3: send-time protection ───────────────────────────────────────────
+
+describe("sendOneClaimed — M13.3 R3 send-time protection", () => {
+  const payload = { community_name: "KWASU", community_slug: "kwasu", collection_name: "Dues", collection_slug: "dues", member_name: "Chidi", member_code: "K/1" };
+  const opts = (provider: ReturnType<typeof recordingProvider>) => ({ provider, now: () => Date.parse("2026-10-29T00:00:00Z"), rng: () => 0.5, appBaseUrl: "https://app.kolekto.example" });
+
+  it("an `ineligible` reservation (the database recheck refused the row) is a terminal skip with no provider call", async () => {
+    const { sql, baseLog } = claimReserveSql("ineligible", null);
+    const provider = recordingProvider();
+    const step = await sendOneClaimed(sql, opts(provider));
+    assert.deepEqual(step, { outcome: "skipped", deliveryId: "11111111-1111-4111-8111-111111111111", reservation: "ineligible" });
+    assert.equal(provider.attempts, 0);
+    assert.deepEqual(baseLog, [], "nothing is read or settled by the worker: the database already settled the row");
+  });
+
+  for (const eventType of ["collection.publish", "collection.remind", "collection.announce_update", "collection.remind_unpaid", "community.mystery", ""]) {
+    it(`without the database recheck, a non-essential row (${eventType || "unknown"}) is settled dead/eligibility_unverifiable and never sent`, async () => {
+      const { sql, settles } = grantedSql(eventType, payload, false);
+      const provider = recordingProvider();
+      const step = await sendOneClaimed(sql, opts(provider));
+      assert.deepEqual(step, { outcome: "dead", deliveryId: "11111111-1111-4111-8111-111111111111", errorCode: "eligibility_unverifiable" });
+      assert.equal(provider.attempts, 0, "fail closed: no provider call");
+      assert.equal(settles[0]?.[2], "dead");
+      assert.equal(settles[0]?.[3], "eligibility_unverifiable");
+    });
+  }
+
+  for (const eventType of ["member.create", "member.approve_join", "officer_invitation.accept", "officer_term.end"]) {
+    it(`without the database recheck, an essential row (${eventType}) is still sent — transactional mail is unaffected`, async () => {
+      const { sql, settles } = grantedSql(eventType, payload, false);
+      const provider = recordingProvider();
+      const step = await sendOneClaimed(sql, opts(provider));
+      assert.equal(step.outcome, "sent");
+      assert.equal(provider.attempts, 1);
+      assert.equal(settles[0]?.[2], "sent");
+    });
+  }
+
+  it("with the database recheck present, a community row the database granted is sent", async () => {
+    const { sql } = grantedSql("collection.publish", payload, true);
+    const provider = recordingProvider();
+    const step = await sendOneClaimed(sql, opts(provider));
+    assert.equal(step.outcome, "sent");
+  });
+});

@@ -2,7 +2,11 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  canSend,
+  collectionUrl,
+  describeChanges,
   escapeHtml,
+  formatDeadline,
   hasTemplate,
   renderTemplate,
   buildTemplatedMessage,
@@ -37,8 +41,15 @@ describe("hasTemplate", () => {
     assert.equal(hasTemplate("officer_term.end"), true);
   });
 
+  it("returns true for the three member-announcement collection events", () => {
+    assert.equal(hasTemplate("collection.publish"), true);
+    assert.equal(hasTemplate("collection.remind"), true);
+    assert.equal(hasTemplate("collection.announce_update"), true);
+  });
+
   it("returns false for non-template events", () => {
-    assert.equal(hasTemplate("collection.publish"), false);
+    assert.equal(hasTemplate("collection.publish_remind_unpaid"), false);
+    assert.equal(hasTemplate("collection.remind_unpaid"), false);
     assert.equal(hasTemplate("member.reject_join"), false);
     assert.equal(hasTemplate("member.join_via_invite"), false);
     assert.equal(hasTemplate("unknown.action"), false);
@@ -431,5 +442,106 @@ describe("placeholder message backward compatibility", () => {
   it("placeholder puts address only in to, never in body", () => {
     const msg = buildPlaceholderMessage("secret@test.com");
     assert.ok(!msg.text.includes("secret@test.com"));
+  });
+});
+
+// ── Member announcements: collection templates ──────────────────────────────
+
+describe("collection announcement templates", () => {
+  const BASE = "https://app.kolekto.example";
+  const payload = {
+    actor_name: "Ada Officer",
+    community_id: "c",
+    community_name: "KWASU Alumni",
+    community_slug: "kwasu",
+    collection_name: "Annual Dues",
+    collection_slug: "annual-dues",
+    collection_description: "Dues for the 2027 year.",
+    amount_model: "fixed",
+    fixed_amount_kobo: "500000",
+    deadline_at: "2026-12-31T22:59:00.000Z",
+  };
+  const ctx = (eventType: string, extra: Record<string, unknown> = {}, appBaseUrl: string | null = BASE): EventContext => ({
+    eventType,
+    payload: { ...payload, ...extra },
+    ...(appBaseUrl !== null ? { appBaseUrl } : {}),
+  });
+
+  it("publish: subject, name, description, amount, deadline, call to action and the public link", () => {
+    const r = renderTemplate(ctx("collection.publish"))!;
+    assert.equal(r.subject, "New collection from KWASU Alumni: Annual Dues");
+    // Fixed-amount collection: CTA is "View & pay" (open-amount still uses "View and contribute"; see test below).
+    for (const part of ["Annual Dues", "Dues for the 2027 year.", "Amount: ₦5,000.00", "Deadline: 31 December 2026", "View & pay: https://app.kolekto.example/kwasu/annual-dues"]) {
+      assert.ok(r.text.includes(part), part);
+    }
+    assert.ok(r.html.includes('href="https://app.kolekto.example/kwasu/annual-dues"'));
+    assert.ok(r.text.includes("No Kolekto account is needed"), "says no account is needed");
+    assert.ok(!/sign in/i.test(r.text), "never asks an account-less member to sign in");
+  });
+
+  it("links to the PUBLIC collection page, never the officer dashboard", () => {
+    const r = renderTemplate(ctx("collection.publish"))!;
+    assert.ok(!r.text.includes("/c/kwasu"), "no /c/{slug} officer route");
+    assert.equal(collectionUrl(BASE + "/some/path?x=1", "kwasu", "annual-dues"), "https://app.kolekto.example/kwasu/annual-dues");
+  });
+
+  it("says how to stop receiving these messages", () => {
+    const r = renderTemplate(ctx("collection.publish"))!;
+    assert.ok(r.text.includes("To stop receiving these messages, contact the organisers of KWASU Alumni."));
+  });
+
+  it("reminder: a neutral reminder that never claims the member has not paid", () => {
+    const r = renderTemplate(ctx("collection.remind"))!;
+    assert.equal(r.subject, "Reminder from KWASU Alumni: Annual Dues");
+    assert.ok(!/owe|outstanding|unpaid|not paid|overdue/i.test(r.text + r.html), "no payment-status claim");
+  });
+
+  it("update: names what changed, in words", () => {
+    const r = renderTemplate(ctx("collection.announce_update", { changed_fields: "description,deadline" }))!;
+    assert.equal(r.subject, "Update from KWASU Alumni: Annual Dues");
+    assert.ok(r.text.includes("What changed: the description and the payment deadline."));
+    // Fixed-amount collection: CTA is "View & pay".
+    assert.ok(r.text.includes("View & pay: https://app.kolekto.example/kwasu/annual-dues"));
+    assert.equal(describeChanges("name,deadline,start_date"), "the collection name, the payment deadline and the start date");
+    assert.equal(describeChanges("bogus"), "");
+  });
+
+  it("omits amount for a non-fixed collection and deadline when there is none", () => {
+    const r = renderTemplate(ctx("collection.publish", { amount_model: "open", deadline_at: null }))!;
+    assert.ok(!r.text.includes("Amount:"));
+    assert.ok(!r.text.includes("Deadline:"));
+  });
+
+  it("escapes every collection-controlled value in HTML and strips line breaks from the subject", () => {
+    const r = renderTemplate(ctx("collection.publish", {
+      collection_name: "<script>x</script>\r\nBcc: evil@example.com",
+      collection_description: "<img src=x onerror=alert(1)>",
+      community_name: "A & B",
+    }))!;
+    assert.ok(!r.html.includes("<script>"));
+    assert.ok(!r.html.includes("<img"));
+    assert.ok(r.html.includes("A &amp; B"));
+    assert.ok(!/[\r\n]/.test(r.subject), "subject is a single line");
+  });
+
+  it("cannot be rendered — and must not be sent — without a usable link", () => {
+    assert.equal(renderTemplate(ctx("collection.publish", {}, null)), null, "no base URL");
+    assert.equal(renderTemplate(ctx("collection.publish", { collection_slug: "../admin" })), null, "malformed slug");
+    assert.equal(renderTemplate(ctx("collection.publish", { community_slug: "" })), null, "missing slug");
+    assert.equal(renderTemplate(ctx("collection.publish", {}, "javascript:alert(1)")), null, "non-http base");
+    assert.equal(canSend(ctx("collection.publish", {}, null)), false);
+    assert.equal(canSend(ctx("collection.publish")), true);
+    assert.equal(canSend({ eventType: "member.create", payload: {} }), true, "other events are unaffected");
+  });
+
+  it("produces a valid adapter request with the address only in the envelope", () => {
+    const m = buildEmailMessage("chidi@example.com", ctx("collection.publish"));
+    assert.doesNotThrow(() => assertValidEmailRequest({ idempotencyKey: "11111111-1111-4111-8111-111111111111", message: m }));
+    assert.ok(!m.text.includes("chidi@example.com") && !(m.html ?? "").includes("chidi@example.com"));
+  });
+
+  it("formats deadlines in Africa/Lagos", () => {
+    assert.equal(formatDeadline("2026-12-31T23:30:00.000Z"), "1 January 2027");
+    assert.equal(formatDeadline("not a date"), "");
   });
 });

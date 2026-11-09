@@ -14,8 +14,11 @@
 
 export const NOTIFICATION_LABELS: Record<string, string> = {
   "collection.publish": "Collection published",
-  // M13.3: a publish specifically aimed at the "still owes payment" cohort.
+  // Historical rows only: payment-status targeting is disabled and no longer
+  // creates deliveries (payment status cannot be established).
   "collection.publish_remind_unpaid": "Payment reminder",
+  "collection.remind": "Collection reminder",
+  "collection.announce_update": "Collection updated",
   "member.approve_join": "Membership approved",
   "member.join_via_invite": "New member joined",
 };
@@ -33,10 +36,16 @@ export function getNotificationDeepLink(eventType: string, payload: Record<strin
   if (!slug) return null;
 
   switch (eventType) {
+    // Collection notifications go to MEMBERS, so they open the public
+    // collection page (/{community}/{collection}) — the page a member can
+    // use without officer access. The /c/{slug}/... dashboard is officer-only.
+    // Without a collection slug there is no member page to open: no link.
     case "collection.publish":
-    case "collection.publish_remind_unpaid": {
+    case "collection.publish_remind_unpaid":
+    case "collection.remind":
+    case "collection.announce_update": {
       const colSlug = typeof payload.collection_slug === "string" ? payload.collection_slug : undefined;
-      return colSlug ? `/c/${slug}/collections/${colSlug}` : `/c/${slug}/collections`;
+      return colSlug ? `/${slug}/${colSlug}` : null;
     }
     case "member.approve_join":
       return `/c/${slug}/members`;
@@ -54,9 +63,15 @@ export function getNotificationDescription(eventType: string, payload: Record<st
       const name = typeof payload.collection_name === "string" ? payload.collection_name : undefined;
       return name ? `${name} is now live` : "A collection is now live";
     }
-    case "collection.publish_remind_unpaid": {
+    case "collection.publish_remind_unpaid":
+    case "collection.remind": {
+      // Never claims the reader owes money: payment status is not recorded.
       const name = typeof payload.collection_name === "string" ? payload.collection_name : undefined;
-      return name ? `Your payment for ${name} is still outstanding` : "A payment is still outstanding";
+      return name ? `Reminder: ${name}` : "A collection reminder";
+    }
+    case "collection.announce_update": {
+      const name = typeof payload.collection_name === "string" ? payload.collection_name : undefined;
+      return name ? `${name} has been updated` : "A collection has been updated";
     }
     case "member.approve_join":
       return "Your membership has been approved";

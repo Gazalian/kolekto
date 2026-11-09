@@ -541,7 +541,8 @@ describe("integration lane — Phase 1b relocation and connection enforcement", 
 
   it("the integration files (six from Phase 1b, the Phase 6A end-to-end file and the Phase 7 real-worker file) live in test/integration/ under their approved names", () => {
     assert.deepEqual(integrationFiles(), [...INTEGRATION_MANIFEST].sort());
-    assert.equal(INTEGRATION_MANIFEST.length, 9);
+    // M13.3 R3 added the communication-policy file (tenth).
+    assert.equal(INTEGRATION_MANIFEST.length, 10);
     assert.ok(INTEGRATION_MANIFEST.includes("test/integration/notification-sender-mailpit.integration.test.ts"));
     assert.ok(INTEGRATION_MANIFEST.includes("test/integration/notification-e2e-mailpit.integration.test.ts"));
     assert.ok(!INTEGRATION_MANIFEST.some((f) => f.includes("notification-pipeline")), "the pipeline file was renamed");

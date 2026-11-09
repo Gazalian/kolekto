@@ -22,19 +22,16 @@ describe("getNotificationLabel", () => {
 });
 
 describe("getNotificationDeepLink", () => {
-  it("links a published collection to its page when both slugs are present", () => {
-    expect(
-      getNotificationDeepLink("collection.publish", {
-        community_slug: "lagos-alumni",
-        collection_slug: "annual-dues",
-      }),
-    ).toBe("/c/lagos-alumni/collections/annual-dues");
+  it("links a collection notification to the PUBLIC collection page members can open, not the officer dashboard", () => {
+    for (const type of ["collection.publish", "collection.remind", "collection.announce_update"]) {
+      const link = getNotificationDeepLink(type, { community_slug: "lagos-alumni", collection_slug: "annual-dues" });
+      expect(link).toBe("/lagos-alumni/annual-dues");
+      expect(link?.startsWith("/c/")).toBe(false);
+    }
   });
 
-  it("falls back to the collections list when the collection slug is missing", () => {
-    expect(getNotificationDeepLink("collection.publish", { community_slug: "lagos-alumni" })).toBe(
-      "/c/lagos-alumni/collections",
-    );
+  it("gives no link (rather than an officer-only list) when the collection slug is missing", () => {
+    expect(getNotificationDeepLink("collection.publish", { community_slug: "lagos-alumni" })).toBeNull();
   });
 
   it("links membership events to the members page", () => {
@@ -60,7 +57,7 @@ describe("getNotificationDeepLink", () => {
     expect(getNotificationDeepLink("collection.publish", { community_slug: 42 })).toBeNull();
     expect(
       getNotificationDeepLink("collection.publish", { community_slug: "lagos-alumni", collection_slug: { a: 1 } }),
-    ).toBe("/c/lagos-alumni/collections");
+    ).toBeNull();
   });
 });
 
@@ -75,25 +72,23 @@ describe("getNotificationDescription", () => {
     expect(getNotificationDescription("collection.publish", {})).toBe("A collection is now live");
   });
 
-  it("M13.3: the payment-reminder variant describes an outstanding payment, named when possible", () => {
+  it("the legacy payment-reminder variant is described as a neutral reminder, named when possible", () => {
     expect(
       getNotificationDescription("collection.publish_remind_unpaid", { collection_name: "Annual Dues" }),
-    ).toBe("Your payment for Annual Dues is still outstanding");
-    expect(getNotificationDescription("collection.publish_remind_unpaid", {})).toBe(
-      "A payment is still outstanding",
-    );
+    ).toBe("Reminder: Annual Dues");
+    expect(getNotificationDescription("collection.publish_remind_unpaid", {})).toBe("A collection reminder");
   });
 
-  it("M13.3: the payment-reminder variant deep-links to the collection", () => {
-    expect(
-      getNotificationDeepLink("collection.publish_remind_unpaid", {
-        community_slug: "lagos-alumni",
-        collection_slug: "annual-dues",
-      }),
-    ).toBe("/c/lagos-alumni/collections/annual-dues");
-    expect(
-      getNotificationDeepLink("collection.publish_remind_unpaid", { community_slug: "lagos-alumni" }),
-    ).toBe("/c/lagos-alumni/collections");
+  it("no reminder text claims the reader owes money (payment status is not recorded)", () => {
+    for (const type of ["collection.publish_remind_unpaid", "collection.remind"]) {
+      expect(getNotificationDescription(type, { collection_name: "Dues" })).not.toMatch(/owe|outstanding|unpaid/i);
+    }
+  });
+
+  it("labels and describes reminders and update announcements", () => {
+    expect(getNotificationLabel("collection.remind")).toBe("Collection reminder");
+    expect(getNotificationLabel("collection.announce_update")).toBe("Collection updated");
+    expect(getNotificationDescription("collection.announce_update", { collection_name: "Dues" })).toBe("Dues has been updated");
   });
 
   it("describes an approved membership", () => {

@@ -276,10 +276,10 @@ describe("the processor against the real database", () => {
     //
     //   all    → every audience member with an account gets one in-app
     //            delivery.
-    //   unpaid → only audience members with an outstanding obligation on
-    //            this collection (status in unpaid/in_installments/overdue)
-    //            get one in-app delivery; members with no obligation yet
-    //            and members with paid/exempt/cancelled are excluded.
+    //   unpaid → the event is recorded but NOBODY is notified: payment
+    //            status cannot be established (no contributions are
+    //            recorded and no path sets an obligation to paid), so the
+    //            worker no longer treats obligation status as payment status.
     //   none   → no pgmq message is enqueued; no delivery is created.
     //
     // The test runs inside one transaction, rolled back at the end (inRollback),
@@ -407,8 +407,9 @@ describe("the processor against the real database", () => {
             [OWING, PAID].sort(),
             "notify=all names both members",
           );
-          assert.equal(forUnpaid.length, 1, "notify=unpaid reaches only the one still owing");
-          assert.equal(forUnpaid[0]?.recipient_user_id, OWING, "notify=unpaid is addressed to the owing member");
+          assert.equal(forUnpaid.length, 0, "notify=unpaid reaches nobody: payment status cannot be established");
+          const unpaidEvents = await tx<{ c: number }[]>`select count(*)::int as c from public.notification_events where community_id = ${COMMUNITY2} and event_type = 'collection.publish_remind_unpaid'`;
+          assert.equal(unpaidEvents[0]?.c, 1, "the unpaid publish event is still recorded for the audit trail");
 
           // There is no `collection.publish_silent` event or delivery.
           const silent = await tx<{ c: number }[]>`select count(*)::int as c from public.notification_events where community_id = ${COMMUNITY2} and event_type = 'collection.publish_silent'`;
@@ -554,7 +555,8 @@ describe("the processor against the real database", () => {
             await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
           }
 
-          // ── Delivery rows: 'all' reaches both; 'unpaid' reaches only owing.
+          // ── Delivery rows: 'all' reaches both; 'unpaid' reaches nobody
+          //    (payment-status targeting is disabled).
           const deliveries = await tx<{ event_type: string; recipient_user_id: string }[]>`
             select e.event_type, d.recipient_user_id::text as recipient_user_id
             from public.notification_deliveries d
@@ -572,8 +574,7 @@ describe("the processor against the real database", () => {
             [...forAll.map((d) => d.recipient_user_id)].sort(),
             [OWING, PAID].sort(),
           );
-          assert.equal(forUnpaid.length, 1, "remind=unpaid reaches only the owing member");
-          assert.equal(forUnpaid[0]?.recipient_user_id, OWING);
+          assert.equal(forUnpaid.length, 0, "remind=unpaid reaches nobody: payment status cannot be established");
 
           // ── Replay the queue messages: no new events, no new deliveries.
           const eventsBefore = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_events where community_id = ${COMMUNITY3}`).n;

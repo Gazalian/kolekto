@@ -96,3 +96,9 @@ and archive failures are real: `withWorkerPrivilegeRevoked` takes one privilege
 from the worker role for the length of a test and restores it. A process that dies
 in between leaves it removed, and both files then refuse until
 `npm run itest:worker-role` restores it.
+
+M13.3 R3 added a tenth file, `notification-communication-policy.integration.test.ts` (the central
+communication policy against the M13.3 database proposals: attestation, opt-outs, categories, and the
+send-time recheck on the real claim → reserve path). No SMTP, no pause-switch write, every test rolled
+back; it runs in `--without-smtp`. It holds the M13.3 tests so the processor file's `set_config`
+guard stays at three.

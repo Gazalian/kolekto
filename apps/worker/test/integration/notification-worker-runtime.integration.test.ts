@@ -149,8 +149,8 @@ async function runUntilExit(label: string, options: WorkerOptions, extraSecrets:
 
 // ── Domain actions (real RPCs, committed, as the signed-in user) ──────────────
 
-async function asUser<T>(userId: string, fn: (tx: ItestTx) => Promise<T>): Promise<T> {
-  return (await admin.begin(async (raw) => {
+async function asUser<T>(userId: string, fn: (tx: ItestTx) => Promise<T>, db: ItestSql = admin): Promise<T> {
+  return (await db.begin(async (raw) => {
     const tx = raw as unknown as ItestTx;
     await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: userId, role: "authenticated" })}, true)`;
     await tx`set local role authenticated`;
@@ -358,6 +358,104 @@ async function whileSendingEnabled<T>(fn: () => Promise<T>): Promise<T> {
 
 async function makeDue(deliveryId: string): Promise<void> {
   await admin`update public.notification_deliveries set next_retry_at = now() - interval '1 minute' where id = ${deliveryId}::uuid`;
+}
+
+// ── M13.3 Phase 1: member announcements (accountless member, attested community) ──
+
+interface Announcement {
+  readonly c: CommunityFixture;
+  readonly memberId: string;
+  readonly to: string;
+  readonly collectionId: string;
+}
+
+/**
+ * Real RPCs, committed, in this test's community: one accountless member, the community notice
+ * attestation, and a published collection (collection.publish → queue). The member is created without
+ * an address, so member.create writes a skipped confirmation and no essential email competes with the
+ * announcement for the unscoped claim; the address is then set on the member record.
+ */
+async function publishAnnouncement(): Promise<Announcement> {
+  const c = await newCommunity();
+  const to = scope.address();
+  const memberId = await asUser(c.ownerId, async (tx) => {
+    const [row] = await tx<{ id: string }[]>`
+      select app.create_member(${c.communityId}::uuid, ${`Member ${scope.runTag} ${randomBytes(4).toString("hex")}`}::text, ${runScopedPhone()}::text, null::extensions.citext)::text as id`;
+    return row!.id;
+  });
+  await admin`update public.members set email = ${to} where id = ${memberId}::uuid`;
+  await asUser(c.ownerId, (tx) => tx`select app.attest_community_communication_notice(${c.communityId}::uuid, 'community-notice-v1')`);
+  const collectionId = scope.uuid();
+  await admin`insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, visibility, created_by, audience_mode)
+    values (${collectionId}, ${c.communityId}, ${scope.slug()}, 'Runtime Announcement', 'dues', 'managed', 'fixed', 500000, 'draft', 'unlisted', ${c.ownerId}, 'all_members')`;
+  await asUser(c.ownerId, (tx) => tx`select app.publish_collection(${collectionId}::uuid, 'draft'::public.collection_status, null, 'all')`);
+  return { c, memberId, to, collectionId };
+}
+
+interface AnnouncementRow extends Delivery {
+  category: string | null;
+  send_class: string;
+  member: string | null;
+}
+
+async function announcementRow(a: Announcement): Promise<AnnouncementRow> {
+  const rows = await admin<AnnouncementRow[]>`
+    select d.id::text as id, d.channel::text as channel, d.status::text as status, d.error_code, d.attempt_count, d.next_retry_at::text as next_retry_at,
+           extract(epoch from d.next_retry_at - now())::int as retry_in_s, d.recipient_address, d.recipient_address_assurance, d.dedupe_key,
+           d.provider_message_id, (d.send_lease_token is not null) as lease_held, d.communication_category as category,
+           d.send_class::text as send_class, d.recipient_member_id::text as member
+    from public.notification_deliveries d join public.notification_events e on e.id = d.notification_event_id
+    where d.community_id = ${a.c.communityId}::uuid and d.channel = 'email' and e.event_type = 'collection.publish'`;
+  assert.equal(rows.length, 1, "exactly one announcement email row for this community");
+  return rows[0]!;
+}
+
+/** The running (paused) worker processes this test's messages; returns the queued announcement row. */
+async function fanOut(worker: WorkerHandle, a: Announcement): Promise<AnnouncementRow> {
+  await until("the collection.publish fan-out", async () => worker.linesFor("notification_event_processed").some((l) => l["action"] === "collection.publish"));
+  await until("the queue to empty", queueEmpty);
+  const line = worker.linesFor("notification_event_processed").find((l) => l["action"] === "collection.publish");
+  assert.deepEqual(line?.["email"], { kind: "collection", pending: 1, skipped: 0 }, "one pending announcement row");
+  const row = await announcementRow(a);
+  assert.equal(row.member, a.memberId);
+  assert.equal(row.status, "pending");
+  assert.equal(row.recipient_address, a.to);
+  assert.equal(row.category, "community_operational");
+  assert.equal(row.send_class, "bulk");
+  assert.equal(row.attempt_count, 0);
+  const open = (await deliveries(a.c.communityId)).filter((d) => d.channel === "email" && (d.status === "pending" || d.status === "sending"));
+  assert.deepEqual(open.map((d) => d.id), [row.id], "the announcement is this community's only open email row");
+  evidence.reading("M13.3 fan-out", { deliveryId: row.id, status: row.status, category: row.category, sendClass: row.send_class, processed: line });
+  return row;
+}
+
+/** The organiser records the member's own request to stop community email (the R2 writer; exclusive advisory lock). */
+function recordOptOut(a: Announcement, db: ItestSql = admin): Promise<unknown> {
+  return asUser(a.c.ownerId, (tx) => tx`select app.record_member_communication_opt_out_on_request(${a.memberId}::uuid, 'community_operational', 'email', 'phone')`, db);
+}
+
+async function choiceRows(memberId: string): Promise<number> {
+  const [row] = await admin<{ n: number }[]>`select count(*)::int as n from public.member_communication_choices where member_id = ${memberId}::uuid`;
+  return row!.n;
+}
+
+async function backendPid(db: ItestSql): Promise<number> {
+  const [row] = await db<{ pid: number }[]>`select pg_backend_pid() as pid`;
+  return row!.pid;
+}
+
+/** Advisory locks held or awaited by one backend, from pg_locks (read on the harness connection). */
+async function advisoryLocks(pid: number): Promise<{ key: string; mode: string; granted: boolean }[]> {
+  return admin<{ key: string; mode: string; granted: boolean }[]>`
+    select concat_ws(':', classid, objid, objsubid) as key, mode, granted
+    from pg_locks where pid = ${pid} and locktype = 'advisory' order by key, mode`;
+}
+
+/** A promise the test resolves itself: deterministic hand-off between the two connections. */
+function signal<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((r) => { resolve = r; });
+  return { promise, resolve };
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -621,7 +719,9 @@ describe("M13.2 Phase 7 — the real worker process", () => {
       const lines = worker.linesFor("notification_event_processed");
       assert.deepEqual(lines.find((l) => l["msg_id"] === joined)?.["email"], { kind: "no_row" });
       assert.equal(lines.find((l) => l["msg_id"] === joined)?.["deliveries"], 1, "the owner hears of the join, through role_permissions and officer_terms");
-      assert.deepEqual(lines.find((l) => l["msg_id"] === published)?.["email"], { kind: "no_row" });
+      // Member announcements: the role is not granted the (unapplied) collection
+      // eligibility function, so the worker detects it and writes no email row.
+      assert.deepEqual(lines.find((l) => l["msg_id"] === published)?.["email"], { kind: "collection_unavailable" });
       assert.deepEqual(lines.find((l) => l["msg_id"] === unpaid)?.["email"], { kind: "no_row" });
       assert.doesNotMatch(worker.output(), /Failed to process/, "no permission failure on the audience and obligation reads");
       const rows = await deliveries(c.communityId);
@@ -629,6 +729,200 @@ describe("M13.2 Phase 7 — the real worker process", () => {
       assert.equal(rows.filter((d) => d.channel === "email").length, 1, "only member.create produced an email row");
       await assertNoMail(member.to);
     });
+  });
+
+  // ── M13.3 Phase 1: member announcements, the send-time recheck, and the withdrawal race ──
+
+  it("M13.3-A: an eligible collection announcement — real worker fan-out → claim → recheck passes → deferred provider_daily_limited by the zero bulk cap; address kept, no ledger row, nothing in Mailpit", async () => {
+    const a = await publishAnnouncement();
+    await withWorker("m133-a-eligible", normalWorker(), async (worker) => {
+      const queued = await fanOut(worker, a);
+      assert.equal(queued.next_retry_at, null, "not yet reserved");
+      const claimBefore = (await senderState()).lastClaim;
+      await whileSendingEnabled(async () => {
+        const deferred = await until("the reservation to defer the announcement", async () => {
+          const r = await announcementRow(a);
+          return r.status === "pending" && r.next_retry_at !== null ? r : null;
+        });
+        assert.notEqual((await senderState()).lastClaim, claimBefore, "the real worker claimed the delivery");
+        // The recheck runs first in app.reserve_email_attempt; an ineligible row would be skipped with a
+        // code and no address. Reaching L4 is the proof that it passed.
+        assert.equal(deferred.error_code, null, "not skipped by the send-time recheck");
+        assert.equal(deferred.recipient_address, a.to, "deferral, not ineligibility: the address is kept");
+        assert.equal(deferred.recipient_address_assurance, queued.recipient_address_assurance);
+        assert.equal(deferred.attempt_count, 0, "the claim's attempt increment was undone");
+        assert.equal(deferred.lease_held, false, "lease cleared");
+        assert.equal(deferred.provider_message_id, null, "no provider message id");
+        assert.ok(deferred.retry_in_s !== null && deferred.retry_in_s > 86_000 && deferred.retry_in_s <= 86_400, `L4 zero-cap fallback: retry about 24 h out (${String(deferred.retry_in_s)} s)`);
+        assert.equal(await ledgerRows(a.c.communityId), 0, "no attempt ledger row: the provider was never reached");
+        await waitForTicks(2);
+        const later = await announcementRow(a);
+        assert.deepEqual([later.status, later.next_retry_at, later.attempt_count], ["pending", deferred.next_retry_at, 0], "not re-claimed before it is due");
+        await assertNoMail(a.to);
+        evidence.reading("M13.3-A deferred", { deliveryId: deferred.id, status: deferred.status, retryInS: deferred.retry_in_s, addressKept: deferred.recipient_address === a.to, category: deferred.category, sendClass: deferred.send_class, ledgerRows: 0 });
+      });
+      assert.equal(await ledgerRows(a.c.communityId), 0);
+      await assertNoMail(a.to);
+      assert.doesNotMatch(worker.output(), /Failed to process/);
+    });
+  });
+
+  it("M13.3-B: an opt-out recorded after queueing is caught by the send-time recheck under the real worker — skipped opted_out, address erased, no ledger row, nothing in Mailpit", async () => {
+    const a = await publishAnnouncement();
+    await withWorker("m133-b-opt-out", normalWorker(), async (worker) => {
+      await fanOut(worker, a);
+      // The switch is OFF, so the sender claims nothing (RT-1, EV-1): the opt-out lands between queueing and reservation.
+      const claimBefore = (await senderState()).lastClaim;
+      await recordOptOut(a);
+      assert.equal((await senderState()).lastClaim, claimBefore, "nothing was claimed before the opt-out");
+      const stillQueued = await announcementRow(a);
+      assert.deepEqual([stillQueued.status, stillQueued.recipient_address, stillQueued.attempt_count], ["pending", a.to, 0], "queued before the opt-out, untouched by it");
+      await whileSendingEnabled(async () => {
+        const skipped = await until("the recheck to skip the announcement", async () => {
+          const r = await announcementRow(a);
+          return r.status === "skipped" ? r : null;
+        });
+        assert.notEqual((await senderState()).lastClaim, claimBefore, "the real worker claimed the delivery");
+        assert.equal(skipped.error_code, "opted_out", "stable reason");
+        assert.equal(skipped.recipient_address, null, "address erased");
+        assert.equal(skipped.recipient_address_assurance, null);
+        assert.equal(skipped.attempt_count, 0, "attempt undone");
+        assert.equal(skipped.lease_held, false, "lease cleared");
+        assert.equal(skipped.next_retry_at, null);
+        assert.equal(skipped.provider_message_id, null, "no provider message id");
+        assert.equal(await ledgerRows(a.c.communityId), 0, "no attempt ledger row: the provider was never reached");
+        await waitForTicks(2);
+        assert.equal((await announcementRow(a)).status, "skipped", "terminal: never re-claimed");
+        await assertNoMail(a.to);
+        evidence.reading("M13.3-B skipped", { deliveryId: skipped.id, status: skipped.status, code: skipped.error_code, addressErased: skipped.recipient_address === null, ledgerRows: 0 });
+      });
+      await assertNoMail(a.to);
+      assert.doesNotMatch(worker.output(), /Failed to process/);
+    });
+  });
+
+  it("M13.3-C1 (two connections, Case A): a withdrawal committed while the worker holds the claim but before its recheck is honoured — ineligible / opted_out", async () => {
+    const a = await publishAnnouncement();
+    await withWorker("m133-c1-fanout", normalWorker(), (worker) => fanOut(worker, a));
+    const queued = await announcementRow(a);
+    const workerConn = connectAsWorkerRole(gate.verified(), credential);
+    const writer = connectVerified(gate.verified(), { max: 1 });
+    const claimed = signal<{ id: string | null; claimed: boolean | null; pid: number }>();
+    const proceed = signal<void>();
+    let workerTx: Promise<string> | undefined;
+    try {
+      // Connection A (worker role): BEGIN → claim, then wait for the harness before reserving.
+      workerTx = workerConn.begin(async (tx) => {
+        const [c] = await tx<{ id: string | null; claimed: boolean | null }[]>`select delivery_id::text as id, claimed from app.claim_next_notification_delivery(300)`;
+        const [p] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+        claimed.resolve({ id: c?.id ?? null, claimed: c?.claimed ?? null, pid: p!.pid });
+        await proceed.promise;
+        const [r] = await tx<{ reservation: string }[]>`select reservation from app.reserve_email_attempt(${c!.id}::uuid)`;
+        return r!.reservation;
+      }) as Promise<string>;
+      const claim = await claimed.promise;
+      assert.deepEqual([claim.id, claim.claimed], [queued.id, true], "A claimed this test's announcement");
+      assert.deepEqual(await advisoryLocks(claim.pid), [], "A holds no advisory lock before its recheck");
+
+      // Connection B (organiser, separate backend): the opt-out commits while A's transaction is open.
+      const writerPid = await backendPid(writer);
+      assert.notEqual(writerPid, claim.pid, "two independent backends");
+      await recordOptOut(a, writer);
+      assert.equal(await choiceRows(a.memberId), 1, "B's opt-out is committed before A rechecks");
+
+      proceed.resolve();
+      const reservation = await workerTx;
+      assert.equal(reservation, "ineligible", "A's recheck saw the committed withdrawal");
+      const row = await announcementRow(a);
+      assert.deepEqual(
+        [row.status, row.error_code, row.recipient_address, row.attempt_count, row.lease_held],
+        ["skipped", "opted_out", null, 0, false],
+        "skipped opted_out, address erased, attempt undone, lease cleared",
+      );
+      assert.equal(await ledgerRows(a.c.communityId), 0, "no ledger row");
+      await assertNoMail(a.to);
+      evidence.reading("M13.3-C1", { workerPid: claim.pid, writerPid, reservation, status: row.status, code: row.error_code });
+    } finally {
+      proceed.resolve();
+      await workerTx?.catch(() => {});
+      await workerConn.end({ timeout: 2 }).catch(() => {});
+      await writer.end({ timeout: 2 }).catch(() => {});
+    }
+  });
+
+  it("M13.3-C2 (two connections, Case B): the worker's recheck holds the shared lock first; the withdrawal waits on it and commits after the worker — the residual window, then the next reservation honours it", async () => {
+    const a = await publishAnnouncement();
+    await withWorker("m133-c2-fanout", normalWorker(), (worker) => fanOut(worker, a));
+    const queued = await announcementRow(a);
+    const workerConn = connectAsWorkerRole(gate.verified(), credential);
+    const writer = connectVerified(gate.verified(), { max: 1 });
+    const reserved = signal<{ id: string | null; reservation: string | null; pid: number }>();
+    const proceed = signal<void>();
+    let workerTx: Promise<unknown> | undefined;
+    let writerDone: Promise<unknown> | undefined;
+    try {
+      // Connection A (worker role): BEGIN → claim → reserve (recheck takes the shared advisory locks) → wait, uncommitted.
+      workerTx = workerConn.begin(async (tx) => {
+        const [c] = await tx<{ id: string | null }[]>`select delivery_id::text as id from app.claim_next_notification_delivery(300)`;
+        const [r] = await tx<{ reservation: string }[]>`select reservation from app.reserve_email_attempt(${c!.id}::uuid)`;
+        const [p] = await tx<{ pid: number }[]>`select pg_backend_pid() as pid`;
+        reserved.resolve({ id: c?.id ?? null, reservation: r?.reservation ?? null, pid: p!.pid });
+        await proceed.promise;
+      });
+      const r = await reserved.promise;
+      assert.equal(r.id, queued.id, "A claimed this test's announcement");
+      assert.equal(r.reservation, "provider_daily_limited", "eligible at A's snapshot: passed the recheck, then the zero bulk cap deferred it");
+      const held = await advisoryLocks(r.pid);
+      assert.ok(held.some((l) => l.mode === "ShareLock" && l.granted), "A holds a shared advisory lock");
+
+      // Connection B (organiser, separate backend): the opt-out's exclusive lock must wait for A.
+      const writerPid = await backendPid(writer);
+      assert.notEqual(writerPid, r.pid, "two independent backends");
+      let writerSettled = false;
+      writerDone = recordOptOut(a, writer).then(() => { writerSettled = true; });
+      // Deterministic: the server reports B's lock request as not granted, on the same key A holds shared.
+      const waiting = await until("B to wait on the advisory lock", async () => {
+        const rows = (await advisoryLocks(writerPid)).filter((l) => !l.granted);
+        return rows.length > 0 ? rows : null;
+      }, 8_000, 50);
+      assert.equal(waiting[0]!.mode, "ExclusiveLock", "B requests the exclusive lock");
+      assert.ok(held.some((l) => l.key === waiting[0]!.key), "B waits on a key A holds shared");
+      assert.equal(writerSettled, false, "B has not completed while A is open");
+      assert.equal(await choiceRows(a.memberId), 0, "no committed opt-out while A is open");
+
+      proceed.resolve();
+      await workerTx; // A commits
+      await writerDone; // B proceeds and commits
+      assert.equal(writerSettled, true);
+      assert.equal(await choiceRows(a.memberId), 1, "B committed after A");
+      const afterA = await announcementRow(a);
+      assert.deepEqual(
+        [afterA.status, afterA.error_code, afterA.recipient_address, afterA.attempt_count],
+        ["pending", null, a.to, 0],
+        "A's outcome reflects its snapshot: deferred, address kept",
+      );
+      assert.equal(await ledgerRows(a.c.communityId), 0, "no ledger row (zero bulk cap)");
+
+      // The next reservation sees the now-committed withdrawal.
+      await makeDue(queued.id);
+      const next = await workerConn.begin(async (tx) => {
+        const [c] = await tx<{ id: string | null }[]>`select delivery_id::text as id from app.claim_next_notification_delivery(300)`;
+        const [x] = await tx<{ reservation: string }[]>`select reservation from app.reserve_email_attempt(${c!.id}::uuid)`;
+        return { id: c?.id ?? null, reservation: x?.reservation ?? null };
+      });
+      assert.deepEqual(next, { id: queued.id, reservation: "ineligible" });
+      const final = await announcementRow(a);
+      assert.deepEqual([final.status, final.error_code, final.recipient_address, final.attempt_count], ["skipped", "opted_out", null, 0]);
+      assert.equal(await ledgerRows(a.c.communityId), 0);
+      await assertNoMail(a.to);
+      evidence.reading("M13.3-C2", { workerPid: r.pid, writerPid, firstReservation: r.reservation, waitingMode: waiting[0]!.mode, afterWorkerCommit: afterA.status, nextReservation: next.reservation, final: `${final.status}:${final.error_code}` });
+    } finally {
+      proceed.resolve();
+      await workerTx?.catch(() => {});
+      await writerDone?.catch(() => {});
+      await workerConn.end({ timeout: 2 }).catch(() => {});
+      await writer.end({ timeout: 2 }).catch(() => {});
+    }
   });
 
   // ── The pause-switch helper itself ──────────────────────────────────────────

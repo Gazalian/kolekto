@@ -608,6 +608,11 @@ const WORKER_ROLE_FUNCTIONS = Object.freeze([
   "app.email_sending_enabled()",
   "app.evaluate_email_eligibility(text, uuid, uuid)",
   "app.resolve_collection_audience(uuid)",
+  // M13.3 Phase 1: the member-announcement fan-out (all SECURITY DEFINER). The send-time recheck runs inside
+  // app.reserve_email_attempt and is deliberately NOT granted.
+  "app.community_communication_notice_attested(uuid)",
+  "app.collection_announcement_context(uuid)",
+  "app.evaluate_collection_email_recipients(uuid, text)",
   // Run by the insert path: the id default, the payload sanitiser trigger and the table's CHECK constraint.
   "app.uuid_generate_v7()",
   "extensions.gen_random_bytes(integer)",

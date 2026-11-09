@@ -165,6 +165,14 @@ export interface SendContext {
   readonly address: string;
   readonly eventType: string;
   readonly payload: Record<string, unknown>;
+  /**
+   * M13.3 R3: whether the database has the send-time eligibility recheck
+   * (app.recheck_delivery_eligibility). It ships in the same migration that
+   * makes app.reserve_email_attempt call it, so its existence means the
+   * reservation that granted this row rechecked eligibility. Existence only:
+   * the worker needs no EXECUTE on it.
+   */
+  readonly sendTimeRecheck: boolean;
 }
 
 export async function loadSendContext(sql: Db, deliveryId: string): Promise<SendContext | null> {
@@ -172,8 +180,10 @@ export async function loadSendContext(sql: Db, deliveryId: string): Promise<Send
     recipient_address: string | null;
     event_type: string | null;
     payload: Record<string, unknown> | null;
+    send_time_recheck: boolean | null;
   }[]>`
-    select d.recipient_address, e.event_type, e.payload
+    select d.recipient_address, e.event_type, e.payload,
+           to_regprocedure('app.recheck_delivery_eligibility(uuid)') is not null as send_time_recheck
     from public.notification_deliveries d
     join public.notification_events e on e.id = d.notification_event_id
     where d.id = ${deliveryId}::uuid and d.status = 'sending'
@@ -183,5 +193,6 @@ export async function loadSendContext(sql: Db, deliveryId: string): Promise<Send
     address: row.recipient_address,
     eventType: row.event_type ?? "",
     payload: row.payload ?? {},
+    sendTimeRecheck: row.send_time_recheck === true,
   };
 }

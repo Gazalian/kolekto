@@ -66,7 +66,9 @@ let running = true;
  * one any code path writes today (P9-3), so its numbers are what we
  * reconcile against.
  */
-async function loadEmailSender(sql: postgres.Sql<Record<string, never>>): Promise<EmailProvider | null> {
+async function loadEmailSender(
+  sql: postgres.Sql<Record<string, never>>,
+): Promise<{ provider: EmailProvider; appBaseUrl: string } | null> {
   if (!process.env["EMAIL_PROVIDER"]) {
     console.log("Email sender disabled: EMAIL_PROVIDER is not set.");
     return null;
@@ -98,7 +100,9 @@ async function loadEmailSender(sql: postgres.Sql<Record<string, never>>): Promis
       `Email sender configured: provider=${built.name}, idempotency=${built.idempotency}. ` +
         "Sending stays off until the email_sending_enabled pause switch is on.",
     );
-    return built;
+    // APP_BASE_URL is required and validated by loadEmailConfig; collection
+    // announcements link to the public collection page under it.
+    return { provider: built, appBaseUrl: config.appBaseUrl };
   } catch (err) {
     console.error("Email sender NOT started (configuration refused):", safeErrorJson(err));
     return null;
@@ -207,7 +211,8 @@ async function main() {
   };
   const queueLog = { info: (line: string) => console.log(line), error: (line: string) => console.error(line) };
 
-  const provider = await loadEmailSender(sql);
+  const sender = await loadEmailSender(sql);
+  const provider = sender?.provider ?? null;
   let senderHalted = false;
   let lastMaintenance = 0;
   let lastEventHealth = 0;
@@ -281,6 +286,7 @@ async function main() {
 
         const result = await runSenderTick(sql, {
           provider,
+          appBaseUrl: sender!.appBaseUrl,
           now: () => Date.now(),
           rng: Math.random,
           maxBatch: SENDER_BATCH,

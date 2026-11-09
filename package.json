@@ -26,6 +26,7 @@
     "invariants": "node scripts/invariants/run-all.mjs",
     "verify": "npm run typecheck && npm run invariants && npm run test",
     "db:migrate": "supabase migration up --local",
+    "email:local": "node scripts/dev/local-email.mjs",
     "db:backup": "node scripts/db/backup.mjs",
     "db:restore": "node scripts/db/restore.mjs",
     "db:marker": "node scripts/db/persistence-marker.mjs",

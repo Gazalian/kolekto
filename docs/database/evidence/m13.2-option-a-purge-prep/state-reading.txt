@@ -1,0 +1,39 @@
+State reading, read-only, kolekto-itest only. No identifier or secret is selected.
+read_at | tx_read_only
+2026-11-06 15:01:59.505833+00 | on
+(1 row)
+ledger_total | older_than_48h_now | eligible_at_window_start | eligible_at_window_end | oldest | newest
+272 | 0 | 131 | 131 | 2026-11-04 15:50:01.131089+00 | 2026-11-06 10:53:25.619507+00
+(1 row)
+l4_used | l4_cap | gate_refuses_above | l1_window_hours | l2_window_hours | l3_window_hours | l4_window_hours
+141 | 180 | 140 | 24 | 1 | 1 | 24
+(1 row)
+email_sending_enabled | by_function | last_heartbeat_at
+f | f | 2026-11-06 11:03:03.414053+00
+(1 row)
+queued | read | parked | held | archived
+0 | 0 | 0 | 0 | 31
+(1 row)
+channel | status | count
+email | dead | 187
+email | sent | 136
+email | skipped | 27
+in_app | sent | 22
+(4 rows)
+open_deliveries | leases
+0 | 0
+(1 row)
+advisory_locks
+0
+(1 row)
+harness_sessions | worker_sessions
+0 | 0
+(1 row)
+cron_jobs | communities | communities_strict | users | users_test
+0 | 325 | 325 | 343 | 343
+(1 row)
+purge_fn_md5 | trigger_fn_md5
+edf555fa3ffd5ceb4b2476ecb2bd44d0 | 7be129db4c011a8fe280cf8e0400e6e5
+(1 row)
+Mailpit, GET /api/v1/info:
+"Messages":63 "Unread":11 "MessagesDeleted":0 "SMTPAccepted":63 "SMTPRejected":0 

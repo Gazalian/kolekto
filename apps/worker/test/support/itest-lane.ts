@@ -47,6 +47,8 @@ export const INTEGRATION_DIR = path.join("test", "integration");
  * so a file cannot silently drop out of (or slip into) the lane.
  */
 export const INTEGRATION_MANIFEST: readonly string[] = [
+  // M13.3 R3: the communication policy file (no SMTP, no pause switch; rolled back).
+  "test/integration/notification-communication-policy.integration.test.ts",
   "test/integration/notification-e2e-mailpit.integration.test.ts",
   "test/integration/notification-processor.integration.test.ts",
   "test/integration/notification-rate-limit.integration.test.ts",

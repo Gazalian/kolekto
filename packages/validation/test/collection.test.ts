@@ -14,6 +14,8 @@ import {
   transitionCollectionStatusSchema,
   publishCollectionSchema,
   waiveObligationSchema,
+  announceCollectionUpdateSchema,
+  sendCollectionPublishReminderSchema,
 } from "../src/collection.ts";
 
 const COMMUNITY_ID = "01930000-0000-7000-8000-00000000000a";
@@ -193,8 +195,13 @@ describe("lifecycle and obligations", () => {
     assert.equal(result.success, true);
   });
 
-  it("the publish schema accepts the three notifyTarget values and only a draft (M13.3)", () => {
-    for (const notifyTarget of ["all", "unpaid", "none"] as const) {
+  it("the publish schema accepts all and none, and refuses unpaid (payment status cannot be established)", () => {
+    assert.equal(
+      publishCollectionSchema.safeParse({ collectionId: COLLECTION_ID, expected: "draft", notifyTarget: "unpaid" }).success,
+      false,
+      "unpaid targeting is disabled",
+    );
+    for (const notifyTarget of ["all", "none"] as const) {
       assert.equal(
         publishCollectionSchema.safeParse({
           collectionId: COLLECTION_ID,
@@ -319,6 +326,67 @@ describe("setCollectionStorySchema", () => {
     );
     assert.equal(
       setCollectionStorySchema.safeParse({ collectionId: COLLECTION_ID_3, storyWhat: "x".repeat(2000) }).success,
+      true,
+    );
+  });
+});
+
+describe("member announcements", () => {
+  const COLLECTION = "01a0bf9c-cf1a-7955-97d9-fb6eb27f8923";
+  const KEY = "8d6f1c2e-1a2b-4c3d-9e8f-001122334455";
+
+  it("the reminder schema accepts all only — unpaid is refused", () => {
+    assert.equal(sendCollectionPublishReminderSchema.safeParse({ collectionId: COLLECTION, notifyTarget: "all", idempotencyKey: KEY }).success, true);
+    assert.equal(sendCollectionPublishReminderSchema.safeParse({ collectionId: COLLECTION, notifyTarget: "unpaid", idempotencyKey: KEY }).success, false);
+  });
+
+  it("an update announcement names at least one change from the fixed list, never free text", () => {
+    assert.equal(announceCollectionUpdateSchema.safeParse({ collectionId: COLLECTION, changedFields: ["deadline"], idempotencyKey: KEY }).success, true);
+    assert.equal(announceCollectionUpdateSchema.safeParse({ collectionId: COLLECTION, changedFields: [], idempotencyKey: KEY }).success, false);
+    assert.equal(announceCollectionUpdateSchema.safeParse({ collectionId: COLLECTION, changedFields: ["the price went up"], idempotencyKey: KEY }).success, false);
+    assert.equal(announceCollectionUpdateSchema.safeParse({ collectionId: COLLECTION, changedFields: ["deadline"], idempotencyKey: "short" }).success, false);
+  });
+
+  it("an update announcement may carry an optional custom message within 1000 chars", () => {
+    assert.equal(
+      announceCollectionUpdateSchema.safeParse({ collectionId: COLLECTION, changedFields: ["deadline"], idempotencyKey: KEY, customMessage: "Hi folks" }).success,
+      true,
+    );
+    assert.equal(
+      announceCollectionUpdateSchema.safeParse({ collectionId: COLLECTION, changedFields: ["deadline"], idempotencyKey: KEY, customMessage: "x".repeat(1001) }).success,
+      false,
+    );
+  });
+
+  it("targetAudience must be allow-listed, and groups requires at least one group id", () => {
+    assert.equal(
+      announceCollectionUpdateSchema.safeParse({ collectionId: COLLECTION, changedFields: ["deadline"], idempotencyKey: KEY, targetAudience: "all_members" }).success,
+      true,
+    );
+    assert.equal(
+      announceCollectionUpdateSchema.safeParse({ collectionId: COLLECTION, changedFields: ["deadline"], idempotencyKey: KEY, targetAudience: "unpaid" }).success,
+      false,
+      "unpaid is deliberately not a valid target",
+    );
+    assert.equal(
+      announceCollectionUpdateSchema.safeParse({
+        collectionId: COLLECTION,
+        changedFields: ["deadline"],
+        idempotencyKey: KEY,
+        targetAudience: "groups",
+        targetGroupIds: [],
+      }).success,
+      false,
+      "groups target needs at least one group",
+    );
+    assert.equal(
+      announceCollectionUpdateSchema.safeParse({
+        collectionId: COLLECTION,
+        changedFields: ["deadline"],
+        idempotencyKey: KEY,
+        targetAudience: "groups",
+        targetGroupIds: [COLLECTION],
+      }).success,
       true,
     );
   });

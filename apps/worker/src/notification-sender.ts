@@ -50,6 +50,8 @@ import {
   type SettleOptions,
   type SettleOutcomeKind,
 } from "./notification-send-claim.ts";
+import { eventPolicy } from "./communication-policy.ts";
+import { canSend } from "./notification-email-templates.ts";
 import { buildEmailMessage } from "./notification-send-message.ts";
 import {
   expireStaleDeliveries,
@@ -86,6 +88,8 @@ export interface SenderOptions {
   readonly now: () => number;
   /** Jitter source for backoff, injectable for tests. */
   readonly rng: Rng;
+  /** Origin for links in messages (APP_BASE_URL). Collection announcements cannot be sent without it. */
+  readonly appBaseUrl?: string;
 }
 
 /** True once a step means the worker actually claimed a row this tick. */
@@ -155,7 +159,8 @@ export async function sendOneClaimed(sql: BaseSql, opts: SenderOptions): Promise
     ) {
       return { outcome: "deferred", deliveryId, reservation, retryAt };
     }
-    // address_suppressed (P9-1) / address_limited / backlog_full: row is
+    // ineligible (M13.3 R3 send-time recheck) / address_suppressed (P9-1) /
+    // address_limited / backlog_full: row is
     // skipped with a stable code. The caller surfaces `reservation` so the
     // health snapshot can count each cause separately via skipped_by_code.
     return { outcome: "skipped", deliveryId, reservation };
@@ -171,13 +176,32 @@ export async function sendOneClaimed(sql: BaseSql, opts: SenderOptions): Promise
     return { outcome: "no_address", deliveryId };
   }
 
+  // M13.3 R3 fail-closed guard. Only essential (transactional) messages may be
+  // sent without the database's send-time recheck; any other category — or an
+  // event the policy does not know — needs it. Without it, eligibility at send
+  // time cannot be verified, so the row is settled dead with a stable code and
+  // the provider is never called.
+  if (!sendCtx.sendTimeRecheck && eventPolicy(sendCtx.eventType)?.category !== "essential") {
+    await settleDelivery(sql, deliveryId, leaseToken, "dead", { errorCode: "eligibility_unverifiable" });
+    return { outcome: "dead", deliveryId, errorCode: "eligibility_unverifiable" };
+  }
+
+  const eventCtx = {
+    eventType: sendCtx.eventType,
+    payload: sendCtx.payload,
+    ...(opts.appBaseUrl !== undefined ? { appBaseUrl: opts.appBaseUrl } : {}),
+  };
+  if (!canSend(eventCtx)) {
+    // A collection announcement whose link cannot be built: never fall back
+    // to the "sign in to Kolekto" placeholder for a member who has no account.
+    await settleDelivery(sql, deliveryId, leaseToken, "dead", { errorCode: "collection_link_unavailable" });
+    return { outcome: "dead", deliveryId, errorCode: "collection_link_unavailable" };
+  }
+
   try {
     const result = await opts.provider.send({
       idempotencyKey: deliveryId,
-      message: buildEmailMessage(sendCtx.address, {
-        eventType: sendCtx.eventType,
-        payload: sendCtx.payload,
-      }),
+      message: buildEmailMessage(sendCtx.address, eventCtx),
     });
     await settleWithRetry(sql, deliveryId, leaseToken, "sent", { providerMessageId: result.providerMessageId });
     return { outcome: "sent", deliveryId, providerMessageId: result.providerMessageId };

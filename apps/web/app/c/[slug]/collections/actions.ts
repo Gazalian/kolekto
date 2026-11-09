@@ -28,6 +28,11 @@ import {
   sendCollectionPublishReminder,
   countCollectionAudience,
   countCollectionPublishRecipients,
+  previewCollectionAnnouncementRecipients,
+  announceCollectionUpdate,
+  AnnouncementsUnavailableError,
+  type AnnouncementCategory,
+  type AnnouncementRecipientPreview,
   updateCollection,
   updateObligationAmount,
   waiveObligationAmount,
@@ -49,6 +54,7 @@ import {
   transitionCollectionStatusSchema,
   publishCollectionSchema,
   sendCollectionPublishReminderSchema,
+  announceCollectionUpdateSchema,
   updateCollectionSchema,
   updateObligationAmountSchema,
   waiveObligationSchema,
@@ -475,37 +481,70 @@ export async function publishCollectionAction(
 }
 
 /**
- * M13.3: recipient preview for the publish dialog. `eligible` is the full
- * audience with a linked account; `unpaid` is the subset with an outstanding
- * obligation on this collection. Also returns the three-way audience count
- * so the "with_obligation / awaiting" split is still visible under the main
- * number. Read-only, scoped by each function's own permission check.
+ * Recipient preview for the publish, reminder and update-announcement
+ * dialogs. `eligible` is the in-app audience (members with a linked
+ * account). `email` is the member-record email reach — null until the
+ * MEMBER-ANNOUNCEMENTS proposal is applied, in which case the dialog says
+ * email reach is not available yet. Payment-status counts are deliberately
+ * not returned: payment status cannot be established, so "unpaid" is not
+ * offered. Read-only, scoped by each function's own permission check.
  */
 export async function previewPublishRecipientsAction(
   collectionId: string,
+  category: AnnouncementCategory = "announcement",
 ): Promise<
   | {
       eligible: number;
-      unpaid: number;
       with_obligation: number;
       awaiting: number;
+      email: AnnouncementRecipientPreview | null;
     }
   | { error: string }
 > {
+  if (!["announcement", "update", "reminder"].includes(category)) return { error: "Unknown announcement type" };
   const caller = await requireCallerContext();
   try {
-    const [publish, audience] = await Promise.all([
+    const [publish, audience, email] = await Promise.all([
       countCollectionPublishRecipients(caller, collectionId),
       countCollectionAudience(caller, collectionId),
+      previewCollectionAnnouncementRecipients(caller, collectionId, category),
     ]);
     return {
       eligible: publish.eligible,
-      unpaid: publish.unpaid,
       with_obligation: audience.with_obligation,
       awaiting: audience.awaiting,
+      email,
     };
   } catch (error) {
     return { error: messageFrom(error, "Could not count the recipients") };
+  }
+}
+
+/**
+ * Member announcements: explicitly announce changes to a live collection.
+ * The organiser picks what changed from a fixed list; an edit never sends
+ * this by itself. Idempotent on the dialog's key.
+ */
+export async function announceCollectionUpdateAction(
+  input: unknown,
+): Promise<(ActionResult & { created?: boolean }) | { error: string }> {
+  const parsed = announceCollectionUpdateSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That announcement is not valid" };
+
+  const caller = await requireCallerContext();
+  try {
+    const result = await announceCollectionUpdate(caller, {
+      collectionId: parsed.data.collectionId,
+      changedFields: [...parsed.data.changedFields],
+      idempotencyKey: parsed.data.idempotencyKey,
+      customMessage: parsed.data.customMessage,
+      targetAudience: parsed.data.targetAudience,
+      targetGroupIds: parsed.data.targetGroupIds,
+    });
+    return { ok: true, created: result.created };
+  } catch (error) {
+    if (error instanceof AnnouncementsUnavailableError) return { error: error.message };
+    return { error: messageFrom(error, "Could not send the announcement") };
   }
 }
 
@@ -523,7 +562,7 @@ export async function previewPublishRecipientsAction(
 export async function sendCollectionReminderAction(
   input: unknown,
 ): Promise<
-  (ActionResult & { auditLogId?: string; created?: boolean; notifyTarget?: "all" | "unpaid" }) | { error: string }
+  (ActionResult & { auditLogId?: string; created?: boolean; notifyTarget?: "all" }) | { error: string }
 > {
   const parsed = sendCollectionPublishReminderSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That reminder is not valid" };
@@ -535,7 +574,7 @@ export async function sendCollectionReminderAction(
       ok: true,
       auditLogId: result.auditLogId,
       created: result.created,
-      notifyTarget: result.notifyTarget,
+      notifyTarget: "all",
     };
   } catch (error) {
     return { error: messageFrom(error, "Could not send the reminder") };

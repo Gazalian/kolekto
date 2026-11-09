@@ -1,4 +1,5 @@
-import type { Community, OfficerInvitation, OfficerTerm } from "@kolekto/db";
+import { getCommunityNoticeStatus, type Community, type CommunityNoticeStatus, type OfficerInvitation, type OfficerTerm } from "@kolekto/db";
+import { requireCallerContext } from "../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
 import { SettingsClient } from "./SettingsClient.tsx";
@@ -16,8 +17,10 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
   const c = community as Community;
 
   const access = await getCommunityAccess(c.id);
+  const canAttestNotice = hasPermission(access, "communication.attest_notice");
+  const canSeeNotice = canAttestNotice || hasPermission(access, "collection.publish");
 
-  const [{ data: officers }, { data: invitations }] = await Promise.all([
+  const [{ data: officers }, { data: invitations }, noticeStatus] = await Promise.all([
     supabase
       .from("officer_terms")
       .select("*, users(full_name)")
@@ -27,6 +30,9 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
     hasPermission(access, "officer.invite")
       ? supabase.from("officer_invitations").select("*").eq("community_id", c.id).eq("status", "sent")
       : Promise.resolve({ data: [] as OfficerInvitation[] }),
+    canSeeNotice
+      ? requireCallerContext().then((caller) => getCommunityNoticeStatus(caller, c.id))
+      : Promise.resolve<CommunityNoticeStatus | null>(null),
   ]);
 
   return (
@@ -38,6 +44,8 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
       canEditProfile={hasPermission(access, "community.edit_profile")}
       canInviteOfficers={hasPermission(access, "officer.invite")}
       canRemoveOwner={hasPermission(access, "officer.remove_owner")}
+      canAttestNotice={canAttestNotice}
+      noticeStatus={noticeStatus}
       currentUserId={(await supabase.auth.getUser()).data.user?.id ?? ""}
     />
   );
