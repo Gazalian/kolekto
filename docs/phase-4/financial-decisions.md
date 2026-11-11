@@ -610,6 +610,30 @@ exists); behaviour as recommended.**
 - `apps/web/app/c/[slug]/collections/FeeConfigurator.tsx` — labels updated to
   "Processing fee" / "Kolekto fee", schedule reference points at the new row.
 
+### Built on 2026-11-11 — M8.3 / M8.4 (database only)
+
+- `supabase/migrations/20261111100000_payment_records.sql` — `payment_limits`
+  (version `2026-11-launch`: ₦5,000,000 per payment on the total charged,
+  30-minute stock hold, 24-hour check window; plan §14.5 values confirmed for
+  build), the `2026-11-founder` `fee_schedules` row with the D-28
+  `provider_cost_rate_bps` / `max_provider_cost_kobo` columns,
+  `collections.close_when_target_reached` (D-30), and the payment record tables
+  (`contribution_intents`, `payment_attempts`, `payment_attempt_lines`,
+  `stock_reservations`, `provider_transactions`, `contributions`,
+  `contribution_lines`) — RLS forced, no client writes, append-only or
+  transition-guarded.
+- `supabase/migrations/20261111100100_payment_functions.sql` —
+  `app.create_payment_attempt`, `app.record_provider_transaction` (T1),
+  `app.complete_payment_capture` (T2), the small transitions, and
+  `app.block_manual_paid_status` now allowing `paid` only when a matching
+  applied contribution exists. Server connection only. The D-29 window is
+  enforced from the Lagos calendar dates of `starts_at` / `deadline_at` until
+  the date columns land. Imported legacy collections take no payment (F5).
+- `supabase/tests/52_payments.sql` — 74 assertions.
+- Not built: tickets, the orchestrator and form wiring (M8.5), the Paystack
+  adapter and webhook (M8.9), the sweep worker, the durable rate limiter,
+  reconciliation.
+
 ### Not built yet (M8.3 and after)
 
 - The `fee_schedules` row for `2026-11-founder` — mirrors the TS schedule; an

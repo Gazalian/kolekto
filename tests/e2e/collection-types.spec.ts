@@ -140,6 +140,7 @@ test("a fundraiser suggests amounts, and a contributor can still choose their ow
   // Typing over it is the point of an open collection.
   await contributor.getByLabel("How much would you like to contribute?").fill("7500");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -212,6 +213,7 @@ test("an item collection prices an order by the item chosen and how many", async
   await contributor.getByRole("checkbox").nth(1).check(); // Gold, ₦50,000
   await contributor.getByLabel("How many Gold?").fill("3");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -649,6 +651,7 @@ test("a ticket buyer can take more than one type, and name an attendee per ticke
   await contributor.getByLabel("Regular — attendee 1").fill("Chidi Eze");
 
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -702,6 +705,7 @@ test("ticket types can be reordered, and the public page follows that order", as
   const firstRadio = contributor.getByRole("radio").first();
   await firstRadio.check();
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -793,6 +797,7 @@ test("the public page works at phone width", async ({ page, browser }) => {
 
   await contributor.getByLabel("How much would you like to contribute?").fill("2500");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
   await expect(contributor.getByText("₦2,500").first()).toBeVisible();

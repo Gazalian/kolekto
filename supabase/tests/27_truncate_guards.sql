@@ -33,8 +33,12 @@ select set_eq(
      ('migration.import_runs'), ('migration.legacy_profile'), ('migration.legacy_collection'),
      ('migration.legacy_contribution'), ('migration.legacy_deposit'),
      ('migration.unattributed_payments'), ('migration.legacy_withdrawal'),
-     ('migration.legacy_overflow'), ('migration.imported_objects') $$,
-  'exactly the 23 append-only and immutable tables are guarded against TRUNCATE'
+     ('migration.legacy_overflow'), ('migration.imported_objects'),
+     -- M8.3 payment records (20261111100000)
+     ('public.payment_limits'), ('public.contribution_intents'), ('public.payment_attempts'),
+     ('public.payment_attempt_lines'), ('public.stock_reservations'), ('public.provider_transactions'),
+     ('public.contributions'), ('public.contribution_lines') $$,
+  'exactly the 31 append-only and immutable tables are guarded against TRUNCATE'
 );
 
 select throws_like($$ truncate public.ledger_accounts cascade $$,                     '%TRUNCATE_REFUSED%', 'ledger_accounts');

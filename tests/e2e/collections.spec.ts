@@ -154,6 +154,7 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
 
   await anonymousPage.getByLabel("Full name").fill("Ada Obi");
   await anonymousPage.getByLabel("Email address").fill("ada@example.test");
+  await anonymousPage.getByLabel("Phone number").fill("+2348011119999");
   await anonymousPage.getByLabel("House number").fill("14B Sobi Close");
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
 
@@ -214,6 +215,7 @@ test("a tiered collection prices a contribution from the option the contributor 
 
   await anonymousPage.getByRole("radio").nth(1).check(); // VIP
   await anonymousPage.getByLabel("Full name").fill("Ada Obi");
+  await anonymousPage.getByLabel("Email address").fill("contributor@example.test");
   await anonymousPage.getByLabel("Phone number").fill("+2348011112222");
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
 

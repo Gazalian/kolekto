@@ -221,6 +221,7 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
 
   // The collection's own question is required, and the server says so.
   await contributor.getByLabel("Full name").fill("Grace Adeyemi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011110102");
   await contributor.getByRole("button", { name: "Continue" }).click();
   await expect(contributor.getByText(/House number/)).toBeVisible();
@@ -267,6 +268,7 @@ test("identification cannot be forged: the server refuses a contribution with no
   await anonymous.clearCookies();
 
   await contributor.getByLabel("Full name").fill("Somebody Else");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011110299");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -457,6 +459,7 @@ test("an open collection asks nobody to identify, and a closed one takes nothing
 
   await contributor.getByLabel("How much would you like to contribute?").fill("7500");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011110501");
   await contributor.getByRole("button", { name: "Continue" }).click();
 

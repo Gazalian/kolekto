@@ -301,6 +301,7 @@ test("a per-order limit set during creation is enforced by the server", async ({
   // ...and the SERVER refuses more, whatever the browser sends.
   await contributor.getByLabel(/How many/).fill("5");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
   await expect(contributor.getByText(/at most 2 of "Regular" in one order/i)).toBeVisible();

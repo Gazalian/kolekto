@@ -648,15 +648,21 @@ export function ContributeForm({
         <TextField
           label="Email address"
           type="email"
-          hint="For your receipt. An email address or a phone number is enough."
+          autoComplete="email"
+          hint="Your receipt is sent here."
           value={email}
+          required
           onChange={(event) => setEmail(event.target.value)}
         />
         <TextField
           label="Phone number"
+          type="tel"
           inputMode="tel"
+          autoComplete="tel"
           placeholder="+2348012345678"
+          hint="So the organiser can reach you about this payment."
           value={phone}
+          required
           onChange={(event) => setPhone(event.target.value)}
         />
       </fieldset>

@@ -8,19 +8,35 @@ import {
 } from "../src/contribution.ts";
 
 describe("contributorContactSchema", () => {
-  it("accepts a name with either an email or a phone number", () => {
-    assert.equal(contributorContactSchema.safeParse({ fullName: "Chidi Eze", email: "chidi@example.test" }).success, true);
-    assert.equal(contributorContactSchema.safeParse({ fullName: "Chidi Eze", phone: "+2348012345678" }).success, true);
+  it("accepts a name, an email address and a phone number", () => {
+    assert.equal(
+      contributorContactSchema.safeParse({ fullName: "Chidi Eze", email: "chidi@example.test", phone: "+2348012345678" })
+        .success,
+      true,
+    );
   });
 
-  it("refuses a contributor with no way to receive a receipt", () => {
-    assert.equal(contributorContactSchema.safeParse({ fullName: "Chidi Eze" }).success, false);
-    assert.equal(contributorContactSchema.safeParse({ fullName: "Chidi Eze", email: "", phone: "" }).success, false);
+  it("requires the email address — the receipt goes there and the payment provider needs one", () => {
+    assert.equal(contributorContactSchema.safeParse({ fullName: "Chidi Eze", phone: "+2348012345678" }).success, false);
+    assert.equal(
+      contributorContactSchema.safeParse({ fullName: "Chidi Eze", email: "", phone: "+2348012345678" }).success,
+      false,
+    );
   });
 
-  it("refuses a missing name and a malformed email", () => {
-    assert.equal(contributorContactSchema.safeParse({ fullName: "", email: "chidi@example.test" }).success, false);
-    assert.equal(contributorContactSchema.safeParse({ fullName: "Chidi", email: "not-an-email" }).success, false);
+  it("requires the phone number", () => {
+    assert.equal(contributorContactSchema.safeParse({ fullName: "Chidi Eze", email: "chidi@example.test" }).success, false);
+    assert.equal(
+      contributorContactSchema.safeParse({ fullName: "Chidi Eze", email: "chidi@example.test", phone: "   " }).success,
+      false,
+    );
+  });
+
+  it("refuses a missing name, a malformed email and a too-short phone number", () => {
+    const ok = { fullName: "Chidi", email: "chidi@example.test", phone: "+2348012345678" };
+    assert.equal(contributorContactSchema.safeParse({ ...ok, fullName: "" }).success, false);
+    assert.equal(contributorContactSchema.safeParse({ ...ok, email: "not-an-email" }).success, false);
+    assert.equal(contributorContactSchema.safeParse({ ...ok, phone: "12345" }).success, false);
   });
 });
 
