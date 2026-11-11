@@ -4,9 +4,11 @@ import assert from "node:assert/strict";
 import {
   authoritativeProviderFee,
   calculateFees,
+  kolektoRevenue,
   providerFeeVariance,
   SCHEDULE_2026_09_FOUNDER,
   SCHEDULE_2026_09_PROVISIONAL,
+  SCHEDULE_2026_11_FOUNDER,
 } from "../src/fees.ts";
 import { formatNaira, fromNaira, kobo } from "../src/money.ts";
 
@@ -344,5 +346,158 @@ describe("provider fee — estimate versus truth (D-11)", () => {
     const fee = { estimated: kobo(15_000n), actual: kobo(10_000n), scheduleVersion: "2026-09-founder" };
     assert.equal(fee.estimated, kobo(15_000n));
     assert.equal(fee.scheduleVersion, "2026-09-founder", "and which schedule produced it");
+  });
+});
+
+/**
+ * D-28: the live schedule, decided 2026-11-11.
+ *
+ *   "Processing fee" shown         1.5%  uncapped
+ *   "Kolekto fee"    shown         0.5%  uncapped
+ *   provider cost estimate (int.)  1.0%  capped at ₦2,000
+ *
+ * The shown lines are what the contributor/host sees and what totalFees/net
+ * are computed from. The provider cost is a separate internal number that
+ * appears in the breakdown but never in totalFees. Kolekto's revenue is
+ * platformFee + gatewayFee − authoritativeProviderFee.
+ */
+const liveVectors = [
+  // amount,     category,      bearer,        platform,  gateway,   providerCost, payable,       net,          kolektoKeeps
+  ["₦1,000",      "dues",        "community",   "₦5.00",   "₦15.00",  "₦10.00",     "₦1,000.00",   "₦980.00",    "₦10.00"],
+  ["₦2,000",      "dues",        "contributor", "₦10.00",  "₦30.00",  "₦20.00",     "₦2,040.00",   "₦2,000.00",  "₦20.00"],
+  ["₦10,000",     "dues",        "community",   "₦50.00",  "₦150.00", "₦100.00",    "₦10,000.00",  "₦9,800.00",  "₦100.00"],
+  ["₦10,000",     "dues",        "contributor", "₦50.00",  "₦150.00", "₦100.00",    "₦10,200.00",  "₦10,000.00", "₦100.00"],
+  // Fundraiser pays the same 0.5% as every other type (owner, 2026-11-11).
+  ["₦10,000",     "fundraiser",  "community",   "₦50.00",  "₦150.00", "₦100.00",    "₦10,000.00",  "₦9,800.00",  "₦100.00"],
+  // ₦200,000 × 1% = ₦2,000 exactly: cost estimate at its cap for the first time.
+  // Platform and gateway lines remain uncapped — the contributor sees ₦4,000 in fees.
+  ["₦200,000",    "dues",        "contributor", "₦1,000.00","₦3,000.00","₦2,000.00","₦204,000.00","₦200,000.00","₦2,000.00"],
+  // ₦1,000,000: shown lines are both uncapped (₦5,000 + ₦15,000); provider
+  // cost caps at ₦2,000. Kolekto's margin opens up: ₦20,000 shown − ₦2,000 cost = ₦18,000.
+  ["₦1,000,000",  "dues",        "contributor", "₦5,000.00","₦15,000.00","₦2,000.00","₦1,020,000.00","₦1,000,000.00","₦18,000.00"],
+] as const;
+
+describe("calculateFees() — live schedule (D-28, 2026-11-founder)", () => {
+  for (const [amount, category, bearer, platform, gateway, providerCost, payable, net, keeps] of liveVectors) {
+    it(`${amount} ${category} ${bearer}-borne → platform ${platform}, gateway ${gateway}, cost ${providerCost}, keeps ${keeps}`, () => {
+      const result = calculateFees({
+        amount: fromNaira(amount),
+        category,
+        bearer,
+        schedule: SCHEDULE_2026_11_FOUNDER,
+      });
+
+      assert.equal(formatNaira(result.platformFee), platform, '"Kolekto fee" (platform)');
+      assert.equal(formatNaira(result.gatewayFee), gateway, '"Processing fee" shown to contributor');
+      assert.equal(formatNaira(result.providerCostEstimate), providerCost, "internal provider cost estimate");
+      assert.equal(formatNaira(result.totalPayable), payable, "total payable");
+      assert.equal(formatNaira(result.net), net, "net to the collection");
+      assert.equal(result.scheduleVersion, "2026-11-founder");
+
+      // Kolekto's revenue is shown lines minus the authoritative provider fee.
+      // With no actual figure yet, the estimate applies.
+      const revenue = kolektoRevenue(result, {
+        estimated: result.providerCostEstimate,
+        actual: null,
+        scheduleVersion: result.scheduleVersion,
+      });
+      assert.equal(formatNaira(revenue), keeps, "kolektoRevenue, using the estimate");
+    });
+  }
+
+  it("totalFees contains only the lines shown to contributors, never the provider cost", () => {
+    const r = calculateFees({
+      amount: fromNaira("₦10,000"),
+      category: "dues",
+      bearer: "contributor",
+      schedule: SCHEDULE_2026_11_FOUNDER,
+    });
+
+    assert.equal(r.totalFees, r.platformFee + r.gatewayFee + r.vat, "totalFees = platform + gateway + vat");
+    assert.notEqual(r.totalFees, r.totalFees + r.providerCostEstimate, "providerCostEstimate stays out of totalFees");
+  });
+
+  it("is the default schedule when the caller names none", () => {
+    const explicit = calculateFees({
+      amount: fromNaira("₦10,000"),
+      category: "dues",
+      bearer: "community",
+      schedule: SCHEDULE_2026_11_FOUNDER,
+    });
+    const implicit = calculateFees({ amount: fromNaira("₦10,000"), category: "dues", bearer: "community" });
+
+    assert.equal(implicit.scheduleVersion, "2026-11-founder");
+    assert.equal(implicit.totalFees, explicit.totalFees);
+    assert.equal(implicit.providerCostEstimate, explicit.providerCostEstimate);
+  });
+
+  it("charges the same 0.5% platform fee on a fundraiser as on any other type", () => {
+    const fundraiser = calculateFees({
+      amount: fromNaira("₦10,000"),
+      category: "fundraiser",
+      bearer: "community",
+      schedule: SCHEDULE_2026_11_FOUNDER,
+    });
+    const dues = calculateFees({
+      amount: fromNaira("₦10,000"),
+      category: "dues",
+      bearer: "community",
+      schedule: SCHEDULE_2026_11_FOUNDER,
+    });
+    assert.equal(fundraiser.platformFee, dues.platformFee);
+    assert.equal(fundraiser.gatewayFee, dues.gatewayFee);
+    assert.equal(fundraiser.totalPayable, dues.totalPayable);
+  });
+
+  it("leaves the shown lines uncapped on arbitrarily large amounts", () => {
+    const vast = calculateFees({
+      amount: fromNaira("₦100,000,000"),
+      category: "dues",
+      bearer: "contributor",
+      schedule: SCHEDULE_2026_11_FOUNDER,
+    });
+    assert.equal(formatNaira(vast.platformFee), "₦500,000.00", "platform is 0.5%, uncapped");
+    assert.equal(formatNaira(vast.gatewayFee), "₦1,500,000.00", "gateway is 1.5%, uncapped");
+    assert.equal(formatNaira(vast.providerCostEstimate), "₦2,000.00", "internal cost still capped at ₦2,000");
+  });
+
+  it("falls back to the gateway fields on schedules with no provider cost split", () => {
+    // Old schedules did not separate the shown processing fee from the actual
+    // provider cost. `providerCostEstimate` must equal `gatewayFee` for them,
+    // or every pre-D-28 ledger posting would silently change.
+    for (const naira of ["₦1,000", "₦10,000", "₦1,000,000"]) {
+      const r = calculateFees({
+        amount: fromNaira(naira),
+        category: "dues",
+        bearer: "community",
+        schedule: SCHEDULE_2026_09_FOUNDER,
+      });
+      assert.equal(r.providerCostEstimate, r.gatewayFee, `cost = gateway at ${naira} (2026-09-founder)`);
+
+      const p = calculateFees({
+        amount: fromNaira(naira),
+        category: "dues",
+        bearer: "community",
+        schedule: SCHEDULE_2026_09_PROVISIONAL,
+      });
+      assert.equal(p.providerCostEstimate, p.gatewayFee, `cost = gateway at ${naira} (provisional)`);
+    }
+  });
+
+  it("holds revenue arithmetic when the provider's actual fee differs from the estimate", () => {
+    const breakdown = calculateFees({
+      amount: fromNaira("₦10,000"),
+      category: "dues",
+      bearer: "contributor",
+      schedule: SCHEDULE_2026_11_FOUNDER,
+    });
+    // Actual Paystack fee came in at ₦110 instead of modelled ₦100.
+    const revenue = kolektoRevenue(breakdown, {
+      estimated: breakdown.providerCostEstimate,
+      actual: kobo(11_000n),
+      scheduleVersion: breakdown.scheduleVersion,
+    });
+    // ₦150 + ₦50 − ₦110 = ₦90.
+    assert.equal(formatNaira(revenue), "₦90.00");
   });
 });

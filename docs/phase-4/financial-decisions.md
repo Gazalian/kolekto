@@ -219,6 +219,9 @@ engineering change with no behaviour change.
 
 ## 5 · Fees — **CLOSED**
 
+> **Superseded 2026-11-11 by D-28 (§16).** The rates below are kept as a record of
+> what was decided on 2026-09-24; they are no longer the rates to build.
+
 **D-10. The rates.** Closes DEC-11 for the platform rate.
 
 | Component | Rate | Cap per component |
@@ -492,6 +495,8 @@ which parts to stop trusting.
 | Platform rate 0.5% default / 1% fundraiser; single ₦2,000 cap per component (`SCHEDULE_2026_09_PROVISIONAL`) | **D-10** | A new schedule version: 1.5% flat, platform cap ₦5,000, gateway cap ₦2,000. The provisional schedule is **not edited** and keeps its golden vectors. |
 | Fee schedule has no VAT concept | **D-14** | VAT is explicit and zero. |
 | [ADR 0006](../adr/0006-ledger-deferred.md): "do not build the ledger until DEC-01 and DEC-03 are closed" | **D-01**, ADR 0015 | Superseded in part. DEC-01 is closed by D-01, which determines the chart of accounts, so the ledger is buildable. DEC-03 survives as **O-1** and still gates *going live*, not building. |
+| D-10: platform 1.5% capped ₦5,000; modelled provider fee 1.5% capped ₦2,000 | **D-28** (2026-11-11, §16) | Contributors are shown 1.5% processing + 0.5% Kolekto; Paystack's actual cost to Kolekto is a negotiated 1%. The shown processing rate and the internal cost estimate become separate fields. |
+| Collection opening/closing as date-times (`starts_at` / `deadline_at` entered with a time, never enforced) | **D-29** (2026-11-11, §16) | Opening and closing are calendar dates in Africa/Lagos, enforced when a payment starts. |
 
 **Not superseded, and still authoritative:** everything in the 2026-09-22
 architecture's §2 (what the old system got right), §3 (what it got wrong and
@@ -513,3 +518,111 @@ M8.1 builds the documentation, the fee schedule foundation, the fee calculation
 contract, the ledger, its balancing and append-only protections, the financial
 idempotency foundation, collection-level attribution, the settlement timestamp
 contract, and the tests for all of it.
+
+## 16 · Decisions of 2026-11-11
+
+Stated by the project owner in the Paystack integration review. Detail, worked
+examples and the reasoning behind each recommendation are in
+[the integration plan §14](paystack-integration-audit-and-plan-2026-11-10.md#14-update-2026-11-11--decisions-taken-and-recommendations).
+**Nothing in code or the database implements these yet.**
+
+**D-28. Fee model — CLOSED.** Supersedes D-10. Confirmed by owner 2026-11-11
+and built into `SCHEDULE_2026_11_FOUNDER` on 2026-11-11.
+
+| Line | Shown to contributor / host | Rate | Cap |
+|---|---|---|---|
+| Processing fee | yes — labelled "Processing fee" | 1.5% of the contribution | **uncapped** |
+| Kolekto fee | yes — labelled "Kolekto fee" | 0.5% of the contribution | **uncapped** |
+| Paystack's cost to Kolekto | **never shown** | negotiated **1%** of the amount charged | **₦2,000** (Paystack's cap) |
+| Kolekto's revenue | reporting only | total fee charged − actual Paystack fee (D-11 unchanged) | — |
+
+- Fundraisers pay the same 0.5% Kolekto fee as every other type (one rate).
+- Fee bearer per collection, for every type including fundraisers. Default host
+  absorbs, until counsel answers O-4.
+- The fee schedule separates the **shown processing rate** from the **internal
+  provider-cost estimate** — new fields `providerCostRate` / `maxProviderCost`
+  on `FeeSchedule`, computed into a new `providerCostEstimate` line on
+  `FeeBreakdown`. New schedule version (D-13); no older row edited.
+- Ledger: the whole fee charged credits `platform_fee_income`; the actual
+  Paystack fee debits `provider_fee_expense`. The 0.5% margin on the processing
+  line and the 0.5% Kolekto fee both land in `platform_fee_income`.
+- Wording of the contributor-facing lines is **"Processing fee"** and
+  **"Kolekto fee"** — Paystack is not named, because its charge to Kolekto is
+  not 1.5% and a pass-through claim would be false. Counsel review of this
+  wording stays recommended (part of O-4's pack).
+- **OPEN — F8:** whether Paystack's negotiated 1% is capped at ₦2,000 as
+  assumed, whether the ₦100 flat fee is also waived, and whether the rate
+  covers international cards and pay-with-transfer. Confirm in writing from
+  Paystack, then on the first sandbox transactions via the `fees` field. If
+  the cap turns out higher or the rate does not cover a channel, a new schedule
+  version is cut — the one just built is not edited.
+
+**D-29. Opening and closing are dates, not times — CLOSED.**
+
+- Calendar days in Africa/Lagos. Open from 00:00 on the opening date; open through
+  the end of the closing date. Same-day open and close allowed. Either may be empty.
+- Enforced when a payment starts, in the server action and in the database function
+  that creates the payment attempt. A payment started inside the window is recorded
+  even if it completes after it closes.
+- Event dates (`event_starts_at` / `event_ends_at`) keep their time; they are not
+  the payment window.
+
+> **Built 2026-11-11.** `packages/domain/src/contribution-window.ts` implements
+> `isOpenForContributions(opensOn, closesOn, now)` and `closesAt(closesOn)`;
+> 23 vector tests pin the Africa/Lagos boundary at 00:00 inclusive and 00:00
+> the following day exclusive. The database columns (`opens_on`, `closes_on`),
+> the server-action check and the `app.create_payment_attempt` check come in
+> the next migration (M8.3). Existing `starts_at` / `deadline_at` stay for
+> reminder readers until that migration lands.
+
+**D-30. A fundraiser may close itself when its target is reached — CLOSED (option
+exists); behaviour as recommended.**
+
+- Host opt-in per collection, default off; requires a target.
+- "Raised" is the sum of contribution amounts of completed payments, before fees.
+- Closes inside the capture transaction that crosses the target; payments already
+  in flight are still recorded; the final donation is not trimmed; new checkouts are
+  refused; reopening is an explicit host action.
+
+**D-31. Refunds remain DEFERRED through launch — CLOSED.** Owner statement
+2026-11-11: refunds are not handled in this phase. Carries on D-18/D-18a.
+
+- `calculateFees` has no refund fee component; the schedule has no refund rate.
+- Contributions remain immutable, journals remain reversible, and nothing is
+  edited or deleted — the ledger stays refund-ready for a later phase (D-18a's
+  three preserved properties).
+- F1 (refund charge bearer), F2 (base) and PA-13 (Paystack refund-fee economics)
+  stay OPEN and do not block launch now that refunds are not a launch feature.
+- Overpayments (e.g. a payment on a cycle that was closed in flight, O-11) are
+  recorded as `needs_review` and shown to the host, with no automated remedy
+  until refunds exist.
+
+### Built on 2026-11-11
+
+- `packages/domain/src/fees.ts` — `SCHEDULE_2026_11_FOUNDER`, the new
+  `providerCostRate` / `maxProviderCost` fields on `FeeSchedule`, the
+  `providerCostEstimate` line on `FeeBreakdown`, and `kolektoRevenue()`. The
+  default schedule for `calculateFees` is now 2026-11-founder. 15 new golden
+  vectors in `packages/domain/test/fees.test.ts`.
+- `packages/domain/src/contribution-window.ts` — `isOpenForContributions()` and
+  `closesAt()`, pure, in Africa/Lagos, 23 boundary-pinned vectors in
+  `packages/domain/test/contribution-window.test.ts`.
+- `apps/web/app/c/[slug]/collections/FeeConfigurator.tsx` — labels updated to
+  "Processing fee" / "Kolekto fee", schedule reference points at the new row.
+
+### Not built yet (M8.3 and after)
+
+- The `fee_schedules` row for `2026-11-founder` — mirrors the TS schedule; an
+  additive migration, pgTAP keeps row and code in step.
+- The payment-record tables (`payment_attempts`, `contribution_intents`,
+  `provider_transactions`, `contributions`, `contribution_lines`, `tickets`,
+  `stock_reservations`) and `app.create_payment_attempt` / `app.capture_payment`.
+- `opens_on` / `closes_on` date columns on `collections`, the trigger that
+  derives `starts_at` / `deadline_at` for existing readers, the switch of the
+  wizard and settings forms from `datetime-local` to `date`, and the
+  `isOpenForContributions` check in `submitContributionAction` and in
+  `app.create_payment_attempt`.
+- `close_when_target_reached` on `collections`, and the capture-time check
+  that closes a fundraiser when it crosses its target.
+- The Paystack adapter, webhook receiver and provider-event worker (M8.9),
+  gated on a new Paystack test account and a public staging URL.

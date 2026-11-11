@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { calculateFees, formatNaira, fromNaira, SCHEDULE_2026_09_FOUNDER, type Kobo } from "@kolekto/domain";
+import { calculateFees, formatNaira, fromNaira, SCHEDULE_2026_11_FOUNDER, type Kobo } from "@kolekto/domain";
 import { Banner } from "@kolekto/ui";
 
 /**
@@ -82,6 +82,7 @@ export function FeeConfigurator({
   contributionNoun,
   organiserNoun = "You",
   disabled = false,
+  maxExamples,
 }: {
   bearer: FeeBearerChoice;
   onBearerChange: (bearer: FeeBearerChoice) => void;
@@ -93,8 +94,15 @@ export function FeeConfigurator({
   contributionNoun: string;
   organiserNoun?: string;
   disabled?: boolean;
+  /**
+   * Show at most this many examples until asked for the rest. Used where the
+   * fee decision shares a screen with the amounts — six suggested amounts
+   * would otherwise mean six example cards under them on a phone.
+   */
+  maxExamples?: number;
 }) {
   const [showEstimate, setShowEstimate] = useState(false);
+  const [showAll, setShowAll] = useState(false);
 
   const priced = amounts
     .map((entry) => {
@@ -102,6 +110,8 @@ export function FeeConfigurator({
       return kobo === null ? null : { label: entry.label, kobo };
     })
     .filter((entry): entry is { label: string; kobo: Kobo } => entry !== null);
+  const shown = maxExamples !== undefined && !showAll ? priced.slice(0, maxExamples) : priced;
+  const hidden = priced.length - shown.length;
 
   return (
     <div className="flex flex-col gap-4">
@@ -161,7 +171,7 @@ export function FeeConfigurator({
         </p>
       ) : (
         <div className="flex flex-col gap-3">
-          {priced.map((entry) => (
+          {shown.map((entry) => (
             <PolicyExample
               key={entry.label}
               label={priced.length > 1 ? entry.label : null}
@@ -171,6 +181,16 @@ export function FeeConfigurator({
             />
           ))}
         </div>
+      )}
+
+      {hidden > 0 && (
+        <button
+          type="button"
+          className="self-start text-sm font-medium text-[var(--color-primary)] hover:underline"
+          onClick={() => setShowAll(true)}
+        >
+          Show for each amount ({hidden} more)
+        </button>
       )}
 
       {priced.length > 0 && (
@@ -187,13 +207,12 @@ export function FeeConfigurator({
           {showEstimate && (
             <div className="mt-2 flex flex-col gap-3">
               <Banner tone="info">
-                An estimate, using Kolekto&apos;s fee schedule ({SCHEDULE_2026_09_FOUNDER.version}). Kolekto&apos;s own
-                fee is settled; the payment provider&apos;s fee shown here is a model, and the provider&apos;s reported
-                figure is what actually applies. This is not a settlement amount — what is charged is calculated at
-                the time of payment, and online payment is not switched on yet.
+                An estimate, using Kolekto&apos;s fee schedule ({SCHEDULE_2026_11_FOUNDER.version}). The processing fee
+                and the Kolekto fee are both final rates. This is not a settlement amount — what is charged is
+                calculated at the time of payment, and online payment is not switched on yet.
               </Banner>
 
-              {priced.map((entry) => (
+              {shown.map((entry) => (
                 <FeeEstimate
                   key={entry.label}
                   label={priced.length > 1 ? entry.label : null}
@@ -289,8 +308,8 @@ function FeeEstimate({
 
       <dl className="flex flex-col gap-1 text-sm">
         <Line term={`${capitalise(contributionNoun)} amount`} value={naira(fees.contribution)} />
-        <Line term="Estimated payment processing fee" value={naira(fees.gatewayFee)} muted />
-        <Line term="Estimated Kolekto service fee" value={naira(fees.platformFee)} muted />
+        <Line term="Processing fee" value={naira(fees.gatewayFee)} muted />
+        <Line term="Kolekto fee" value={naira(fees.platformFee)} muted />
         <Line term="Estimated total fees" value={naira(fees.totalFees)} muted />
 
         <div className="mt-1 border-t border-[var(--color-border)] pt-2">
@@ -354,4 +373,4 @@ function safeKobo(input: string): Kobo | null {
 }
 
 /** The schedule any estimate is computed against. Named so a screen can say which one. */
-export const PREVIEW_SCHEDULE_VERSION = SCHEDULE_2026_09_FOUNDER.version;
+export const PREVIEW_SCHEDULE_VERSION = SCHEDULE_2026_11_FOUNDER.version;

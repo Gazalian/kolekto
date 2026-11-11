@@ -54,10 +54,16 @@ export type FeeBearer = "contributor" | "community";
 export interface FeeSchedule {
   readonly version: string;
   readonly effectiveFrom: string;
-  /** Kolekto's own fee, per collection category. */
+  /** Kolekto's own fee, per collection category. The "Kolekto fee" line shown to contributors (D-28). */
   readonly platformRate: Readonly<Record<string, BasisPoints>>;
   readonly platformRateDefault: BasisPoints;
-  /** Estimated Paystack fee. An ESTIMATE: the authoritative figure is what Paystack reports on the transaction (D-11). */
+  /**
+   * The "Processing fee" line **shown to contributors** (D-28). This is a
+   * number Kolekto charges, not the actual cost of goods sold — on D-28
+   * schedules the two differ. The authoritative figure for the provider's
+   * actual cost is what Paystack reports on the transaction (D-11), compared
+   * against `providerCostRate` below.
+   */
   readonly gatewayRate: BasisPoints;
   /**
    * D-14: VAT, explicitly. Zero under the current decision.
@@ -69,12 +75,29 @@ export interface FeeSchedule {
    */
   readonly vatRate: BasisPoints;
   /**
-   * Each fee is capped independently, and the caps are ASYMMETRIC by decision
-   * (D-10): Kolekto's own fee caps higher than the modeled provider fee.
-   * `null` means uncapped, which is a different statement from zero.
+   * Caps on the lines shown to contributors. Each is independent; `null` means
+   * uncapped, which is different from zero. On the 2026-09 schedules these
+   * cap Kolekto's shown fees at Paystack's own cap figures. On D-28 and after
+   * (2026-11-founder), the shown fees are **uncapped** — see that schedule's
+   * comment for why.
    */
   readonly maxPlatformFee: Kobo | null;
   readonly maxGatewayFee: Kobo | null;
+  /**
+   * The **internal** estimate of what the payment provider will actually
+   * charge Kolekto on this transaction (D-28). Separate from `gatewayRate`
+   * because the "processing fee" line shown to contributors and the real
+   * provider cost need not be the same number — under the negotiated
+   * Paystack pricing, the shown rate is 1.5% uncapped while the real cost
+   * is 1% capped at ₦2,000. Still an **estimate**: the reported `fees` field
+   * on the provider's verify response remains authoritative (D-11), compared
+   * against this figure for reconciliation (`providerFeeVariance`).
+   *
+   * When omitted, `gatewayRate` is used, preserving the behaviour of every
+   * schedule written before D-28 where the two were the same number.
+   */
+  readonly providerCostRate?: BasisPoints;
+  readonly maxProviderCost?: Kobo | null;
 }
 
 /**
@@ -135,14 +158,87 @@ export const SCHEDULE_2026_09_FOUNDER: FeeSchedule = {
   maxGatewayFee: 200_000n as Kobo, // ₦2,000
 };
 
+/**
+ * Kolekto's live schedule. **D-28**, decided 2026-11-11, supersedes D-10.
+ *
+ *   "Processing fee" shown to contributor   1.5%, uncapped
+ *   "Kolekto fee"    shown to contributor   0.5%, uncapped
+ *   VAT                                      0%
+ *
+ *   internal Paystack cost estimate         1.0%, capped at ₦2,000
+ *
+ * ── THE DIFFERENCE BETWEEN THE SHOWN LINES AND THE INTERNAL COST ────────────
+ *
+ * This is the first schedule where the "processing fee" line **shown to
+ * contributors** and the actual cost Paystack charges Kolekto are deliberately
+ * different numbers. Paystack has agreed a **1% capped at ₦2,000** rate with
+ * Kolekto; everything above that, up to the 1.5% Kolekto displays, is Kolekto's
+ * margin on the processing line. The 0.5% "Kolekto fee" is a second margin
+ * line, shown as such.
+ *
+ * Both shown lines are **uncapped by owner decision**. Paystack's own cost to
+ * Kolekto remains capped at ₦2,000 (`maxProviderCost`), so on large payments
+ * the processing fee shown to the contributor diverges from what Paystack
+ * actually charges Kolekto.
+ *
+ * `fundraiser` carries no override: every category pays the same 0.5% (owner
+ * decision 2026-11-11).
+ *
+ * ── WHAT KOLEKTO KEEPS ──────────────────────────────────────────────────────
+ *
+ *   platformFee + gatewayFee − authoritativeProviderFee(providerFee)
+ *
+ * where `authoritativeProviderFee` is the actual `fees` figure from Paystack's
+ * verify response if present, else `providerCostEstimate` from this schedule.
+ * See `kolektoRevenue` below.
+ *
+ * ── IF THE 1% TURNS OUT NOT TO BE CAPPED AT ₦2,000 ──────────────────────────
+ *
+ * The owner's statement and this schedule assume Paystack's negotiated 1% is
+ * capped at ₦2,000 (matching Paystack's public cap). If sandbox or live data
+ * shows otherwise — a transaction where `actual_provider_fee_kobo` exceeds
+ * `maxProviderCost` — a new schedule version is cut, not this row edited (D-13).
+ *
+ * Mirrored by a new row to be added to `fee_schedules` by the next payments
+ * migration; a pgTAP assertion will keep the row and these numbers in step.
+ */
+export const SCHEDULE_2026_11_FOUNDER: FeeSchedule = {
+  version: "2026-11-founder",
+  effectiveFrom: "2026-11-11",
+  platformRate: {}, // one rate for every category — fundraiser included (owner, 2026-11-11)
+  platformRateDefault: bps(50), // 0.5% — "Kolekto fee"
+  gatewayRate: bps(150), // 1.5% — "Processing fee" shown to contributor
+  vatRate: bps(0), // D-14
+  maxPlatformFee: null, // uncapped (owner, 2026-11-11)
+  maxGatewayFee: null, // uncapped (owner, 2026-11-11)
+  providerCostRate: bps(100), // 1% — Paystack's negotiated rate to Kolekto
+  maxProviderCost: 200_000n as Kobo, // ₦2,000 — Paystack's own cap
+};
+
 export interface FeeBreakdown {
   /** What the collection is credited with — the organizer's money, no fees mixed in. */
   readonly contribution: Kobo;
+  /** The "Kolekto fee" line shown to contributors. */
   readonly platformFee: Kobo;
-  /** The MODELED provider fee. An estimate until the provider reports one (D-11). */
+  /**
+   * The "Processing fee" line shown to contributors (D-28). On 2026-11-founder
+   * and after, this is a figure Kolekto charges, **not** the actual cost of
+   * goods sold — compare with `providerCostEstimate`. On earlier schedules the
+   * two are equal.
+   */
   readonly gatewayFee: Kobo;
+  /**
+   * Kolekto's **internal** estimate of what the payment provider will charge
+   * on this transaction (D-28). Never shown to contributors. On older schedules
+   * where the schedule did not separate the two, this equals `gatewayFee`.
+   *
+   * At capture time, the provider's reported `fees` figure takes authority
+   * over this (D-11, `authoritativeProviderFee`).
+   */
+  readonly providerCostEstimate: Kobo;
   /** D-14: VAT on the platform fee. Zero under the current schedule. */
   readonly vat: Kobo;
+  /** Sum of the lines shown to contributors (platformFee + gatewayFee + vat). What the host absorbs under `community`. */
   readonly totalFees: Kobo;
   /** What the contributor is actually charged. */
   readonly totalPayable: Kobo;
@@ -166,9 +262,9 @@ export interface CalculateFeesInput {
  * journal calls this and nothing else (PRC-12).
  */
 export function calculateFees(input: CalculateFeesInput): FeeBreakdown {
-  // Kolekto's own schedule is the default. A caller that wants the previous
-  // system's rates — only the golden vectors do — must name them.
-  const schedule = input.schedule ?? SCHEDULE_2026_09_FOUNDER;
+  // Kolekto's live schedule is the default. A caller that wants an older
+  // schedule — the golden vectors, and nothing else in production — must name it.
+  const schedule = input.schedule ?? SCHEDULE_2026_11_FOUNDER;
   const { amount, category, bearer } = input;
 
   if (amount < ZERO) {
@@ -183,10 +279,18 @@ export function calculateFees(input: CalculateFeesInput): FeeBreakdown {
   // upward, and it is the behaviour the previous implementation was careful to
   // avoid — worth preserving explicitly rather than rediscovering.
   //
-  // Each component is capped independently, and the caps differ (D-10). The cap
-  // is applied to the fee itself, before VAT.
+  // Each component is capped independently. The cap is applied to the fee
+  // itself, before VAT.
   const platformFee = cap(applyRate(amount, platformRate), schedule.maxPlatformFee);
   const gatewayFee = cap(applyRate(amount, schedule.gatewayRate), schedule.maxGatewayFee);
+
+  // The internal estimate of the provider's actual cost to Kolekto (D-28). On
+  // schedules that don't separate the shown line from the cost, `providerCostRate`
+  // and `maxProviderCost` fall back to `gatewayRate` and `maxGatewayFee`, so
+  // `providerCostEstimate === gatewayFee` and nothing older changes.
+  const providerCostRate = schedule.providerCostRate ?? schedule.gatewayRate;
+  const providerCostCap = schedule.maxProviderCost === undefined ? schedule.maxGatewayFee : schedule.maxProviderCost;
+  const providerCostEstimate = cap(applyRate(amount, providerCostRate), providerCostCap);
 
   // VAT is charged on Kolekto's own fee — the platform fee is the taxable
   // service — and never on the contribution or on the provider's fee. Zero
@@ -194,6 +298,9 @@ export function calculateFees(input: CalculateFeesInput): FeeBreakdown {
   // that a future non-zero VAT does not introduce a second rounding behaviour.
   const vat = applyRate(platformFee, schedule.vatRate);
 
+  // totalFees is what the CONTRIBUTOR sees / what the HOST absorbs. The internal
+  // provider-cost estimate is NOT part of it — it is a cost Kolekto bears out of
+  // what it collected, never an extra line charged to anyone.
   const totalFees = add(add(platformFee, gatewayFee), vat);
 
   const totalPayable = bearer === "contributor" ? add(amount, totalFees) : amount;
@@ -203,6 +310,7 @@ export function calculateFees(input: CalculateFeesInput): FeeBreakdown {
     contribution: amount,
     platformFee,
     gatewayFee,
+    providerCostEstimate,
     vat,
     totalFees,
     totalPayable,
@@ -210,6 +318,20 @@ export function calculateFees(input: CalculateFeesInput): FeeBreakdown {
     bearer,
     scheduleVersion: schedule.version,
   };
+}
+
+/**
+ * What Kolekto keeps on a transaction, given the breakdown and the provider's
+ * eventual fee report. Reporting only — never shown to a contributor or a host.
+ *
+ *   platformFee + gatewayFee − authoritativeProviderFee(providerFee)
+ *
+ * When Paystack has not yet reported, `providerFee.actual` is `null` and the
+ * estimate is used; once it reports, the real figure replaces it (D-11). The
+ * difference between the two is `providerFeeVariance`, a reconciliation input.
+ */
+export function kolektoRevenue(breakdown: FeeBreakdown, providerFee: ProviderFee): Kobo {
+  return subtract(add(breakdown.platformFee, breakdown.gatewayFee), authoritativeProviderFee(providerFee));
 }
 
 /** Apply a per-component cap. `null` means uncapped, which is not the same as zero. */
