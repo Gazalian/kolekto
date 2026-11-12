@@ -18,6 +18,7 @@ import {
   type ContributionItem,
   type ContributionObligation,
   type ContributionTier,
+  type FeeBearer,
 } from "@kolekto/domain";
 import { buildContributorAnswersSchema, contributorContactSchema } from "@kolekto/validation";
 import {
@@ -26,6 +27,44 @@ import {
   setContributorSession,
 } from "../../../lib/contributor-session.ts";
 import { allowLookup } from "../../../lib/lookup-throttle.ts";
+import { startCheckout } from "../../../lib/payments/orchestrator.ts";
+import { getPaymentProvider } from "../../../lib/payments/provider-factory.ts";
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/**
+ * Codes raised by app.create_payment_attempt (20261111100100), as copy a
+ * contributor can act on. Database messages are never shown: they carry ids.
+ * Codes absent here mean a bug on Kolekto's side and get the generic message.
+ */
+const CHECKOUT_ERROR_MESSAGES: Record<string, string> = {
+  COLLECTION_NOT_FOUND: "This collection is no longer available.",
+  COLLECTION_NOT_ACTIVE: "This collection is not accepting contributions right now.",
+  COLLECTION_IMPORTED: "This collection cannot take payments here. Contact the organiser.",
+  COLLECTION_NOT_YET_OPEN: "This collection is not open for contributions yet.",
+  COLLECTION_WINDOW_CLOSED: "This collection has closed and is no longer accepting contributions.",
+  TARGET_REACHED: "This collection has reached its target and is no longer accepting contributions.",
+  MEMBER_REQUIRED: "Find yourself on the list before continuing.",
+  MEMBER_NOT_ELIGIBLE: "That record can no longer contribute to this collection.",
+  NOTHING_OWED: "There is nothing for you to pay on this collection.",
+  ALREADY_PAID: "You have already paid this in full.",
+  OBLIGATION_EXEMPT: "You have been exempted from this collection. There is nothing to pay.",
+  INSTALLMENTS_NOT_SUPPORTED: "Part payments are not available yet.",
+  AMOUNT_REQUIRED: "Enter an amount.",
+  AMOUNT_BELOW_MINIMUM: "That amount is below the minimum for this collection.",
+  AMOUNT_ABOVE_MAXIMUM: "That amount is above the maximum for this collection.",
+  TIER_NOT_AVAILABLE: "One of the options you chose is no longer available.",
+  ITEM_NOT_AVAILABLE: "One of the items you chose is no longer available.",
+  SOLD_OUT: "One of the options you chose has sold out. Check your order and try again.",
+  PER_ORDER_LIMIT: "You chose more than one order allows. Lower the quantity and try again.",
+  ATTENDEE_COUNT_MISMATCH: "Enter one name for each ticket.",
+  AMOUNT_MISMATCH: "Prices on this page have changed. Refresh the page and try again.",
+  FEE_SCHEDULE_NOT_CURRENT: "Fees have just changed. Refresh the page and try again.",
+  PAYMENT_ABOVE_CEILING: "This amount is above the limit for a single payment.",
+  CONTACT_REQUIRED: "Enter your name, email address and phone number.",
+  PAYMENT_IN_PROGRESS: "A payment for this is already in progress. Finish it, or wait a little while and try again.",
+  CHECKOUT_KEY_REUSED: "Your order changed since you last pressed Pay. Press Pay again to continue.",
+};
 
 /**
  * What happens when a contributor submits the form.
@@ -47,6 +86,8 @@ import { allowLookup } from "../../../lib/lookup-throttle.ts";
 export interface ContributionResult {
   ok?: boolean;
   error?: string;
+  /** The checkout key is spent (its attempt ended or the order changed). The form must generate a new one before retrying. */
+  restartCheckout?: boolean;
   /** Present on success: what the server resolved, for the confirmation screen. */
   summary?: {
     amount: string;
@@ -65,6 +106,19 @@ export interface ContributionResult {
     memberName: string | null;
     memberCode: string | null;
     cycleLabel: string | null;
+  };
+  /** Present when a payment attempt was created and the provider initialized. */
+  payment?: {
+    reference: string;
+    checkoutUrl: string;
+    fees: {
+      contribution: string;
+      platformFee: string;
+      gatewayFee: string;
+      totalFees: string;
+      totalPayable: string;
+      net: string;
+    };
   };
 }
 
@@ -255,8 +309,14 @@ export async function submitContributionAction(
     /** Several items with quantities — a catalog order with more than one line. Takes priority over `itemId`. */
     itemSelections?: { itemId: string; quantity: string }[];
     answers: Record<string, string>;
+    /** Generated once per checkout by the form (crypto.randomUUID). A double-click resends it and gets the same attempt back (D-25). */
+    checkoutKey: string;
   },
 ): Promise<ContributionResult> {
+  if (typeof input.checkoutKey !== "string" || !UUID.test(input.checkoutKey)) {
+    return { error: "Refresh the page and try again.", restartCheckout: true };
+  }
+
   const collection = await getPublicCollection(communitySlug, collectionSlug);
   if (!collection) return { error: "This collection is no longer available." };
   if (collection.status !== "active") {
@@ -272,8 +332,9 @@ export async function submitContributionAction(
   // signed cookie and re-checked against the database — the page never says who
   // it is, and could not be believed if it did.
   let memberContext: CollectionMemberContext | null = null;
+  let memberId: string | null = null;
   if (collection.audience_mode !== "public") {
-    const memberId = await readContributorSession(collection.collection_id);
+    memberId = await readContributorSession(collection.collection_id);
     if (!memberId) {
       return { error: "Find yourself on the list before continuing." };
     }
@@ -388,6 +449,51 @@ export async function submitContributionAction(
     attendees = names;
   }
 
+  const feeBearer: FeeBearer = collection.fee_mode === "contributor_pays" ? "contributor" : "community";
+
+  const checkoutResult = await startCheckout({
+    collectionId: collection.collection_id,
+    collectionCategory: collection.category,
+    collectionSlug,
+    communitySlug,
+    amountModel: collection.amount_model,
+    feeBearer,
+    provider: getPaymentProvider(),
+    resolved,
+    memberId,
+    contributorName: contact.data.fullName,
+    contributorEmail: contact.data.email,
+    contributorPhone: contact.data.phone,
+    answers: answers.data,
+    attendeeNames: attendees ?? [],
+    checkoutIdempotencyKey: input.checkoutKey,
+  });
+
+  switch (checkoutResult.outcome) {
+    case "db_error": {
+      const message = CHECKOUT_ERROR_MESSAGES[checkoutResult.code];
+      if (!message) console.error(JSON.stringify({ msg: "checkout_refused_unmapped", code: checkoutResult.code }));
+      return {
+        error: message ?? "This payment could not be started. Please try again, or contact the organiser.",
+        ...(checkoutResult.code === "CHECKOUT_KEY_REUSED" ? { restartCheckout: true } : {}),
+      };
+    }
+    case "checkout_ended":
+      return { error: "That checkout has ended. Press Pay again to start a new one.", restartCheckout: true };
+    case "already_paid":
+      return { error: "This payment has already been received. Check your email for the receipt.", restartCheckout: true };
+    case "provider_refused":
+      return { error: "The payment could not be started. Please try again.", restartCheckout: true };
+    case "provider_unavailable":
+      // Same key on retry: it resumes this attempt rather than creating another (D-27).
+      return { error: "The payment service did not respond. Wait a moment and press Pay again." };
+    case "misconfigured":
+      console.error(JSON.stringify({ msg: "checkout_misconfigured", reason: checkoutResult.reason }));
+      return { error: "Payments are not available right now. Please try again later." };
+  }
+
+  const fees = checkoutResult.fees;
+
   return {
     ok: true,
     summary: {
@@ -418,6 +524,18 @@ export async function submitContributionAction(
       memberName: memberContext?.full_name ?? null,
       memberCode: memberContext?.member_code ?? null,
       cycleLabel: memberContext?.cycle_label ?? null,
+    },
+    payment: {
+      reference: checkoutResult.reference,
+      checkoutUrl: checkoutResult.checkoutUrl,
+      fees: {
+        contribution: formatNaira(fees.contribution, { decimals: false }),
+        platformFee: formatNaira(fees.platformFee, { decimals: false }),
+        gatewayFee: formatNaira(fees.gatewayFee, { decimals: false }),
+        totalFees: formatNaira(fees.totalFees, { decimals: false }),
+        totalPayable: formatNaira(fees.totalPayable, { decimals: false }),
+        net: formatNaira(fees.net, { decimals: false }),
+      },
     },
   };
 }

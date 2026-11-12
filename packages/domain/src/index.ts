@@ -20,4 +20,5 @@ export * from "./contribution.ts";
 export * from "./contribution-window.ts";
 export * from "./csv.ts";
 export * from "./reference.ts";
+export * from "./payment-reference.ts";
 export * from "./report.ts";

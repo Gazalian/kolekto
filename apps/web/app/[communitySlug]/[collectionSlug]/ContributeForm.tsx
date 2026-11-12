@@ -106,6 +106,9 @@ export function ContributeForm({
   const [done, setDone] = useState<ContributionResult["summary"] | null>(null);
   const [member, setMember] = useState<IdentifiedMember | null>(null);
   const [isPending, startTransition] = useTransition();
+  // One key per checkout, so a double-click or a retry after a timeout resumes
+  // the same payment attempt instead of starting a second one.
+  const [checkoutKey, setCheckoutKey] = useState(() => crypto.randomUUID());
 
   const isManaged = audienceMode !== "public";
 
@@ -286,7 +289,9 @@ export function ContributeForm({
             }
           : {}),
         answers,
+        checkoutKey,
       });
+      if (result.restartCheckout) setCheckoutKey(crypto.randomUUID());
       if (result.error) setError(result.error);
       else if (result.summary) setDone(result.summary);
     });
