@@ -5,10 +5,11 @@ import { normalisePrefix, referenceExample } from "@kolekto/domain";
 import { ArrowLeft, ArrowRight, Check } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useRef, useState, useTransition } from "react";
+import { useRef, useState, useTransition, type ReactNode } from "react";
 import { emptyCodes, type CodeDraft } from "./codeDefaults.ts";
 import type { MemberGroup } from "@kolekto/db";
 import type { CollectionAudienceMode } from "@kolekto/validation";
+import { AmountField } from "../AmountField.tsx";
 import { AudiencePicker, AUDIENCE_LABELS } from "../AudiencePicker.tsx";
 import {
   createCollectionAction,
@@ -34,30 +35,42 @@ import { emptyStory, StoryEditor, type StoryDraft } from "../StoryEditor.tsx";
 import { SuggestedAmountsEditor } from "../SuggestedAmountsEditor.tsx";
 import { emptyTier, TiersEditor, type TierDraft } from "../TiersEditor.tsx";
 import { QuestionsEditor, questionsToFields, type QuestionDraft } from "../QuestionsEditor.tsx";
-import { FLOWS, feePreviewRows, flowFor, type AmountModelKey, type Flow, type FlowStep, type StepKind } from "./flows.ts";
+import {
+  FLOWS,
+  feePreviewRows,
+  flowFor,
+  flowHas,
+  stepHas,
+  type AmountModelKey,
+  type Flow,
+  type FlowStep,
+  type SectionKind,
+} from "./flows.ts";
+import {
+  eventEndProblem,
+  rangeProblem,
+  resumeStep,
+  sectionReady,
+  stepReady,
+  windowProblem,
+  type WizardSnapshot,
+} from "./readiness.ts";
 import { ReviewPanel } from "./ReviewPanel.tsx";
 
 /**
  * Creating a collection, in the shape of the thing being created.
  *
- * ── WHAT CHANGED IN M7.7 ────────────────────────────────────────────────────
+ * ── HOW IT IS BUILT ─────────────────────────────────────────────────────────
  *
- * This wizard had seven fixed positions and one body per position. Every kind
- * of collection walked the same seven screens in the same order; the most a
- * ticketed event could do was rename them. That is why the product felt like
- * one form wearing seven costumes, and renaming more of it would not have
- * helped.
+ * A flow (./flows.ts) is an ordered list of steps, and a step is an ordered
+ * list of SECTIONS. This component renders, validates and saves by section,
+ * so a step that asks two things — a price and who bears the fees on it —
+ * shows both and saves both, in order, with no step-specific code.
  *
- * A flow is now an ordered list of step KINDS (see ./flows.ts) and this
- * component renders by kind. The lengths differ, the order differs, the
- * vocabulary differs, and two flows do not ask the same questions: a ticketed
- * event opens on the event — name, date, venue and flyer together, because
- * that is how an organiser holds it in their head — and a recurring plan has
- * no closing date at all, because a plan that repeats does not close.
- *
- * What is shared is the machinery: the same editors, the same server actions,
- * the same draft row, the same per-step persistence. Shared infrastructure,
- * purpose-built experience.
+ * The type picker comes first and is not a step: it has no number and no
+ * place in the progress bar. Internally it is still position 0, so
+ * `collections.draft_step` keeps the meaning it has always had (1 = the
+ * flow's first step).
  *
  * ── WHAT IS STILL TRUE ──────────────────────────────────────────────────────
  *
@@ -68,16 +81,28 @@ import { ReviewPanel } from "./ReviewPanel.tsx";
  *
  * ── WHAT THIS DOES NOT DO ───────────────────────────────────────────────────
  *
- * It takes no payment. The fee step is a decision and a preview, not a
- * charge: Phase 4 is not implemented, and nothing here initiates, records or
- * moves money.
+ * It takes no payment. The fee section is a decision and a preview, not a
+ * charge: nothing here initiates, records or moves money.
  */
 
 const PURPOSE_STEP: FlowStep = {
   kind: "purpose",
+  sections: ["purpose"],
   label: "Purpose",
   heading: "What are you collecting for?",
 };
+
+/**
+ * Who bears the fees on a NEW collection until the organiser says otherwise.
+ *
+ * Product decided 2026-11-10 that the fee may be passed to contributors; this
+ * supersedes D-17's engineering default. It is configuration only: `fee_mode`
+ * is frozen onto each payment attempt when one is made (D-16), so this changes
+ * no stored payment, fee or balance. Existing collections and resumed drafts
+ * keep whatever they already have. See
+ * docs/product/COLLECTION-CREATION-FLOW-REDESIGN-PLAN.md §4.2.
+ */
+const DEFAULT_FEE_MODE: FeeBearerChoice = "contributor_pays";
 
 // `CodeDraft` and `emptyCodes` live in codeDefaults.ts, not here: a server
 // component (continue/page.tsx) needs `emptyCodes()` for a draft with no
@@ -120,6 +145,35 @@ export interface ExistingDraft {
   codesLocked: boolean;
 }
 
+/** Where a resumed draft opens. See `resumeStep`. */
+function openingStep(existing: ExistingDraft, canConfigureCodes: boolean): number {
+  const flow = flowFor(existing.flowKey);
+  return resumeStep(flow, existing.step, {
+    name: existing.name,
+    eventStartsAt: existing.event.startsAt,
+    eventEndsAt: existing.event.endsAt,
+    fixedAmount: existing.fixedAmount,
+    minAmount: existing.minAmount,
+    maxAmount: existing.maxAmount,
+    targetAmount: existing.targetAmount,
+    suggestedAmounts: existing.suggestedAmounts,
+    tiers: existing.tiers.length > 0 ? existing.tiers : [emptyTier()],
+    items: existing.items.length > 0 ? existing.items : [emptyItem()],
+    audienceMode: existing.audienceMode,
+    audienceGroupIds: existing.audienceGroupIds,
+    startsAt: existing.startsAt,
+    deadlineAt: existing.deadlineAt,
+    codes: existing.codes,
+    canConfigureCodes,
+    codesLocked: existing.codesLocked,
+  });
+}
+
+/** A small heading for one part of a step that asks more than one thing. */
+function SectionTitle({ children }: { children: ReactNode }) {
+  return <h3 className="text-sm font-semibold text-[var(--color-text)]">{children}</h3>;
+}
+
 export function NewCollectionForm({
   slug,
   communityId,
@@ -132,7 +186,7 @@ export function NewCollectionForm({
   communityId: string;
   memberCount: number;
   groups: MemberGroup[];
-  /** `collection.configure_codes` — owner and admin. Without it the reference step explains rather than offers. */
+  /** `collection.configure_codes` — owner and admin. Without it the references section explains rather than offers. */
   canConfigureCodes: boolean;
   existing?: ExistingDraft | undefined;
 }) {
@@ -147,9 +201,9 @@ export function NewCollectionForm({
   const [flow, setFlow] = useState<Flow>(existing ? flowFor(existing.flowKey) : FLOWS[0]!);
   const steps = [PURPOSE_STEP, ...flow.steps];
 
-  // A resumed draft starts where it stopped, never on the intent picker: what
+  // A resumed draft starts where it stopped, never on the type picker: what
   // kind of collection this is has already been decided by rows that exist.
-  const [step, setStep] = useState(existing ? Math.min(Math.max(existing.step, 1), flow.steps.length) : 0);
+  const [step, setStep] = useState(() => (existing ? openingStep(existing, canConfigureCodes) : 0));
   const [error, setError] = useState<string | null>(null);
   const [draftHref, setDraftHref] = useState<string | null>(
     existing ? `/c/${slug}/collections/${existing.collectionSlug}` : null,
@@ -183,17 +237,49 @@ export function NewCollectionForm({
   const [recurrence, setRecurrence] = useState<RecurrenceDraft>(existing?.recurrence ?? emptyRecurrence());
   const [questions, setQuestions] = useState<QuestionDraft[]>(existing?.questions ?? []);
   const [visibility, setVisibility] = useState<"public" | "unlisted">(existing?.visibility ?? "unlisted");
-  const [feeMode, setFeeMode] = useState<FeeBearerChoice>(existing?.feeMode ?? "community_absorbs");
+  const [feeMode, setFeeMode] = useState<FeeBearerChoice>(existing?.feeMode ?? DEFAULT_FEE_MODE);
   const [codes, setCodes] = useState<CodeDraft>(existing?.codes ?? emptyCodes());
   const codesLocked = existing?.codesLocked ?? false;
   const [audienceMode, setAudienceMode] = useState<CollectionAudienceMode>(
     existing?.audienceMode ?? (FLOWS[0]!.participationMode === "open" ? "public" : "all_members"),
   );
   const [audienceGroupIds, setAudienceGroupIds] = useState<string[]>(existing?.audienceGroupIds ?? []);
+  // Set when the sales close date was filled in for the organiser, so the
+  // field can say so (D6).
+  const [salesCloseSuggested, setSalesCloseSuggested] = useState(false);
+  // Checked when the date is chosen, not on every render: "now" is not a
+  // render input.
+  const [deadlinePassed, setDeadlinePassed] = useState(false);
+  function chooseDeadline(value: string): void {
+    setDeadlineAt(value);
+    setDeadlinePassed(value !== "" && Date.parse(value) < Date.now());
+  }
 
   const current = steps[step]!;
-  const kind = current.kind;
-  const hasStep = (wanted: StepKind): boolean => flow.steps.some((entry) => entry.kind === wanted);
+  const shows = (section: SectionKind): boolean => stepHas(current, section);
+  const asksSeveral = current.sections.length > 1;
+
+  const snapshot: WizardSnapshot = {
+    name,
+    eventStartsAt: eventDraft.startsAt,
+    eventEndsAt: eventDraft.endsAt,
+    fixedAmount,
+    minAmount,
+    maxAmount,
+    targetAmount,
+    suggestedAmounts,
+    tiers,
+    items,
+    audienceMode,
+    audienceGroupIds,
+    startsAt,
+    deadlineAt,
+    codes,
+    canConfigureCodes,
+    codesLocked,
+  };
+  const canContinue = stepReady(current, snapshot, flow);
+  const nameReady = sectionReady("basics", snapshot, flow);
 
   function chooseFlow(next: Flow): void {
     setFlow(next);
@@ -202,27 +288,6 @@ export function NewCollectionForm({
     setAudienceMode(next.participationMode === "open" ? "public" : "all_members");
     setStep(1);
   }
-
-  const canContinue = (() => {
-    switch (kind) {
-      case "basics":
-      case "story":
-        return name.trim().length >= 3;
-      case "event":
-        return name.trim().length >= 3 && eventDraft.startsAt.trim() !== "";
-      case "amount":
-        return fixedAmount.trim() !== "";
-      case "packages":
-      case "tickets":
-        return tiers.every((tier) => tier.name.trim() !== "" && tier.price.trim() !== "");
-      case "items":
-        return items.every((item) => item.name.trim() !== "" && item.price.trim() !== "");
-      case "reference":
-        return !canConfigureCodes || codesLocked || !codes.enabled || codes.prefix.trim().length >= 2;
-      default:
-        return true;
-    }
-  })();
 
   /** The fields `create` and `update` share. Everything type-specific is its own call, made once a collection id exists. */
   function collectionConfig() {
@@ -250,12 +315,10 @@ export function NewCollectionForm({
    *
    * `setDraftId` does not take effect inside the closure that called it, so
    * two callers in the same render both read `draftId === null` and both
-   * create. That is not hypothetical: the ticketing flow creates its draft
-   * mid-step (see `ensureDraft`), and a browser journey caught the resulting
-   * double create — two `app.create_collection` calls for the same name, the
-   * second colliding on the slug, the rejection escaping into a transition
-   * and leaving the wizard showing "Saving…" with every button disabled and
-   * no way out.
+   * create. That is not hypothetical: the draft can be created by the name
+   * field's blur, by an image being chosen, and by Continue — and a browser
+   * journey caught the resulting double create, the second colliding on the
+   * slug and leaving the wizard frozen on "Saving…".
    *
    * `draftRef` is written synchronously, so the second caller sees the first
    * one's work. `creationRef` holds the in-flight creation so a caller that
@@ -282,7 +345,10 @@ export function NewCollectionForm({
     }
 
     creationRef.current = (async () => {
-      const created = await createCollectionAction(slug, { communityId, ...collectionConfig() });
+      // `app.create_collection` copies the COMMUNITY's default fee mode onto
+      // the row; sending the wizard's own means a draft abandoned before the
+      // fee section stores what the organiser was shown.
+      const created = await createCollectionAction(slug, { communityId, ...collectionConfig(), feeMode });
       if (created.error || !created.collectionId || !created.collectionSlug) {
         setError(created.error ?? "Could not save this collection");
         return null;
@@ -292,6 +358,10 @@ export function NewCollectionForm({
       setDraftId(row.id);
       setDraftSlug(row.slug);
       setDraftHref(`/c/${slug}/collections/${row.slug}`);
+      if (created.feeModeError) {
+        setError(`Your progress is saved, but who pays the fees was not: ${created.feeModeError}`);
+      }
+
       return row;
     })();
 
@@ -306,14 +376,10 @@ export function NewCollectionForm({
 
   /**
    * Creates the draft mid-step, so a control that needs a collection id can
-   * live on the step that ought to own it.
-   *
-   * The flyer is why this exists. §18 requires it on the first event step,
-   * and an upload has to be scoped to a real collection — so naming the event
-   * creates the draft, and the uploader appears. Nothing else changes.
+   * live on the step that ought to own it — the image beside the name.
    */
   function ensureDraft(): void {
-    if (draftRef.current || creationRef.current || name.trim().length < 3) return;
+    if (draftRef.current || creationRef.current || !nameReady) return;
     // A Continue clicked while this is in flight is still ordered correctly:
     // `saveCollectionRow` waits on `creationRef` before it updates the row,
     // and the step's position is remembered only after that.
@@ -322,6 +388,17 @@ export function NewCollectionForm({
         await saveCollectionRow();
       });
     });
+  }
+
+  /** For the image uploader: the draft to upload against, created now if need be. */
+  async function draftForUpload(): Promise<{ id: string; slug: string } | null> {
+    if (draftRef.current) return draftRef.current;
+    if (!nameReady) return null;
+    try {
+      return await saveCollectionRow();
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -347,16 +424,17 @@ export function NewCollectionForm({
   }
 
   /**
-   * Saves what one step owns. Every call is a full replace against a row that
-   * exists, so a retry is safe.
+   * Saves what one step asks, section by section. Every call is a full
+   * replace against a row that exists, so a retry is safe.
    *
    * Returns the collection it saved against, because the caller needs it and
    * cannot read it from state: `setDraftId` does not take effect inside the
    * closure that called it, so on the very first step `draftId` is still null
    * here however recently the row was created.
    */
-  async function persistStep(stepKind: StepKind): Promise<{ id: string; slug: string } | null> {
-    if (stepKind === "purpose") return draftRef.current;
+  async function persistStep(stepToSave: FlowStep): Promise<{ id: string; slug: string } | null> {
+    const has = (section: SectionKind): boolean => stepHas(stepToSave, section);
+    if (has("purpose")) return draftRef.current;
 
     const save = async (what: string, run: () => Promise<{ error?: string }>): Promise<boolean> => {
       const result = await run();
@@ -374,10 +452,11 @@ export function NewCollectionForm({
     // single statement. Updating the collection row first would try to make
     // it managed while its audience still said public — the half-changed
     // state that constraint exists to refuse.
-    if (stepKind === "audience" && draftId && draftSlug) {
+    const before = draftRef.current;
+    if (has("audience") && before) {
       const ok = await save("who it is for", () =>
-        setCollectionAudienceAction(slug, draftSlug, {
-          collectionId: draftId,
+        setCollectionAudienceAction(slug, before.slug, {
+          collectionId: before.id,
           audienceMode,
           groupIds: audienceMode === "groups" ? audienceGroupIds : [],
         }),
@@ -388,7 +467,7 @@ export function NewCollectionForm({
     const row = await saveCollectionRow();
     if (!row) return null;
 
-    if (stepKind === "packages" || stepKind === "tickets") {
+    if (has("packages") || has("tickets")) {
       const result = await setCollectionTiersAction(slug, row.slug, {
         collectionId: row.id,
         tiers: tiers.map((tier, index) => ({
@@ -411,7 +490,7 @@ export function NewCollectionForm({
       }
     }
 
-    if (stepKind === "items") {
+    if (has("items")) {
       const result = await setCollectionItemsAction(slug, row.slug, {
         collectionId: row.id,
         items: itemsToPayload(items),
@@ -425,7 +504,9 @@ export function NewCollectionForm({
       }
     }
 
-    if (stepKind === "event" || stepKind === "purchaseRules") {
+    // One call carries both the event's own details and whether each ticket
+    // needs a name, so a step with both sections saves it once.
+    if (has("event") || has("purchaseRules")) {
       const ok = await save("the event details", () =>
         setCollectionEventAction(slug, row.slug, {
           collectionId: row.id,
@@ -438,7 +519,7 @@ export function NewCollectionForm({
       if (!ok) return null;
     }
 
-    if (stepKind === "openAmount" || stepKind === "goal") {
+    if (has("openAmount") || has("goal")) {
       const suggestions = suggestedAmounts.map((amount) => amount.trim()).filter((amount) => amount !== "");
       if (suggestions.length > 0) {
         const ok = await save("the suggested amounts", () =>
@@ -448,7 +529,7 @@ export function NewCollectionForm({
       }
     }
 
-    if (stepKind === "story" && (story.what.trim() || story.why.trim() || story.impact.trim())) {
+    if (has("story") && (story.what.trim() || story.why.trim() || story.impact.trim())) {
       const ok = await save("the story", () =>
         setCollectionStoryAction(slug, row.slug, {
           collectionId: row.id,
@@ -460,7 +541,7 @@ export function NewCollectionForm({
       if (!ok) return null;
     }
 
-    if (stepKind === "schedule") {
+    if (has("schedule")) {
       const ok = await save("the schedule", () =>
         setCollectionRecurrenceAction(slug, row.slug, {
           collectionId: row.id,
@@ -474,14 +555,14 @@ export function NewCollectionForm({
     }
 
     // Configuration, not a charge. Nothing here records or moves money.
-    if (stepKind === "fees") {
+    if (has("fees")) {
       const ok = await save("who pays the fees", () =>
         setCollectionFeeModeAction(slug, row.slug, { collectionId: row.id, feeMode }),
       );
       if (!ok) return null;
     }
 
-    if (stepKind === "questions") {
+    if (has("questions")) {
       const fields = questionsToFields(questions);
       if (fields.length > 0) {
         const ok = await save("the questions", () =>
@@ -493,7 +574,7 @@ export function NewCollectionForm({
 
     // The M7.6 reference architecture, reached from creation instead of only
     // from Settings. Same function, same permission, same freeze-on-issue.
-    if (stepKind === "reference" && canConfigureCodes && !codesLocked) {
+    if (has("reference") && canConfigureCodes && !codesLocked) {
       const ok = await save("the contributor references", () =>
         saveCodeSettingsAction(slug, row.slug, {
           collectionId: row.id,
@@ -508,7 +589,7 @@ export function NewCollectionForm({
       if (!ok) return null;
     }
 
-    // The cover image saves itself the moment it is uploaded.
+    // The image saves itself the moment it is uploaded.
     return row;
   }
 
@@ -516,20 +597,31 @@ export function NewCollectionForm({
     setError(null);
     startTransition(async () => {
       await guard(async () => {
-        const row = await persistStep(kind);
+        const row = await persistStep(current);
         if (!row) return;
         const next = Math.min(steps.length - 1, step + 1);
 
         // Awaited, not fired and forgotten. A server action dispatched inside
         // a transition and left floating keeps React's pending state true
         // after the transition's own work is done — which left the Review
-        // step showing "Saving…" with its button disabled, for ever. Two
-        // browser journeys caught it; nothing else would have.
+        // step showing "Saving…" with its button disabled, for ever.
         //
         // The row comes from the save rather than from state, so the FIRST
         // step records its position too: `setDraftId` has not taken effect
         // inside this closure, however recently the draft was created.
         await rememberStepAction(slug, row.slug, row.id, next);
+
+        // D6: ticket sales close when the event starts unless the organiser
+        // says otherwise. Filled in, visibly, only when nothing is there yet.
+        if (
+          flow.timing === "sales_window" &&
+          stepHas(steps[next]!, "timing") &&
+          deadlineAt.trim() === "" &&
+          eventDraft.startsAt.trim() !== ""
+        ) {
+          setDeadlineAt(eventDraft.startsAt);
+          setSalesCloseSuggested(true);
+        }
 
         setStep(next);
       });
@@ -540,20 +632,34 @@ export function NewCollectionForm({
     setError(null);
     startTransition(async () => {
       await guard(async () => {
-        const open = draftRef.current;
-        if (open) {
-          router.push(`/c/${slug}/collections/${open.slug}`);
-          return;
-        }
-        const row = await persistStep("basics");
+        const row = draftRef.current ?? (await saveCollectionRow());
         if (!row) return;
         router.push(`/c/${slug}/collections/${row.slug}`);
       });
     });
   }
 
+  /** The image control, beside the name on the first step of every flow. */
+  function coverControl(noun: string): ReactNode {
+    return (
+      <CoverUploader
+        slug={slug}
+        collectionSlug={draftSlug}
+        collectionId={draftId}
+        coverImageUrl={coverImageUrl}
+        onChanged={setCoverImageUrl}
+        ensureCollection={draftForUpload}
+        unavailableReason={draftId || nameReady ? null : `Add a name first — the ${noun} is saved with it.`}
+        noun={noun}
+      />
+    );
+  }
+
+  // The type is fixed once a draft exists: its rows already have that shape.
+  const canGoBack = step > 1 || (step === 1 && !draftId);
+
   return (
-    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-2xl flex-col gap-6 pb-24 sm:pb-0">
       <div className="flex flex-col gap-1">
         <Link href={`/c/${slug}/collections`} className="text-xs font-medium text-[var(--color-text-muted)] hover:underline">
           ← Collections
@@ -565,9 +671,11 @@ export function NewCollectionForm({
               ? name || `Continue this ${flow.vocabulary.noun}`
               : `New ${flow.vocabulary.noun}`}
         </h1>
-        <p className="text-sm text-[var(--color-text-muted)]">
-          Step {step + 1} of {steps.length} · {current.label}
-        </p>
+        {step > 0 && (
+          <p className="text-sm text-[var(--color-text-muted)]">
+            {flow.title} · Step {step} of {flow.steps.length} · {current.label}
+          </p>
+        )}
         {draftId && (
           <p className="text-xs text-[var(--color-text-muted)]">
             {isPending ? "Saving…" : "Your progress is saved automatically."}{" "}
@@ -580,29 +688,33 @@ export function NewCollectionForm({
         )}
       </div>
 
-      <ol className="flex gap-1" aria-label="Progress">
-        {steps.map((entry, index) => (
-          <li
-            key={`${entry.kind}-${index}`}
-            aria-current={index === step ? "step" : undefined}
-            className={
-              index <= step
-                ? "h-1 flex-1 rounded-full bg-[var(--color-primary)]"
-                : "h-1 flex-1 rounded-full bg-[var(--color-border)]"
-            }
-          />
-        ))}
-      </ol>
+      {/* The type picker is not a step, so it has no place in the progress bar. */}
+      {step > 0 && (
+        <ol className="flex gap-1" aria-label="Progress">
+          {flow.steps.map((entry, index) => (
+            <li
+              key={`${entry.kind}-${index}`}
+              aria-current={index + 1 === step ? "step" : undefined}
+              aria-label={entry.label}
+              className={
+                index + 1 <= step
+                  ? "h-1 flex-1 rounded-full bg-[var(--color-primary)]"
+                  : "h-1 flex-1 rounded-full bg-[var(--color-border)]"
+              }
+            />
+          ))}
+        </ol>
+      )}
 
-      {kind !== "purpose" && (
+      {step > 0 && (
         <div>
           <h2 className="text-sm font-semibold text-[var(--color-text)]">{current.heading}</h2>
           {current.hint && <p className="mt-1 text-sm text-[var(--color-text-muted)]">{current.hint}</p>}
         </div>
       )}
 
-      {/* ── Purpose ─────────────────────────────────────────────────────── */}
-      {kind === "purpose" && (
+      {/* ── Type picker ─────────────────────────────────────────────────── */}
+      {shows("purpose") && (
         <section className="flex flex-col gap-3">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">{PURPOSE_STEP.heading}</h2>
           {FLOWS.map((option) => (
@@ -621,7 +733,7 @@ export function NewCollectionForm({
       )}
 
       {/* ── Basics ──────────────────────────────────────────────────────── */}
-      {kind === "basics" && (
+      {shows("basics") && (
         <section className="flex flex-col gap-4">
           <TextField
             label={`What is this ${flow.vocabulary.noun} called?`}
@@ -639,8 +751,19 @@ export function NewCollectionForm({
         </section>
       )}
 
+      {/* ── The image, beside the name ──────────────────────────────────── */}
+      {shows("cover") && (
+        <section className="flex flex-col gap-2">
+          <SectionTitle>Image</SectionTitle>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Optional, and shown at the top of the public page. You can change it later.
+          </p>
+          {coverControl("image")}
+        </section>
+      )}
+
       {/* ── The event, flyer included (§18) ──────────────────────────────── */}
-      {kind === "event" && (
+      {shows("event") && (
         <section className="flex flex-col gap-4">
           <TextField
             label="What is the event called?"
@@ -657,30 +780,22 @@ export function NewCollectionForm({
             onChange={(event) => setDescription(event.target.value)}
           />
 
-          <EventEditor event={eventDraft} onChange={setEventDraft} showAttendeeToggle={false} />
-
           <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3">
             <p className="text-sm font-medium text-[var(--color-text)]">Event flyer</p>
-            {draftId && draftSlug ? (
-              <CoverUploader
-                slug={slug}
-                collectionSlug={draftSlug}
-                collectionId={draftId}
-                coverImageUrl={coverImageUrl}
-                onChanged={setCoverImageUrl}
-              />
-            ) : (
-              <p className="text-sm text-[var(--color-text-muted)]">
-                Name the event first — the flyer is saved against it, so it needs somewhere to live. It appears here the
-                moment you do.
-              </p>
-            )}
+            {coverControl("flyer")}
           </div>
+
+          <EventEditor event={eventDraft} onChange={setEventDraft} showAttendeeToggle={false} />
+          {eventEndProblem(eventDraft.startsAt, eventDraft.endsAt) && (
+            <p role="alert" className="text-xs font-medium text-[var(--color-danger)]">
+              The end must be after the start.
+            </p>
+          )}
         </section>
       )}
 
       {/* ── The story (§15) ─────────────────────────────────────────────── */}
-      {kind === "story" && (
+      {shows("story") && (
         <section className="flex flex-col gap-4">
           <TextField
             label="What are you raising money for?"
@@ -697,93 +812,78 @@ export function NewCollectionForm({
             onChange={(event) => setDescription(event.target.value)}
           />
 
-          <StoryEditor story={story} onChange={setStory} />
-
           <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-3">
             <p className="text-sm font-medium text-[var(--color-text)]">Campaign image</p>
             <p className="text-xs text-[var(--color-text-muted)]">
               The largest thing on the page. A photograph of what you are raising money for does more than any sentence.
             </p>
-            {draftId && draftSlug ? (
-              <CoverUploader
-                slug={slug}
-                collectionSlug={draftSlug}
-                collectionId={draftId}
-                coverImageUrl={coverImageUrl}
-                onChanged={setCoverImageUrl}
-              />
-            ) : (
-              <p className="text-sm text-[var(--color-text-muted)]">Title the campaign first, then add the image.</p>
-            )}
+            {coverControl("image")}
           </div>
+
+          <StoryEditor story={story} onChange={setStory} />
         </section>
       )}
 
       {/* ── Amounts ─────────────────────────────────────────────────────── */}
-      {kind === "amount" && (
+      {shows("amount") && (
         <section className="flex flex-col gap-4">
-          <TextField
+          <AmountField
             label={flow.schedule === "recurring" ? "Amount per period" : "Amount each person pays"}
-            hint="In naira."
             value={fixedAmount}
             required
-            onChange={(event) => setFixedAmount(event.target.value)}
+            onValueChange={setFixedAmount}
           />
         </section>
       )}
 
-      {kind === "openAmount" && (
+      {shows("openAmount") && (
         <section className="flex flex-col gap-4">
           <div className="grid gap-3 sm:grid-cols-2">
-            <TextField
-              label="Smallest contribution"
-              hint="Optional."
-              value={minAmount}
-              onChange={(event) => setMinAmount(event.target.value)}
-            />
-            <TextField
+            <AmountField label="Smallest contribution" hint="Optional." value={minAmount} onValueChange={setMinAmount} />
+            <AmountField
               label="Largest contribution"
               hint="Optional."
               value={maxAmount}
-              onChange={(event) => setMaxAmount(event.target.value)}
+              onValueChange={setMaxAmount}
+              {...(rangeProblem(minAmount, maxAmount) ? { error: rangeProblem(minAmount, maxAmount)! } : {})}
             />
           </div>
           <SuggestedAmountsEditor amounts={suggestedAmounts} onChange={setSuggestedAmounts} />
-          <TextField
+          <AmountField
             label="Target"
             hint="Optional. Shown as something to work toward."
             value={targetAmount}
-            onChange={(event) => setTargetAmount(event.target.value)}
+            onValueChange={setTargetAmount}
           />
         </section>
       )}
 
-      {kind === "goal" && (
+      {shows("goal") && (
         <section className="flex flex-col gap-4">
-          <TextField
+          <AmountField
             label="Fundraising goal"
             hint="Optional, but a campaign with a target raises more than one without."
             value={targetAmount}
-            onChange={(event) => setTargetAmount(event.target.value)}
+            onValueChange={setTargetAmount}
           />
           <SuggestedAmountsEditor amounts={suggestedAmounts} onChange={setSuggestedAmounts} />
-          <TextField
+          <AmountField
             label="Smallest donation"
             hint="Optional. Leave empty to accept any amount."
             value={minAmount}
-            onChange={(event) => setMinAmount(event.target.value)}
+            onValueChange={setMinAmount}
           />
         </section>
       )}
 
       {/* ── Priced things ───────────────────────────────────────────────── */}
-      {(kind === "packages" || kind === "tickets") && (
+      {(shows("packages") || shows("tickets")) && (
         <section className="flex flex-col gap-4">
-          <TiersEditor tiers={tiers} onChange={setTiers} vocabulary={kind === "tickets" ? "ticket" : "package"} />
+          <TiersEditor tiers={tiers} onChange={setTiers} vocabulary={shows("tickets") ? "ticket" : "package"} />
         </section>
       )}
 
-      {kind === "items" && (
+      {shows("items") && (
         <section className="flex flex-col gap-4">
           {draftId && draftSlug ? (
             <ItemsEditor
@@ -804,37 +904,13 @@ export function NewCollectionForm({
         </section>
       )}
 
-      {/* ── Rules ───────────────────────────────────────────────────────── */}
-      {kind === "orderRules" && (
-        <section className="flex flex-col gap-4">
+      {/* ── Whose names a ticket needs ──────────────────────────────────── */}
+      {shows("purchaseRules") && (
+        <section className="flex flex-col gap-3 border-t border-[var(--color-border)] pt-4">
+          <SectionTitle>Buying</SectionTitle>
           <p className="text-sm text-[var(--color-text-muted)]">
-            How many of each item one person may take is set on the item itself, beside its stock. Nothing is reserved
-            until an order is paid for, so stock is not held while somebody browses.
-          </p>
-          <SelectField
-            label="Visibility"
-            value={visibility}
-            onChange={(event) => setVisibility(event.target.value as "public" | "unlisted")}
-            hint={
-              visibility === "public"
-                ? "Listed on your community page as well as reachable by link."
-                : "Reachable by link only. Not listed anywhere."
-            }
-          >
-            <option value="unlisted">Link only</option>
-            <option value="public">Listed publicly</option>
-          </SelectField>
-        </section>
-      )}
-
-      {kind === "purchaseRules" && (
-        <section className="flex flex-col gap-4">
-          <p className="text-sm text-[var(--color-text)]">
-            One contributor can purchase multiple tickets for other people.
-          </p>
-          <p className="text-sm text-[var(--color-text-muted)]">
-            They may take several kinds in one order too — two VIP and one Regular together. How many of each type
-            exist, and the most one person may buy of it, are set on the ticket type itself on the previous step.
+            One person can buy several tickets, of several types, for other people. How many of each type exist, and
+            the most one person may buy, are set on the ticket type above.
           </p>
           <label className="flex items-start gap-2 text-sm text-[var(--color-text)]">
             <input
@@ -853,49 +929,33 @@ export function NewCollectionForm({
         </section>
       )}
 
-      {kind === "schedule" && (
-        <section className="flex flex-col gap-4">
+      {shows("schedule") && (
+        <section className="flex flex-col gap-3">
+          {asksSeveral && <SectionTitle>How often</SectionTitle>}
           <RecurrenceEditor recurrence={recurrence} onChange={setRecurrence} />
         </section>
       )}
 
       {/* ── Fees (§5, §6) ───────────────────────────────────────────────── */}
-      {kind === "fees" && (
-        <section className="flex flex-col gap-4">
+      {shows("fees") && (
+        <section
+          className={
+            asksSeveral ? "flex flex-col gap-4 border-t border-[var(--color-border)] pt-4" : "flex flex-col gap-4"
+          }
+        >
           <FeeConfigurator
             bearer={feeMode}
             onBearerChange={setFeeMode}
             category={flow.category}
             contributionNoun={flow.vocabulary.contribution}
             amounts={feePreviewRows({ flow, fixedAmount, minAmount, suggestedAmounts, tiers, items })}
+            {...(asksSeveral ? { maxExamples: 1 } : {})}
           />
         </section>
       )}
 
-      {/* ── Cover, where it is not already asked for ─────────────────────── */}
-      {kind === "cover" && (
-        <section className="flex flex-col gap-4">
-          <p className="text-sm text-[var(--color-text-muted)]">
-            Optional, and shown at the top of the public page. You can add or change it later.
-          </p>
-          {draftId && draftSlug ? (
-            <CoverUploader
-              slug={slug}
-              collectionSlug={draftSlug}
-              collectionId={draftId}
-              coverImageUrl={coverImageUrl}
-              onChanged={setCoverImageUrl}
-            />
-          ) : (
-            <p className="text-sm text-[var(--color-danger)]">
-              {error ?? "Could not create the draft. Go back and try again."}
-            </p>
-          )}
-        </section>
-      )}
-
       {/* ── Audience ────────────────────────────────────────────────────── */}
-      {kind === "audience" && (
+      {shows("audience") && (
         <section className="flex flex-col gap-4">
           <p className="text-sm text-[var(--color-text-muted)]">
             This community has {memberCount} member{memberCount === 1 ? "" : "s"}. Choosing a group or the whole roll
@@ -913,28 +973,92 @@ export function NewCollectionForm({
             }}
             onGroupsChange={setAudienceGroupIds}
           />
+          {!sectionReady("audience", snapshot, flow) && (
+            <p className="text-xs font-medium text-[var(--color-danger)]">Choose at least one group.</p>
+          )}
 
-          {!hasStep("orderRules") && (
-            <SelectField
-              label="Visibility"
-              value={visibility}
-              onChange={(event) => setVisibility(event.target.value as "public" | "unlisted")}
-              hint={
-                visibility === "public"
-                  ? "Listed on your community page as well as reachable by link."
-                  : "Reachable by link only. Not listed anywhere."
-              }
-            >
-              <option value="unlisted">Link only</option>
-              <option value="public">Listed publicly</option>
-            </SelectField>
+          <SelectField
+            label="Visibility"
+            value={visibility}
+            onChange={(event) => setVisibility(event.target.value as "public" | "unlisted")}
+            hint={
+              visibility === "public"
+                ? "Listed on your community page as well as reachable by link."
+                : "Reachable by link only. Not listed anywhere."
+            }
+          >
+            <option value="unlisted">Link only</option>
+            <option value="public">Listed publicly</option>
+          </SelectField>
+        </section>
+      )}
+
+      {/* ── Timing, type-aware (§21) ─────────────────────────────────────── */}
+      {shows("timing") && (
+        <section className="flex flex-col gap-4 border-t border-[var(--color-border)] pt-4">
+          <SectionTitle>
+            {flow.timing === "sales_window"
+              ? "When are tickets on sale?"
+              : flow.timing === "order_window"
+                ? "When are orders open?"
+                : flow.timing === "campaign_end"
+                  ? "When does the campaign end?"
+                  : "When does it close?"}
+          </SectionTitle>
+          {flow.timing === "sales_window" || flow.timing === "order_window" ? (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <TextField
+                label={flow.timing === "sales_window" ? "Sales open" : "Orders open"}
+                type="datetime-local"
+                hint="Optional. Leave empty to open as soon as you publish."
+                value={startsAt}
+                onChange={(event) => setStartsAt(event.target.value)}
+              />
+              <TextField
+                label={flow.timing === "sales_window" ? "Sales close" : "Orders close"}
+                type="datetime-local"
+                hint={
+                  salesCloseSuggested && deadlineAt === eventDraft.startsAt
+                    ? "Set to when the event starts. Change it if sales should close at another time."
+                    : "Optional."
+                }
+                value={deadlineAt}
+                onChange={(event) => chooseDeadline(event.target.value)}
+                {...(windowProblem(startsAt, deadlineAt) ? { error: "Must be after sales open." } : {})}
+              />
+            </div>
+          ) : (
+            <TextField
+              label={flow.timing === "campaign_end" ? "Campaign ends" : "Closing date"}
+              type="datetime-local"
+              hint="Optional. Leave it empty and it stays open until you close it yourself."
+              value={deadlineAt}
+              onChange={(event) => chooseDeadline(event.target.value)}
+            />
+          )}
+
+          {flow.timing === "sales_window" && eventDraft.startsAt && (
+            <p className="text-xs text-[var(--color-text-muted)]">
+              The event itself is on {eventDraft.startsAt.replace("T", " at ")}. That is a different date from when
+              tickets stop selling.
+            </p>
+          )}
+          {flow.timing === "sales_window" &&
+            eventDraft.startsAt &&
+            deadlineAt &&
+            Date.parse(deadlineAt) > Date.parse(eventDraft.startsAt) && (
+              <Banner tone="info">Tickets will still be on sale after the event has started. Check that is intended.</Banner>
+            )}
+          {deadlinePassed && deadlineAt && (
+            <Banner tone="info">That date has already passed. Nobody could pay once it is published.</Banner>
           )}
         </section>
       )}
 
       {/* ── Questions ───────────────────────────────────────────────────── */}
-      {kind === "questions" && (
-        <section className="flex flex-col gap-4">
+      {shows("questions") && (
+        <section className="flex flex-col gap-3">
+          <SectionTitle>Extra questions</SectionTitle>
           <p className="text-sm text-[var(--color-text-muted)]">
             Everyone is already asked for a name and a way to reach them. Add a question only where you need something
             this {flow.vocabulary.noun} cannot run without — a house number, a size, a dietary note.
@@ -944,13 +1068,15 @@ export function NewCollectionForm({
       )}
 
       {/* ── Contributor references (§9) ──────────────────────────────────── */}
-      {kind === "reference" && (
-        <section className="flex flex-col gap-4">
+      {shows("reference") && (
+        <section className="flex flex-col gap-3 border-t border-[var(--color-border)] pt-4">
+          <SectionTitle>Contributor references</SectionTitle>
           {!canConfigureCodes ? (
-            <Banner tone="info">
-              Contributor references are an owner or admin decision, so this step is not yours to set. Everything else
-              here is — an owner can switch them on later from Settings, and they are issued from then on.
-            </Banner>
+            // Not a control a treasurer can use, so one line rather than a
+            // screen of explanation.
+            <p className="text-sm text-[var(--color-text-muted)]">
+              References are switched on by an owner or admin, from Settings.
+            </p>
           ) : codesLocked ? (
             <Banner tone="info">
               References have already been issued on this {flow.vocabulary.noun}, so the format is fixed — they may
@@ -958,10 +1084,11 @@ export function NewCollectionForm({
             </Banner>
           ) : (
             <>
+              <p className="text-sm text-[var(--color-text-muted)]">{flow.referenceHint}</p>
               <ReferenceStep
                 codes={codes}
                 onChange={setCodes}
-                tiers={hasStep("tickets") || hasStep("packages") ? tiers : []}
+                tiers={flowHas(flow, "tickets") || flowHas(flow, "packages") ? tiers : []}
                 offerings={flow.vocabulary.offerings ?? "options"}
                 peopleNoun={flow.vocabulary.people}
               />
@@ -985,47 +1112,8 @@ export function NewCollectionForm({
         </section>
       )}
 
-      {/* ── Timing, type-aware (§21) ─────────────────────────────────────── */}
-      {kind === "timing" && (
-        <section className="flex flex-col gap-4">
-          {flow.timing === "sales_window" || flow.timing === "order_window" ? (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <TextField
-                label={flow.timing === "sales_window" ? "Sales open" : "Orders open"}
-                type="datetime-local"
-                hint="Optional. Leave empty to open as soon as you publish."
-                value={startsAt}
-                onChange={(event) => setStartsAt(event.target.value)}
-              />
-              <TextField
-                label={flow.timing === "sales_window" ? "Sales close" : "Orders close"}
-                type="datetime-local"
-                hint="Optional."
-                value={deadlineAt}
-                onChange={(event) => setDeadlineAt(event.target.value)}
-              />
-            </div>
-          ) : (
-            <TextField
-              label={flow.timing === "campaign_end" ? "Campaign ends" : "Closing date"}
-              type="datetime-local"
-              hint="Optional. Leave it empty and it stays open until you close it yourself."
-              value={deadlineAt}
-              onChange={(event) => setDeadlineAt(event.target.value)}
-            />
-          )}
-
-          {flow.timing === "sales_window" && eventDraft.startsAt && (
-            <p className="text-xs text-[var(--color-text-muted)]">
-              The event itself is on {eventDraft.startsAt.replace("T", " at ")}. That is a different date from when
-              tickets stop selling.
-            </p>
-          )}
-        </section>
-      )}
-
       {/* ── Review, per type (§23) ───────────────────────────────────────── */}
-      {kind === "review" && (
+      {shows("review") && (
         <ReviewPanel
           flow={flow}
           name={name}
@@ -1065,28 +1153,34 @@ export function NewCollectionForm({
         </Banner>
       )}
 
-      <div className="flex items-center justify-between gap-3">
-        <Button
-          type="button"
-          variant="ghost"
-          disabled={step === 0 || isPending}
-          onClick={() => setStep((cur) => Math.max(0, cur - 1))}
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
-        </Button>
+      {/* The picker has no footer: choosing a type is how it moves on. On a
+          phone the footer sticks to the bottom so Continue is always in reach. */}
+      {step > 0 && (
+        <div className="fixed inset-x-0 bottom-0 z-10 flex items-center justify-between gap-3 border-t border-[var(--color-border)] bg-[var(--color-bg)] px-4 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:static sm:border-0 sm:bg-transparent sm:p-0">
+          {canGoBack ? (
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={isPending}
+              onClick={() => setStep((cur) => Math.max(0, cur - 1))}
+            >
+              <ArrowLeft className="h-4 w-4" aria-hidden="true" /> Back
+            </Button>
+          ) : (
+            <span />
+          )}
 
-        {kind === "review" ? (
-          <Button type="button" loading={isPending} onClick={finish}>
-            <Check className="h-4 w-4" aria-hidden="true" /> Open this draft
-          </Button>
-        ) : (
-          step > 0 && (
+          {shows("review") ? (
+            <Button type="button" loading={isPending} onClick={finish}>
+              <Check className="h-4 w-4" aria-hidden="true" /> Open this draft
+            </Button>
+          ) : (
             <Button type="button" loading={isPending} disabled={!canContinue} onClick={advance}>
               Continue <ArrowRight className="h-4 w-4" aria-hidden="true" />
             </Button>
-          )
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

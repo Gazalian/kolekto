@@ -4,6 +4,7 @@ import { Button, TextField } from "@kolekto/ui";
 import { ChevronDown, ChevronUp, ImagePlus, Plus, Trash2 } from "lucide-react";
 import { useRef, useState, useTransition } from "react";
 import { removeItemImageAction, uploadItemImageAction } from "./actions.ts";
+import { AmountField } from "./AmountField.tsx";
 
 /**
  * What an item-based collection sells (§31), now with an image per item
@@ -133,14 +134,14 @@ export function ItemsEditor({
                 {...(isDuplicate ? { error: "Two items cannot share a name" } : {})}
                 onChange={(event) => update(index, { name: event.target.value })}
               />
-              <TextField
+              <AmountField
                 label="Price"
-                placeholder="e.g. 35000"
-                hint="In naira, per item."
+                placeholder="e.g. 35,000"
+                hint="Per item."
                 value={item.price}
                 disabled={disabled}
                 required
-                onChange={(event) => update(index, { price: event.target.value })}
+                onValueChange={(price) => update(index, { price })}
               />
             </div>
             <TextField

@@ -1,4 +1,5 @@
 import { getCommunityNoticeStatus, type Community, type CommunityNoticeStatus, type OfficerInvitation, type OfficerTerm } from "@kolekto/db";
+import { notFound } from "next/navigation";
 import { requireCallerContext } from "../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
@@ -13,7 +14,11 @@ interface OfficerTermWithUser extends OfficerTerm {
 export default async function SettingsPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const supabase = await createClient();
-  const { data: community } = await supabase.from("communities").select("*").eq("slug", slug).single();
+  // See comment on the community overview page: `.single()` crashed the
+  // server when the caller had no row visible (SEC-18) or the session had
+  // just expired. `maybeSingle` + `notFound` returns a 404 there instead.
+  const { data: community } = await supabase.from("communities").select("*").eq("slug", slug).maybeSingle();
+  if (!community) notFound();
   const c = community as Community;
 
   const access = await getCommunityAccess(c.id);

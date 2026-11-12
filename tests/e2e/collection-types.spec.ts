@@ -106,8 +106,12 @@ test("a fundraiser suggests amounts, and a contributor can still choose their ow
         // §6: an open campaign has no single price, so the preview is priced
         // at the suggestions the organiser just set — their own figures, not
         // an invented one.
-        await expect(p.getByText("If somebody gives ₦5000")).toBeVisible();
-        await expect(p.getByText("If somebody gives ₦20000")).toBeVisible();
+        // The fee decision shares this screen with the amounts, so one example
+        // shows until the rest are asked for.
+        await expect(p.getByText("If somebody gives ₦5,000")).toBeVisible();
+        await expect(p.getByText("If somebody gives ₦20,000")).toHaveCount(0);
+        await p.getByRole("button", { name: /Show for each amount/ }).click();
+        await expect(p.getByText("If somebody gives ₦20,000")).toBeVisible();
       },
       review: async (p) => {
         // §23: a campaign is reviewed by reading its story back.
@@ -187,8 +191,10 @@ test("an item collection prices an order by the item chosen and how many", async
       fees: async (p) => {
         // One example per item, from what the organiser typed — and no
         // computed figure until the estimate is asked for (Part 3).
-        await expect(p.getByText("₦35,000 − applicable fees")).toBeVisible();
-        await expect(p.getByText("₦50,000 − applicable fees")).toBeVisible();
+        // Contributors pay the fees unless the organiser says otherwise.
+        await expect(p.getByRole("radio", { name: "Contributor pays" })).toBeChecked();
+        await expect(p.getByText("₦35,000 + applicable fees")).toBeVisible();
+        await expect(p.getByText("₦50,000 + applicable fees")).toBeVisible();
         await expect(p.getByText("Estimated total fees")).toHaveCount(0);
       },
       review: async (p) => {
@@ -384,17 +390,19 @@ test("a flyer can be uploaded during creation, shown on the public page, and rem
         await p.getByLabel("What is this collection called?").fill("Harvest Offering 2026");
       },
       cover: async (p) => {
-        await expect(p.getByText("No flyer yet")).toBeVisible();
+        // The image sits beside the name on the first step; choosing a file
+        // creates the draft it is saved against.
+        await expect(p.getByText("No image yet")).toBeVisible();
 
         // The browser holds no storage credential: this posts bytes to a
         // server action, which is what talks to the bucket.
-        await p.getByLabel("Collection flyer").setInputFiles({
+        await p.getByLabel("Collection image").setInputFiles({
           name: "flyer.png",
           mimeType: "image/png",
           buffer: TINY_PNG,
         });
 
-        const flyer = p.getByRole("img", { name: "Collection flyer" });
+        const flyer = p.getByRole("img", { name: "Collection image" });
         await expect(flyer).toBeVisible({ timeout: 45_000 });
         await expect(flyer).toHaveAttribute("src", /\/storage\/v1\/object\/public\/collection-covers\//, {
           timeout: 45_000,
@@ -445,14 +453,14 @@ test("a file that is not an image is refused before it reaches storage", async (
         await p.getByLabel("What is this collection called?").fill("Building Fund 2026");
       },
       cover: async (p) => {
-        await p.getByLabel("Collection flyer").setInputFiles({
+        await p.getByLabel("Collection image").setInputFiles({
           name: "notes.txt",
           mimeType: "text/plain",
           buffer: Buffer.from("this is not an image"),
         });
 
         await expect(p.getByText("Upload a JPG, PNG or WebP image.")).toBeVisible();
-        await expect(p.getByText("No flyer yet")).toBeVisible();
+        await expect(p.getByText("No image yet")).toBeVisible();
         // A rejected file does not block the rest of the wizard — the page did
         // not break, which is the defect this feature was built to rule out.
       },
@@ -524,7 +532,7 @@ test("three items carry three different images through edit, remove and a reload
   await walkWizard(page, {
     flowKey: "items",
     intent: /^Items/,
-    stopBefore: "orderRules",
+    stopBefore: "fees",
     fill: {
       basics: async (p) => {
         await p.getByLabel("What is this catalogue called?").fill("Anniversary Merchandise 2026");
@@ -685,7 +693,7 @@ test("ticket types can be reordered, and the public page follows that order", as
         // stays against Gold.
         await p.getByRole("button", { name: "Move Gold up" }).click();
         await expect(p.getByLabel("Package name").first()).toHaveValue("Gold");
-        await expect(p.getByLabel("Price").first()).toHaveValue("25000");
+        await expect(p.getByLabel("Price").first()).toHaveValue("25,000");
       },
     },
   });
@@ -849,7 +857,7 @@ test("a half-finished collection survives leaving the browser, and resumes where
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Item").first()).toHaveValue("Jollof");
   await expect(page.getByLabel("Item").nth(1)).toHaveValue("Chicken");
-  await expect(page.getByLabel("Price").first()).toHaveValue("3000");
+  await expect(page.getByLabel("Price").first()).toHaveValue("3,000");
 
   // Editing an item twice must not leave two of it: ids are stable across saves.
   await page.getByLabel("Item").first().fill("Jollof Rice");

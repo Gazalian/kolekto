@@ -28,6 +28,7 @@ import {
   syncObligationsAction,
   waiveObligationAction,
 } from "../actions.ts";
+import { AmountField } from "../AmountField.tsx";
 import type { ObligationRow } from "./CollectionDetailClient.tsx";
 import { loadRollAction, searchAssignableMembersAction } from "./roll-actions.ts";
 import { ROLL_PAGE_SIZE, type RollCounts, type RollFilter } from "./roll.ts";
@@ -457,12 +458,7 @@ function SyncPrompt({
       </p>
 
       {needsAmount && (
-        <TextField
-          label="Amount to expect from each"
-          hint="In naira."
-          value={amount}
-          onChange={(event) => setAmount(event.target.value)}
-        />
+        <AmountField label="Amount to expect from each" value={amount} onValueChange={setAmount} />
       )}
 
       <Button
@@ -587,12 +583,11 @@ function AssignDialog({
         )}
 
         {needsAmount && (
-          <TextField
+          <AmountField
             label="Amount expected from each member selected"
-            hint="In naira."
             value={amount}
             required
-            onChange={(event) => setAmount(event.target.value)}
+            onValueChange={setAmount}
           />
         )}
 
@@ -712,7 +707,7 @@ function ReasonDialog({
     <Dialog open onClose={onClose} title={title} description={description}>
       <div className="flex flex-col gap-4">
         {amountLabel && (
-          <TextField label={amountLabel} value={amount} required onChange={(event) => setAmount(event.target.value)} />
+          <AmountField label={amountLabel} value={amount} required onValueChange={setAmount} />
         )}
         <TextField
           label="Reason"

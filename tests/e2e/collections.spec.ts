@@ -80,7 +80,9 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
       fees: async (p) => {
         // Part 3: the policy is stated without asserting a figure Kolekto has
         // not committed to. The computed split lives behind the estimate.
-        await expect(p.getByText("₦5,000 − applicable fees")).toBeVisible();
+        // Contributors pay the fees unless the organiser says otherwise.
+        await expect(p.getByRole("radio", { name: "Contributor pays" })).toBeChecked();
+        await expect(p.getByText("₦5,000 + applicable fees")).toBeVisible();
         await expect(p.getByText(/nothing has been charged/i)).toBeVisible();
       },
       audience: async (p) => {
@@ -193,8 +195,8 @@ test("a tiered collection prices a contribution from the option the contributor 
         // One example per package, because absorbing fees on ₦5,000 and on
         // ₦20,000 are two different decisions and one averaged line would
         // hide that.
-        await expect(p.getByText("₦5,000 − applicable fees")).toBeVisible();
-        await expect(p.getByText("₦20,000 − applicable fees")).toBeVisible();
+        await expect(p.getByText("₦5,000 + applicable fees")).toBeVisible();
+        await expect(p.getByText("₦20,000 + applicable fees")).toBeVisible();
         await expect(p.getByText("Standard")).toBeVisible();
         await expect(p.getByText("VIP")).toBeVisible();
       },

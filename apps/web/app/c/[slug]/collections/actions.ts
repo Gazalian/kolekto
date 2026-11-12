@@ -100,9 +100,25 @@ function revalidateCollection(slug: string, collectionSlug?: string): void {
 export async function createCollectionAction(
   slug: string,
   input: unknown,
-): Promise<ActionResult & { collectionId?: string; collectionSlug?: string | undefined }> {
+): Promise<
+  ActionResult & { collectionId?: string; collectionSlug?: string | undefined; feeModeError?: string | undefined }
+> {
   const parsed = createCollectionSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the form and try again" };
+
+  // Optional: who bears the fees on the new collection. `app.create_collection`
+  // copies the community's default; the wizard sends its own so the row
+  // matches what the organiser is shown from the first save. Written here,
+  // in the same request, rather than as a second round trip from the browser.
+  const requestedFeeMode =
+    typeof input === "object" && input !== null && "feeMode" in input ? (input as { feeMode: unknown }).feeMode : undefined;
+  if (
+    requestedFeeMode !== undefined &&
+    requestedFeeMode !== "community_absorbs" &&
+    requestedFeeMode !== "contributor_pays"
+  ) {
+    return { error: "Say who bears the fees" };
+  }
 
   const caller = await requireCallerContext();
   const data = parsed.data;
@@ -135,8 +151,19 @@ export async function createCollectionAction(
     const supabase = await createClient();
     const { data: created } = await supabase.from("collections").select("slug").eq("id", collectionId).maybeSingle();
 
+    // The collection exists either way; a fee mode that did not save is
+    // reported beside it, not as a failed create.
+    let feeModeError: string | undefined;
+    if (requestedFeeMode) {
+      try {
+        await setCollectionFeeMode(caller, { collectionId, feeMode: requestedFeeMode });
+      } catch (error) {
+        feeModeError = messageFrom(error, "Could not save who pays the fees");
+      }
+    }
+
     revalidateCollection(slug);
-    return { ok: true, collectionId, collectionSlug: created?.slug as string | undefined };
+    return { ok: true, collectionId, collectionSlug: created?.slug as string | undefined, feeModeError };
   } catch (error) {
     return { error: messageFrom(error, "Could not create the collection") };
   }

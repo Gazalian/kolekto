@@ -442,6 +442,28 @@ describe("per-member collections", () => {
       (error: unknown) => error instanceof ContributionError && error.code === "NOTHING_OWED",
     );
   });
+
+  it("refuses to charge a member whose obligation is already paid", () => {
+    for (const amountModel of ["per_member", "fixed"] as const) {
+      assert.throws(
+        () =>
+          resolveContributionAmount(
+            config({
+              amountModel,
+              fixedAmountKobo: kobo(750_000),
+              obligation: {
+                id: OBLIGATION,
+                expectedAmountKobo: kobo(750_000),
+                waivedAmountKobo: kobo(0),
+                status: "paid",
+              },
+            }),
+            {},
+          ),
+        (error: unknown) => error instanceof ContributionError && error.code === "NOTHING_OWED",
+      );
+    }
+  });
 });
 
 describe("a fixed collection with an identified member", () => {

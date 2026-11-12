@@ -45,24 +45,41 @@ export interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElemen
   label: string;
   hint?: string;
   error?: string;
+  /** A short, decorative prefix drawn inside the control, e.g. "₦". Not read out: the label carries the meaning. */
+  leading?: ReactNode;
 }
 
 export const TextField = forwardRef<HTMLInputElement, TextFieldProps>(function TextField(
-  { label, hint, error, required, className, ...props },
+  { label, hint, error, required, className, leading, ...props },
   ref,
 ) {
   const id = useId();
+  const input = (
+    <input
+      ref={ref}
+      id={id}
+      required={required}
+      aria-invalid={Boolean(error) || undefined}
+      aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
+      className={cn(CONTROL_CLASSES, leading ? "pl-7" : undefined, className)}
+      {...props}
+    />
+  );
   return (
     <FieldWrapper label={label} hint={hint} error={error} required={required} htmlFor={id}>
-      <input
-        ref={ref}
-        id={id}
-        required={required}
-        aria-invalid={Boolean(error) || undefined}
-        aria-describedby={error ? `${id}-error` : hint ? `${id}-hint` : undefined}
-        className={cn(CONTROL_CLASSES, className)}
-        {...props}
-      />
+      {leading ? (
+        <div className="relative">
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-[var(--color-text-muted)]"
+          >
+            {leading}
+          </span>
+          {input}
+        </div>
+      ) : (
+        input
+      )}
     </FieldWrapper>
   );
 });

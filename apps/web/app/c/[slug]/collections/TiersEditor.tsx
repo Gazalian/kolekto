@@ -3,6 +3,7 @@
 import { Button, TextField } from "@kolekto/ui";
 import { normalisePrefix } from "@kolekto/domain";
 import { ChevronDown, ChevronUp, Plus, Trash2 } from "lucide-react";
+import { AmountField } from "./AmountField.tsx";
 
 /**
  * The options a tiered collection offers.
@@ -182,13 +183,13 @@ export function TiersEditor({
                 {...(isDuplicate ? { error: `Two ${lower}s cannot share a name` } : {})}
                 onChange={(event) => update(index, { name: event.target.value })}
               />
-              <TextField
+              <AmountField
                 label="Price"
                 value={tier.price}
                 disabled={disabled}
                 required
-                placeholder="e.g. 20000"
-                onChange={(event) => update(index, { price: event.target.value })}
+                placeholder="e.g. 20,000"
+                onValueChange={(price) => update(index, { price })}
               />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">

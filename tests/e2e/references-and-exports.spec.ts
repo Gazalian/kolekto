@@ -285,20 +285,18 @@ test("a draft survives closing the browser, and continues where it stopped", asy
 
   // It came back at the step it was left on, not at the beginning — and in the
   // CATALOGUE's flow, not a generic one. The step count is the items flow's
-  // own ten (§25: the flow is recovered from the rows, never stored).
-  await expect(resumed.getByText(`Step 7 of ${stepCount("items")} · Who can order`)).toBeVisible({
+  // own six (§25: the flow is recovered from the rows, never stored).
+  await expect(resumed.getByText(`Step 4 of ${stepCount("items")} · Who can order`)).toBeVisible({
     timeout: 45_000,
   });
 
   // And the work is all still there. Walk back to the Items step and look.
-  await resumed.getByRole("button", { name: "Back" }).click(); // cover
   await resumed.getByRole("button", { name: "Back" }).click(); // fees
-  await resumed.getByRole("button", { name: "Back" }).click(); // order rules
   await resumed.getByRole("button", { name: "Back" }).click(); // items
 
   await expect(resumed.getByLabel("Item").first()).toHaveValue("Lace wrapper");
   await expect(resumed.getByLabel("Item").nth(1)).toHaveValue("Gele");
-  await expect(resumed.getByLabel("Price").first()).toHaveValue("15000");
+  await expect(resumed.getByLabel("Price").first()).toHaveValue("15,000");
 
   await resumed.getByRole("button", { name: "Back" }).click();
   await expect(resumed.getByLabel("What is this catalogue called?")).toHaveValue("Aso Ebi Order 2026");

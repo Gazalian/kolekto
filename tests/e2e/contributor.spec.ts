@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
 import { openWizard, walkWizard, type StepFiller } from "./helpers/wizard.ts";
-import type { StepKind } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
+import type { SectionKind } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
 
 /**
  * The public contributor experience (M7), in a real browser against the real
@@ -113,7 +113,7 @@ async function createDuesCollection(
   page: Page,
   name: string,
   amount: string,
-  fill: Partial<Record<StepKind, StepFiller>> = {},
+  fill: Partial<Record<SectionKind, StepFiller>> = {},
 ): Promise<void> {
   await openWizard(page);
   await walkWizard(page, {

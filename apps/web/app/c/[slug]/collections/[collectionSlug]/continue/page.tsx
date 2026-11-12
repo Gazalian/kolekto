@@ -8,6 +8,7 @@ import type {
   Community,
   MemberGroup,
 } from "@kolekto/db";
+import { nairaInputFromKobo } from "@kolekto/domain";
 import { notFound, redirect } from "next/navigation";
 import { getCommunityAccess, hasPermission } from "../../../../../../lib/permissions.ts";
 import { createClient } from "../../../../../../lib/supabase/server.ts";
@@ -196,10 +197,13 @@ export default async function ContinueDraftPage({
   );
 }
 
-/** Kobo back to what somebody typed. Whole naira, because that is what the field takes. */
+/**
+ * Kobo back to what somebody typed, kobo included. This used to keep whole
+ * naira only, so a draft saved at ₦5,000.50 reopened as 5000 and was saved
+ * back as ₦5,000.00 on the next Continue.
+ */
 function toNairaInput(value: number | null): string {
-  if (value === null || value === undefined) return "";
-  return String(Math.trunc(value / 100));
+  return nairaInputFromKobo(value);
 }
 
 /** A timestamp back into the value a datetime-local input wants, or a date input for a plain day. */

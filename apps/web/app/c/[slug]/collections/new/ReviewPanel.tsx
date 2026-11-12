@@ -1,5 +1,6 @@
 "use client";
 
+import { formatAmountDisplay } from "@kolekto/domain";
 import Link from "next/link";
 import { Card, CardBody } from "@kolekto/ui";
 import type { EventDraft } from "../EventEditor.tsx";
@@ -188,7 +189,7 @@ function CampaignHeadline({
         <p className="text-lg font-semibold text-[var(--color-text)]">{name || "Untitled campaign"}</p>
         {target && (
           <p className="text-sm text-[var(--color-text-muted)]">
-            Working toward <span className="font-semibold text-[var(--color-text)]">₦{target}</span>
+            Working toward <span className="font-semibold text-[var(--color-text)]">₦{formatAmountDisplay(target)}</span>
           </p>
         )}
         {story.what ? (
@@ -240,7 +241,7 @@ function CatalogueHeadline({ name, items, cover }: { name: string; items: ItemDr
               <span className="min-w-0">
                 <span className="block truncate text-sm font-medium text-[var(--color-text)]">{item.name}</span>
                 <span className="block text-xs text-[var(--color-text-muted)]">
-                  ₦{item.price}
+                  ₦{formatAmountDisplay(item.price)}
                   {item.quantityAvailable?.trim() ? ` · ${item.quantityAvailable} available` : ""}
                 </span>
               </span>
@@ -284,7 +285,7 @@ function PackagesHeadline({ name, tiers, cover }: { name: string; tiers: TierDra
                   </span>
                 )}
               </span>
-              <span className="whitespace-nowrap text-sm font-semibold text-[var(--color-text)]">₦{tier.price}</span>
+              <span className="whitespace-nowrap text-sm font-semibold text-[var(--color-text)]">₦{formatAmountDisplay(tier.price)}</span>
             </li>
           ))}
         </ul>
@@ -312,7 +313,7 @@ function PlanHeadline({
       <CardBody className="flex flex-col gap-2">
         <p className="text-lg font-semibold text-[var(--color-text)]">{name || "Untitled plan"}</p>
         <p className="text-2xl font-semibold text-[var(--color-text)]">
-          ₦{amount || "—"} <span className="text-sm font-normal text-[var(--color-text-muted)]">{every}</span>
+          ₦{formatAmountDisplay(amount) || "—"} <span className="text-sm font-normal text-[var(--color-text-muted)]">{every}</span>
         </p>
         <p className="text-sm text-[var(--color-text-muted)]">
           {recurrence.startsOn ? `First period starts ${recurrence.startsOn}. ` : ""}
@@ -337,7 +338,7 @@ function AmountHeadline({ name, amount, cover }: { name: string; amount: string;
           <img src={cover} alt="" className="max-h-40 w-full rounded-[var(--radius-md)] object-cover" />
         )}
         <p className="text-lg font-semibold text-[var(--color-text)]">{name || "Untitled collection"}</p>
-        <p className="text-2xl font-semibold text-[var(--color-text)]">₦{amount || "—"}</p>
+        <p className="text-2xl font-semibold text-[var(--color-text)]">₦{formatAmountDisplay(amount) || "—"}</p>
         <p className="text-sm text-[var(--color-text-muted)]">The same amount from everyone.</p>
       </CardBody>
     </Card>
@@ -370,15 +371,15 @@ function OpenHeadline({
         <p className="text-lg font-semibold text-[var(--color-text)]">{name || "Untitled collection"}</p>
         <p className="text-sm text-[var(--color-text)]">
           {min || max
-            ? `People give between ₦${min || "any"} and ₦${max || "any"}.`
+            ? `People give between ₦${formatAmountDisplay(min) || "any"} and ₦${formatAmountDisplay(max) || "any"}.`
             : "People give whatever they choose."}
         </p>
         {real.length > 0 && (
           <p className="text-sm text-[var(--color-text-muted)]">
-            One tap for {real.map((amount) => `₦${amount}`).join(" · ")}
+            One tap for {real.map((amount) => `₦${formatAmountDisplay(amount)}`).join(" · ")}
           </p>
         )}
-        {target && <p className="text-sm text-[var(--color-text-muted)]">Working toward ₦{target}</p>}
+        {target && <p className="text-sm text-[var(--color-text-muted)]">Working toward ₦{formatAmountDisplay(target)}</p>}
       </CardBody>
     </Card>
   );
