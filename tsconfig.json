@@ -7,6 +7,7 @@
     { "path": "packages/db" },
     { "path": "packages/ui" },
     { "path": "packages/adapters" },
+    { "path": "packages/payments" },
     { "path": "apps/web" },
     { "path": "apps/worker" }
   ]

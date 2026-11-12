@@ -48,11 +48,35 @@ export function isPublicCollectionPath(pathname: string): boolean {
   return segments.length === 2 && !APP_SEGMENTS.has(segments[0]!);
 }
 
+/** The pages under a collection that a contributor (no account) reaches while paying. */
+const PUBLIC_PAYMENT_PAGES = new Set([
+  // Where the provider sends the contributor back; verifies and captures.
+  "callback",
+  // The local stand-in for the provider's checkout. The page itself 404s outside KOLEKTO_ENV=local.
+  "fake-checkout",
+]);
+
+/**
+ * `/{community-slug}/{collection-slug}/payment/{callback|fake-checkout}` —
+ * public for the same reason as the collection page: the person paying has
+ * no account. Each page does its own checks (reference format, environment).
+ */
+export function isPublicPaymentPath(pathname: string): boolean {
+  const segments = pathname.split("/").filter(Boolean);
+  return (
+    segments.length === 4 &&
+    !APP_SEGMENTS.has(segments[0]!) &&
+    segments[2] === "payment" &&
+    PUBLIC_PAYMENT_PAGES.has(segments[3]!)
+  );
+}
+
 export function isPublicPath(pathname: string): boolean {
   return (
     pathname === "/" ||
     PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ||
-    isPublicCollectionPath(pathname)
+    isPublicCollectionPath(pathname) ||
+    isPublicPaymentPath(pathname)
   );
 }
 

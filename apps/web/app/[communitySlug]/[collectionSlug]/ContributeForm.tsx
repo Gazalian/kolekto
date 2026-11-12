@@ -104,6 +104,8 @@ export function ContributeForm({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<ContributionResult["summary"] | null>(null);
+  const [payment, setPayment] = useState<ContributionResult["payment"] | null>(null);
+  const [redirecting, setRedirecting] = useState(false);
   const [member, setMember] = useState<IdentifiedMember | null>(null);
   const [isPending, startTransition] = useTransition();
   // One key per checkout, so a double-click or a retry after a timeout resumes
@@ -162,10 +164,17 @@ export function ContributeForm({
     );
   }
 
+  /** Back to the form. The order may change, so the next Pay starts a new checkout. */
+  function editOrder(): void {
+    setDone(null);
+    setPayment(null);
+    setCheckoutKey(crypto.randomUUID());
+  }
+
   if (done) {
     return (
       <div className="flex flex-col gap-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-        <h2 className="text-lg font-semibold text-[var(--color-text)]">Your details are checked, {done.contributorName}</h2>
+        <h2 className="text-lg font-semibold text-[var(--color-text)]">{payment ? `Review and pay, ${done.contributorName}` : `Your details are checked, ${done.contributorName}`}</h2>
 
         <dl className="divide-y divide-[var(--color-border)]">
           {done.memberName && (
@@ -237,25 +246,58 @@ export function ContributeForm({
           )}
         </dl>
 
-        {/* The payment boundary (ADR 0012). This is where M7 stops: the amount
-            is resolved and everything needed to pay it is in hand. The exact
-            state of affairs is said plainly — no receipt, no reference number,
-            no "payment successful", because nothing has been paid and nothing
-            has been stored. */}
-        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
-          <p className="text-sm font-medium text-[var(--color-text)]">Ready to continue to payment</p>
-          <p className="text-sm text-[var(--color-text-muted)]">
-            {organiser} cannot take payment through Kolekto yet. Nothing has been charged, nothing has been saved, and
-            nothing you owe has changed — contact {organiser} to arrange payment, and check back here when online
-            payment opens.
-          </p>
-        </div>
+        {/* Fee review (D-28). Every figure comes from the server, frozen on the
+            payment attempt when it was created (D-16); the form only shows them. */}
+        {payment && (
+          <dl className="divide-y divide-[var(--color-border)] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] px-4">
+            <div className="flex justify-between gap-3 py-2 text-sm">
+              <dt className="text-[var(--color-text-muted)]">Contribution</dt>
+              <dd className="font-medium text-[var(--color-text)]">{payment.fees.contribution}</dd>
+            </div>
+            {payment.feesAddedToTotal && (
+              <>
+                <div className="flex justify-between gap-3 py-2 text-sm">
+                  <dt className="text-[var(--color-text-muted)]">Processing fee</dt>
+                  <dd className="font-medium text-[var(--color-text)]">{payment.fees.gatewayFee}</dd>
+                </div>
+                <div className="flex justify-between gap-3 py-2 text-sm">
+                  <dt className="text-[var(--color-text-muted)]">Kolekto fee</dt>
+                  <dd className="font-medium text-[var(--color-text)]">{payment.fees.platformFee}</dd>
+                </div>
+              </>
+            )}
+            <div className="flex justify-between gap-3 py-2 text-sm">
+              <dt className="font-semibold text-[var(--color-text)]">Total to pay</dt>
+              <dd className="font-semibold text-[var(--color-text)]">{payment.fees.totalPayable}</dd>
+            </div>
+            {!payment.feesAddedToTotal && (
+              <p className="py-2 text-xs text-[var(--color-text-muted)]">{organiser} covers the payment fees.</p>
+            )}
+          </dl>
+        )}
 
         {thankYouMessage && <p className="text-sm text-[var(--color-text-muted)]">{thankYouMessage}</p>}
 
-        <Button variant="secondary" onClick={() => setDone(null)}>
-          Back to the form
-        </Button>
+        {payment ? (
+          <div className="flex flex-col gap-2">
+            <Button
+              disabled={redirecting}
+              onClick={() => {
+                setRedirecting(true);
+                window.location.assign(payment.checkoutUrl);
+              }}
+            >
+              {redirecting ? "Opening checkout…" : `Pay ${payment.fees.totalPayable}`}
+            </Button>
+            <Button variant="secondary" disabled={redirecting} onClick={editOrder}>
+              Edit
+            </Button>
+          </div>
+        ) : (
+          <Button variant="secondary" onClick={editOrder}>
+            Back to the form
+          </Button>
+        )}
       </div>
     );
   }
@@ -293,7 +335,10 @@ export function ContributeForm({
       });
       if (result.restartCheckout) setCheckoutKey(crypto.randomUUID());
       if (result.error) setError(result.error);
-      else if (result.summary) setDone(result.summary);
+      else if (result.summary) {
+        setDone(result.summary);
+        setPayment(result.payment ?? null);
+      }
     });
   }
 

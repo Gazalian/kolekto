@@ -4,15 +4,13 @@ import { useEffect, useState } from "react";
 import { verifyPaymentAction } from "./actions.ts";
 
 export function PaymentCallback({ reference }: { reference: string | null }) {
-  const [status, setStatus] = useState<"verifying" | "completed" | "failed" | "review" | "error">("verifying");
-  const [message, setMessage] = useState("");
+  const [status, setStatus] = useState<"verifying" | "completed" | "failed" | "review" | "error">(
+    reference ? "verifying" : "error",
+  );
+  const [message, setMessage] = useState(reference ? "" : "No payment reference found.");
 
   useEffect(() => {
-    if (!reference) {
-      setStatus("error");
-      setMessage("No payment reference found.");
-      return;
-    }
+    if (!reference) return;
 
     verifyPaymentAction(reference).then((result) => {
       switch (result.outcome) {

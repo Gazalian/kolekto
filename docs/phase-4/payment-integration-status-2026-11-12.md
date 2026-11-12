@@ -17,73 +17,69 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-12, session 3 (M8.5 orchestrator defects fixed)
+**Last updated:** 2026-11-12, session 4 (M8.5 fake flow end to end + seven-flow integration test)
 
 ### What was done this session
 
-Fixed defects 1–5 from the previous report, plus three more found while testing against the real SQL:
-
-| # | Defect | Fix | Where |
-|---|---|---|---|
-| 1 | Non-tier/item collections sent a `lines` array → `LINES_NOT_EXPECTED` | `buildLines()` returns `null` unless the model is `tiers` or `items`; sends only `tier_id`/`item_id` + `quantity` | `apps/web/lib/payments/orchestrator.ts` |
-| 2 | A `pending` verify marked the attempt failed and released stock | No state change for pending. T1 alone moves failed/abandoned. T2 result checked properly | same |
-| 3 | Idempotency key used `Date.now()` and the email | Form generates `crypto.randomUUID()` once per checkout; server checks it is a UUID; key rotates only when the server returns `restartCheckout` | `ContributeForm.tsx`, `actions.ts` |
-| 4 | Reused attempt returned the access code as the checkout URL | Reused `created`/`initialized` attempts re-run `initialize` with their own reference (idempotent). Reused `failed`/`expired` → "checkout ended"; reused `captured`/`completed`/`needs_review` → "already received" | `orchestrator.ts` |
-| 5 | Callback URL could silently fall back to localhost | Built from `APP_BASE_URL`; localhost only when `KOLEKTO_ENV=local`; must be `https` elsewhere; checkout refused (before any attempt is created) if missing | `orchestrator.ts` |
-| 7 | **jsonb was stored as a JSON string.** `${JSON.stringify(x)}::jsonb` makes postgres.js encode the string a second time. `answers`, `lines` and the provider `payload` were affected; tier and item checkouts could never create an attempt | Pass as `::text::jsonb` | `packages/db/src/payments.ts` |
-| 8 | Error-code map used names the SQL never raises (`COLLECTION_INACTIVE`, `TARGET_ALREADY_REACHED`, `STOCK_EXHAUSTED`…); the fallback showed raw DB messages with internal ids | Rebuilt the map from the codes actually raised in `20261111100100`; unmapped codes show a generic message and log the code only | `actions.ts` |
-| 9 | T1 raises `UNKNOWN_PAYMENT_REFERENCE`, not `ATTEMPT_NOT_FOUND`; a refused verify was shown as "failed"; T1 errors returned `attemptId: ""` | Correct code; new `error` outcome; callback page handles it | `orchestrator.ts`, `payment/callback/*` |
-
-Also: the callback action now accepts only a well-formed `KLK-` reference (`isPaymentReference`).
+| Area | Change | Where |
+|---|---|---|
+| Shared package | New `@kolekto/payments`: the orchestrator moved out of `apps/web` so the web app, the worker and the tests run the same code. It no longer reads `process.env` or opens a connection: the caller passes a `PaymentDb` executor, the environment and the app origin. | `packages/payments/src/{orchestrator,sweep,index}.ts` |
+| DB callers | Every payment caller takes a `PaymentDb` first (`ownerPaymentDb` on the web; `sql.begin` in the worker; a savepoint in tests). New `listDuePaymentAttempts(db, provider, limit)` for the sweep. | `packages/db/src/payments.ts` |
+| Fee review + redirect | After Continue, the form shows Contribution, Processing fee, Kolekto fee and Total to pay (all server-formatted, frozen on the attempt) and a `Pay ₦…` button that goes to `checkoutUrl`. When the community absorbs fees, only the total shows, with "… covers the payment fees". Edit returns to the form and rotates the checkout key. | `ContributeForm.tsx`, `actions.ts` (`feesAddedToTotal`) |
+| Local fake checkout | `/{community}/{collection}/payment/fake-checkout?reference=` — 404 unless `KOLEKTO_ENV=local`. Buttons: Pay successfully / Card declined / Cancel payment. It tells the in-memory fake how the payment ended, then redirects to the callback path (path only, never an absolute URL, so it cannot be used as an open redirect). The fake provider is one instance per process (`globalThis`), default scenario `pending`, and `getPaymentProvider()` returns null outside local. | `payment/fake-checkout/{page,actions}.ts(x)`, `lib/payments/provider-factory.ts`, `FakePaymentProvider.checkoutFor/completeCheckout` |
+| Worker sweep | Every 60 s: captured-but-not-completed → T2 again; created/initialized past hold → ask the provider: success/failed/abandoned recorded (T1, then T2 on success), pending kept until the 24 h check window then expired, "not found" expired, no answer left alone (D-27). One attempt's error never stops the run. **On only when** `KOLEKTO_ENV=local` and the role can execute the payment functions and read `payment_attempts` through forced RLS; it logs `payment_sweep_state` with the reason when off. Never fatal to the notification stages. | `packages/payments/src/sweep.ts`, `apps/worker/src/payment-sweep.ts`, `apps/worker/src/index.ts` |
+| **Bug fixed: card authorization stored raw** | T1 passed the provider's `authorizationReference` (a reusable charge token) as `authorization_hash`. The DB check (`^[a-f0-9]{64}$`) rejected it, so **every successful fake payment failed to record**. Now SHA-256 hashed in one place, `providerStatement()`, used by every caller (O-12). | `packages/payments/src/orchestrator.ts` |
+| **Bug fixed: contributors sent to /login** | The session middleware only treated `/{community}/{collection}` as public, so the callback page (and the new fake checkout) redirected a signed-out contributor to sign in. Added `isPublicPaymentPath` for exactly `/payment/callback` and `/payment/fake-checkout` under a collection, with tests. | `apps/web/lib/supabase/middleware.ts` (+ test) |
+| Lint | Callback component no longer calls setState inside its effect (initial state derived from the reference). | `PaymentCallback.tsx` |
+| Integration test | `payments-orchestrator.integration.test.ts` (11th lane file): all seven flows (fixed dues, open amount, tiered, items, ticketing, fundraiser, recurring) go checkout → pending callback → fake success → completed, asserting the frozen amounts, stock reserved → converted, obligation paid (fixed, recurring), attendee names (ticketing), contribution lines, and a repeat callback returning the same contribution. Plus declined / abandoned / amount mismatch / verify timeout, checkout-key reuse, and the sweep finishing a capture whose T2 never ran while leaving held attempts alone. Fixtures in `test/support/itest-payment-flows.ts`. | `apps/worker/test/integration/`, `itest-lane.ts` manifest, `itest-gate.test.ts` (count 10 → 11) |
+| Sweep unit tests | The time-dependent branches (expire, past check window) cannot happen inside one rolled-back transaction (the hold end is frozen and `now()` does not move), so they are unit-tested with a scripted DB: 8 tests. | `packages/payments/test/sweep.test.ts` |
 
 **Checks run**
 
-- TypeScript: domain, config, db, adapters and web all pass.
-- Domain unit tests: 216 of 216 pass.
-- **Rollback-only probe against the local dev DB (127.0.0.1:54322).** It sends the exact SQL from `payments.ts` through create → mark initialized → T1 → T2 → T2 again, for `tiers`, `fixed` and `open_amount` collections. Each type covers success, pending and amount mismatch: 9 of 9 behave as designed. Success completes with one contribution and a repeat T2 returns the same contribution. Pending stays `initialized`. Mismatch goes to `needs_review(amount_mismatch)`. Every case ran in a transaction that was rolled back; 0 rows were left behind. Local data has only one open public collection (a tier collection), so `fixed` and `open_amount` were tested by temporarily switching that collection's model inside the rolled-back transaction. The probe script is in the session scratchpad and is not in the repo.
+- `tsc --build` for the whole monorepo: pass. Web `tsc --noEmit`: pass. ESLint on every changed web file: pass. Worker `esbuild` bundle: builds.
+- Unit tests: domain 216/216, adapters 165/165 (4 new for the fake checkout), db 6/6, payments 8/8, worker 778/778 (includes the lane's static guards against the new file), web middleware 17/17 (2 new).
+- **The new integration file's exact assertions against the local dev DB**, through a scratch shim that replaces only the gate, harness and connection (every test rolled back, 0 rows left): **10 of 10 pass**. This is how the authorization-hash bug was found.
+- **Browser, signed out, on the local dev server (port 3000):** tier event "Founders Breakfast 2026" → Continue → review showed ₦15,000 + ₦225 + ₦75 = ₦15,300 → Pay → fake checkout → Pay successfully → callback "Payment Successful". The DB confirms the attempt is `completed`, with one contribution and the authorization stored as a 64-character hash. This run **committed real rows to the local dev DB** (one completed attempt and contribution, plus one abandoned `initialized` attempt from a first try, which the sweep will expire).
+- Worker sweep gate against the dev DB: enabled for `local`; disabled for `staging` with `no_real_payment_provider_until_m8_9`.
 
 **Not verified**
 
-- The orchestrator TypeScript itself has not been executed, only typechecked; the probe used the same SQL, not the TS functions.
-- `items`, `per_member`, and member (managed/recurring) collections have not been run against the DB.
-- No committed integration or E2E test exists yet.
-- `supabase test db` (pgTAP) was not re-run; no SQL changed this session.
-- The form change (checkout key) was not tried in a browser. `crypto.randomUUID()` needs a secure context: it works on `localhost` and `https`, but not over plain-HTTP LAN addresses such as testing from a phone at `http://192.168.x.x`.
+- **The integration lane itself has not run the new file.** The itest database (port 55422) stops at migration `20261029100100`; it has no payment tables or functions. It needs `npm run itest:reset -- --confirm-reset-kolekto-itest`, which wipes the itest stack, rotates its credentials and removes the `kolekto_itest_worker` role (recreate it with `npm run itest:worker-role`; the worker-runtime files also need `npm run itest:net-lockdown` again). That needs your approval.
+- The worker loop was not started; its sweep tick was typechecked, bundled and its gate probed, but not run live.
+- `supabase test db` (pgTAP) was not re-run; no SQL changed.
+- No browser run of the Card declined / Cancel payment buttons, or of a fixed or managed collection (these are covered by the integration assertions, not by a browser).
+- No E2E (Playwright) test in CI yet — this is part of the M8.5 acceptance.
 
-**Committed, not pushed:** `ee09b40 feat(payments): wire checkout orchestrator to fake provider` on `feat/payments-foundation`. The pre-existing `layout.tsx` hydration change went in separately as `1bf9ed2`.
+**Committed, not pushed** on `feat/payments-foundation` (see `git log`).
 
 ### Why this update
 
-The previous report listed six defects in the first pass. Five are now fixed and checked against the real SQL. That check also found the jsonb double-encoding bug, which typecheck could not catch and which blocked every tier and item checkout.
+The previous session left a checkout that created an attempt and held stock, with no way to pay or release it. This session closes that loop locally — review, pay, return, capture, and a sweep for anyone who never returns — and pins all seven collection types with a committed integration test. Running that test's assertions against the real SQL found a bug that would have failed every successful payment.
 
 ### Still open
 
-- **Defect 6 (unchanged): a submit now creates an attempt and holds stock, but the contributor cannot pay yet.** The form still shows the old summary and does not redirect to `checkoutUrl`, and nothing expires old attempts. Safe on a local branch; do not deploy this to staging until the redirect UI and the worker sweep exist.
-- **The fake provider's checkout URL goes nowhere.** It points at `fake-provider.invalid` by design, so the "E2E with FakePaymentProvider" acceptance needs some local-only way to finish a fake checkout and land on the callback page. Check the plan (§4.3, §10 M8.5) for the intended approach before building one.
-- **Possible same jsonb bug outside payments (not verified):** `packages/db/src/webhook-events.ts:93` (SES ingest) uses the same `${payloadJson}::jsonb` pattern, so SES event payloads may be stored as JSON strings. Check with `select jsonb_typeof(payload)` on that table.
-- The public callback action calls `provider.verify` on every request with a valid-looking reference. That is harmless for the fake, but it needs rate limiting before the real Paystack adapter (M8.9).
+- **Run the lane on a reset itest DB** (approval needed, see above).
+- **The fake checkout is in memory.** Restarting the dev server loses open fake checkouts (the page says so). The worker's own fake knows none of the web app's checkouts, so locally the sweep expires any attempt past its 30-minute hold. A success reported later for an expired attempt goes to `needs_review` — never lost, but not automatic.
+- The sweep re-reads pending attempts every minute until their 24 h window ends (it writes nothing for them). Fine at local volume; revisit with real Paystack volume.
+- `listDuePaymentAttempts` filters on provider, status and `hold_expires_at`; the existing sweep index (`payment_attempts_sweep_idx`) is on `check_until`. Fine locally; check before production volume.
+- Unchanged from before: possible jsonb double-encoding in `packages/db/src/webhook-events.ts:93` (SES ingest, not verified); the callback action needs rate limiting before the real Paystack adapter (M8.9).
+- E2E (Playwright) for the seven flows in CI, for the M8.5 acceptance.
 
 ### Next thing to do
 
-**Make the fake flow usable end to end, then lock it in with tests:**
-
-1. Form: show the fee breakdown returned in `payment.fees` (frozen at attempt creation — never recompute in the browser), then send the contributor to `checkoutUrl`.
-2. A local/staging-only fake checkout step (refused in production) that finishes the payment for a chosen fake scenario and redirects to `/{community}/{collection}/payment/callback?reference=…`.
-3. Worker sweep: expire `created`/`initialized` attempts after `hold_expires_at`, and verify them before giving up (D-27).
-4. A committed integration test against the **itest** DB (port 55422, not the dev DB) that calls `startCheckout` + `confirmPayment` for all seven collection types and the pending, payment_failed, abandoned and amount_mismatch scenarios.
+1. **Approve and run the itest reset**, then run the lane with `--without-smtp` and confirm the new file passes there. So far it has only been proven against the dev DB through a shim.
+2. Then the Playwright E2E for the seven flows against the fake checkout page, to close M8.5's "E2E in CI" acceptance.
 
 ### Prompt for the next session (copy and paste)
 
 ```
-Continue M8.5 on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first", and the plan's §4.3 and §10 (M8.5) in docs/phase-4/paystack-integration-audit-and-plan-2026-11-10.md.
+Continue M8.5 on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
-1. ContributeForm: after submitContributionAction returns `payment`, show the fee breakdown from `payment.fees` (never recompute fees client-side), with a Pay button that sends the contributor to `payment.checkoutUrl`. Keep the existing summary content.
-2. Fake checkout: FakePaymentProvider's checkoutUrl points at fake-provider.invalid. Find what the plan intends for finishing a fake checkout locally; if it says nothing, propose a local/staging-only page (refused when KOLEKTO_ENV=production) and ask me before building it.
-3. Worker sweep in apps/worker: expire created/initialized attempts past hold_expires_at via app.expire_payment_attempt, verifying with the provider first (a timeout is not a failure, D-27).
-4. Integration test against the itest database (port 55422, never the dev DB on 54322) that runs startCheckout + confirmPayment with FakePaymentProvider for all seven collection types plus pending, payment_failed, abandoned and amount_mismatch. Assert attempt status, contribution row, stock reservation and obligation status.
-5. Check whether packages/db/src/webhook-events.ts stores SES payloads as JSON strings (same ::jsonb double-encoding bug fixed in payments.ts). Report only; do not fix without asking.
-6. Run typecheck, domain tests, the new integration test and supabase test db. Report what passed and what was not run.
-7. Replace the "Latest report" section of the status doc: what was done, why, what is still open, the next thing to do, and the next prompt.
+1. I approve resetting the integration-test stack. Run `npm run itest:reset -- --confirm-reset-kolekto-itest`, then `npm run itest:worker-role` (and `npm run itest:net-lockdown` if you will run the worker-runtime files). Confirm the itest DB now has public.payment_attempts and app.complete_payment_capture.
+2. In apps/worker run `npm run test:integration -- --without-smtp`. Report every file's result, especially payments-orchestrator.integration.test.ts. If it fails, fix the cause (do not weaken assertions) and re-run.
+3. Check whether packages/db/src/webhook-events.ts stores SES payloads as JSON strings (select jsonb_typeof(payload) on the local dev DB). Report only; do not fix without asking.
+4. Propose (do not build yet) the Playwright E2E for the seven collection flows through the local fake checkout page, and how it runs in CI.
+5. Replace the "Latest report" section of the status doc: what was done, why, what is still open, the next thing to do, and the next prompt.
 Do not commit until I say so.
 ```
 
@@ -179,11 +175,8 @@ All functions use the operator-session idiom: `SECURITY DEFINER`, `set search_pa
 
 #### Still needed for M8.5 acceptance
 
-- **Worker sweep** — expires stale attempts (call `expire_payment_attempt` for attempts older than `hold_minutes`); processes outbox events
-- **Fee review UI** — show fee line breakdown to contributor before confirming (data is returned, UI not yet rendered)
-- **Fee line display on confirmation** — render frozen fee breakdown from attempt; must not recompute client-side
-- **Integration test** — full happy path against FakePaymentProvider with a real local DB
-- **E2E test** — all seven collection flows end-to-end
+- Worker sweep, fee review, local fake checkout and the seven-flow integration test: **built in session 4** (see Latest report). The integration test still has to pass on the reset itest DB.
+- **E2E test** — all seven collection flows end-to-end, in CI
 
 **Acceptance for M8.5:** full happy path + all seven collection flows work against `FakePaymentProvider`; E2E passes in CI.
 

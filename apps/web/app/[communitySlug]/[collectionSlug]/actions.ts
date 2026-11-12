@@ -27,8 +27,8 @@ import {
   setContributorSession,
 } from "../../../lib/contributor-session.ts";
 import { allowLookup } from "../../../lib/lookup-throttle.ts";
-import { startCheckout } from "../../../lib/payments/orchestrator.ts";
-import { getPaymentProvider } from "../../../lib/payments/provider-factory.ts";
+import { startCheckout } from "@kolekto/payments";
+import { contributorCheckoutUrl, getPaymentContext } from "../../../lib/payments/provider-factory.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -111,6 +111,8 @@ export interface ContributionResult {
   payment?: {
     reference: string;
     checkoutUrl: string;
+    /** True when the contributor pays the fees on top (fee_mode contributor_pays); false when the community absorbs them. */
+    feesAddedToTotal: boolean;
     fees: {
       contribution: string;
       platformFee: string;
@@ -451,14 +453,18 @@ export async function submitContributionAction(
 
   const feeBearer: FeeBearer = collection.fee_mode === "contributor_pays" ? "contributor" : "community";
 
-  const checkoutResult = await startCheckout({
+  const payments = getPaymentContext();
+  if (!payments) return { error: "Payments are not available right now. Please try again later." };
+
+  const checkoutResult = await startCheckout(payments, {
+    environment: payments.environment,
+    appOrigin: payments.appOrigin,
     collectionId: collection.collection_id,
     collectionCategory: collection.category,
     collectionSlug,
     communitySlug,
     amountModel: collection.amount_model,
     feeBearer,
-    provider: getPaymentProvider(),
     resolved,
     memberId,
     contributorName: contact.data.fullName,
@@ -527,7 +533,14 @@ export async function submitContributionAction(
     },
     payment: {
       reference: checkoutResult.reference,
-      checkoutUrl: checkoutResult.checkoutUrl,
+      checkoutUrl: contributorCheckoutUrl(
+        payments.provider,
+        checkoutResult.checkoutUrl,
+        communitySlug,
+        collectionSlug,
+        checkoutResult.reference,
+      ),
+      feesAddedToTotal: fees.bearer === "contributor",
       fees: {
         contribution: formatNaira(fees.contribution, { decimals: false }),
         platformFee: formatNaira(fees.platformFee, { decimals: false }),

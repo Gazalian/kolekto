@@ -4,6 +4,7 @@ import {
   isAuthPath,
   isOnboardingPath,
   isPublicCollectionPath,
+  isPublicPaymentPath,
   isPublicPath,
   redirectWithRefreshedCookies,
 } from "./middleware.ts";
@@ -105,6 +106,23 @@ describe("isPublicCollectionPath", () => {
     expect(isPublicCollectionPath("/")).toBe(false);
     expect(isPublicCollectionPath("/one")).toBe(false);
     expect(isPublicCollectionPath("/one/two/three")).toBe(false);
+  });
+});
+
+describe("isPublicPaymentPath", () => {
+  it("accepts the payment callback and the local fake checkout under a collection", () => {
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/callback")).toBe(true);
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/fake-checkout")).toBe(true);
+    expect(isPublicPath("/lagos-alumni/annual-dues/payment/callback")).toBe(true);
+  });
+
+  it("rejects any other page, depth or app segment", () => {
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment")).toBe(false);
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/admin")).toBe(false);
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/settings/callback")).toBe(false);
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/callback/extra")).toBe(false);
+    expect(isPublicPaymentPath("/c/annual-dues/payment/callback")).toBe(false);
+    expect(isPublicPaymentPath("/api/x/payment/callback")).toBe(false);
   });
 });
 

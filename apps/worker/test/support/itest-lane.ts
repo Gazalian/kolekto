@@ -58,6 +58,8 @@ export const INTEGRATION_MANIFEST: readonly string[] = [
   "test/integration/notification-suppression.integration.test.ts",
   "test/integration/notification-worker-reliability.integration.test.ts",
   "test/integration/notification-worker-runtime.integration.test.ts",
+  // M8.5: the payment orchestrator, all seven collection flows (no SMTP, no pause switch; rolled back).
+  "test/integration/payments-orchestrator.integration.test.ts",
 ];
 
 /**

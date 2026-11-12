@@ -15,6 +15,9 @@
  * The send stage runs only when EMAIL_PROVIDER is configured AND the database
  * pause switch (email_sending_enabled) is on. The switch is off by default in
  * every environment, so a worker that is merely started sends nothing.
+ *
+ * A third, minute-by-minute stage sweeps payment attempts nobody came back
+ * for (payment-sweep.ts). Local only until a real provider exists (M8.9).
  */
 
 import { createEmailProviderAsync, type EmailProvider } from "@kolekto/adapters";
@@ -22,6 +25,7 @@ import { loadConfig, loadDatabaseUrl, loadEmailConfig } from "@kolekto/config";
 import postgres from "postgres";
 
 import { processNotificationMessage } from "./notification-processor.js";
+import { PAYMENT_SWEEP_INTERVAL_MS, paymentSweepAllowed, sweepLogLine, sweepPaymentAttempts, workerPaymentContext } from "./payment-sweep.ts";
 import { getSendLimits } from "./notification-rate-limit.ts";
 import { runSenderTick } from "./notification-sender.ts";
 import { abandonBatch, FAULT_AT_HEADER, FAULT_CODE_HEADER, FAULT_READS_HEADER, handleQueueMessage, PARKED_AT_HEADER, PARKED_REASON_HEADER, PROCESSED_HEADER, type QueueMessage, type QueueOps } from "./queue-disposition.ts";
@@ -218,6 +222,17 @@ async function main() {
   let lastEventHealth = 0;
   let lastPaused: boolean | null = null;
   const counters = newEventStageCounters();
+
+  // Never fatal: a worker that cannot sweep payments still delivers notifications.
+  let paymentSweep: ReturnType<typeof workerPaymentContext> | null = null;
+  try {
+    const decision = await paymentSweepAllowed(sql, loadConfig().environment);
+    if (decision.enabled) paymentSweep = workerPaymentContext(sql);
+    console.log(JSON.stringify({ msg: "payment_sweep_state", enabled: decision.enabled, ...(decision.enabled ? {} : { reason: decision.reason }) }));
+  } catch (err) {
+    console.error(JSON.stringify({ msg: "payment_sweep_state", enabled: false, reason: "probe_failed", error: safeErrorSummary(err) }));
+  }
+  let lastPaymentSweep = 0;
   const pollFailures = new PollFailureTracker();
 
   process.on("SIGINT", () => { running = false; });
@@ -311,6 +326,17 @@ async function main() {
         }
       } catch (err) {
         console.error("Sender tick error:", safeErrorJson(err));
+      }
+    }
+
+    // ── Payment sweep ────────────────────────────────────────────────────────
+    if (paymentSweep && Date.now() - lastPaymentSweep >= PAYMENT_SWEEP_INTERVAL_MS) {
+      lastPaymentSweep = Date.now();
+      try {
+        const line = sweepLogLine(await sweepPaymentAttempts(paymentSweep));
+        if (line) console.log(JSON.stringify(line));
+      } catch (err) {
+        console.error("Payment sweep error:", safeErrorJson(err));
       }
     }
 

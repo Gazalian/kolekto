@@ -6,18 +6,27 @@
  * provider for initialization and verification. Nothing else in the app talks
  * to the payment DB functions directly.
  *
+ * Lives in its own package so the web app (checkout, callback) and the worker
+ * (the sweep) run the same code. Nothing here reads process.env or opens a
+ * connection: the caller passes the database executor, the environment and
+ * the app origin, so a test can run it inside a rolled-back transaction.
+ *
  * SERVER ONLY. Every value here is server-derived.
  */
 
+import { createHash } from "node:crypto";
+
 import type { PaymentProvider, ProviderTransaction } from "@kolekto/adapters";
-import { loadConfig, type KolektoEnvironment } from "@kolekto/config";
+import type { KolektoEnvironment } from "@kolekto/config";
 import {
   completePaymentCapture,
   createPaymentAttempt,
   DatabaseError,
   markPaymentAttemptFailed,
   markPaymentAttemptInitialized,
+  type PaymentDb,
   recordProviderTransaction,
+  type RecordProviderTransactionInput,
 } from "@kolekto/db";
 import {
   type AmountModel,
@@ -30,14 +39,23 @@ import {
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
+/** Where and how the orchestrator runs. Passed in, never read from the environment. */
+export interface PaymentContext {
+  db: PaymentDb;
+  provider: PaymentProvider;
+}
+
 export interface StartCheckoutInput {
+  /** From `loadConfig().environment`. The fake provider is refused in production. */
+  environment: KolektoEnvironment;
+  /** From `resolveAppOrigin`. Null refuses the checkout: no callback URL can be built. */
+  appOrigin: string | null;
   collectionId: string;
   collectionCategory: string;
   collectionSlug: string;
   communitySlug: string;
   amountModel: AmountModel;
   feeBearer: FeeBearer;
-  provider: PaymentProvider;
   resolved: ResolvedContribution;
   memberId: string | null;
   contributorName: string;
@@ -59,11 +77,6 @@ export type StartCheckoutResult =
   /** The provider did not answer. The attempt stays `created`; retrying with the same key resumes it (D-27). */
   | { outcome: "provider_unavailable"; reason: string }
   | { outcome: "misconfigured"; reason: string };
-
-export interface ConfirmPaymentInput {
-  reference: string;
-  provider: PaymentProvider;
-}
 
 export type ConfirmPaymentResult =
   | { outcome: "completed"; contributionId: string }
@@ -96,9 +109,11 @@ function buildLines(amountModel: AmountModel, resolved: ResolvedContribution): u
   return null;
 }
 
-/** The origin the provider sends the contributor back to. Never guessed outside local. */
-function appOrigin(environment: KolektoEnvironment): string | null {
-  const raw = process.env["APP_BASE_URL"];
+/**
+ * The origin the provider sends the contributor back to, from APP_BASE_URL.
+ * Never guessed outside local, and https outside local.
+ */
+export function resolveAppOrigin(environment: KolektoEnvironment, raw: string | undefined): string | null {
   if (!raw) return environment === "local" ? "http://localhost:3000" : null;
   try {
     const url = new URL(raw);
@@ -109,12 +124,11 @@ function appOrigin(environment: KolektoEnvironment): string | null {
   }
 }
 
-export async function startCheckout(input: StartCheckoutInput): Promise<StartCheckoutResult> {
-  const { environment } = loadConfig();
-  if (input.provider.name === "fake" && environment === "production") {
+export async function startCheckout(ctx: PaymentContext, input: StartCheckoutInput): Promise<StartCheckoutResult> {
+  if (ctx.provider.name === "fake" && input.environment === "production") {
     return { outcome: "misconfigured", reason: "fake_provider_in_production" };
   }
-  const origin = appOrigin(environment);
+  const origin = input.appOrigin;
   if (!origin) return { outcome: "misconfigured", reason: "app_base_url_missing_or_invalid" };
 
   const fees = calculateFees({
@@ -125,11 +139,11 @@ export async function startCheckout(input: StartCheckoutInput): Promise<StartChe
 
   let attempt;
   try {
-    attempt = await createPaymentAttempt({
+    attempt = await createPaymentAttempt(ctx.db, {
       collectionId: input.collectionId,
       checkoutIdempotencyKey: input.checkoutIdempotencyKey,
       reference: generatePaymentReference(),
-      provider: input.provider.name,
+      provider: ctx.provider.name,
       memberId: input.memberId,
       contributorName: input.contributorName,
       contributorEmail: input.contributorEmail,
@@ -162,7 +176,7 @@ export async function startCheckout(input: StartCheckoutInput): Promise<StartChe
 
   // Initialization is idempotent on the reference, so a reused attempt gets
   // the same checkout back rather than a second charge.
-  const providerResult = await input.provider.initialize({
+  const providerResult = await ctx.provider.initialize({
     reference: attempt.reference,
     amount: fees.totalPayable,
     currency: "NGN",
@@ -173,7 +187,7 @@ export async function startCheckout(input: StartCheckoutInput): Promise<StartChe
   });
 
   if (providerResult.outcome === "ok") {
-    await markPaymentAttemptInitialized(attempt.attempt_id, providerResult.value.providerAccessCode);
+    await markPaymentAttemptInitialized(ctx.db, attempt.attempt_id, providerResult.value.providerAccessCode);
     return {
       outcome: "ok",
       attemptId: attempt.attempt_id,
@@ -184,7 +198,7 @@ export async function startCheckout(input: StartCheckoutInput): Promise<StartChe
   }
 
   if (providerResult.outcome === "refused") {
-    await markPaymentAttemptFailed(attempt.attempt_id, providerResult.providerCode ?? "initialization_refused");
+    await markPaymentAttemptFailed(ctx.db, attempt.attempt_id, providerResult.providerCode ?? "initialization_refused");
     return { outcome: "provider_refused" };
   }
 
@@ -198,37 +212,47 @@ export async function startCheckout(input: StartCheckoutInput): Promise<StartChe
 
 // ── Verification + capture ──────────────────────────────────────────────────
 
-export async function confirmPayment(input: ConfirmPaymentInput): Promise<ConfirmPaymentResult> {
-  const verifyResult = await input.provider.verify(input.reference);
+export async function confirmPayment(ctx: PaymentContext, reference: string): Promise<ConfirmPaymentResult> {
+  const verifyResult = await ctx.provider.verify(reference);
 
   if (verifyResult.outcome === "not_found") return { outcome: "not_found" };
   if (verifyResult.outcome === "unknown") return { outcome: "provider_unavailable", reason: verifyResult.reason };
   // A refused verify says nothing about the money; nothing is marked.
   if (verifyResult.outcome === "refused") return { outcome: "error", code: "verify_refused" };
 
-  return recordAndCapture(verifyResult.value);
+  return recordAndCapture(ctx.db, verifyResult.value);
 }
 
-async function recordAndCapture(tx: ProviderTransaction): Promise<ConfirmPaymentResult> {
+/**
+ * What the provider said, as T1 stores it. The one place this mapping lives,
+ * so no caller can store the card authorization itself: it is a reusable
+ * charge token, and only its SHA-256 is kept (O-12).
+ */
+export function providerStatement(tx: ProviderTransaction): RecordProviderTransactionInput {
+  return {
+    reference: tx.providerReference,
+    provider: tx.provider,
+    providerTransactionId: tx.providerTransactionId,
+    providerReference: tx.providerReference,
+    statusMapped: tx.status,
+    statusRaw: tx.providerStatusRaw,
+    amountKobo: tx.amount,
+    currency: tx.currency,
+    providerFeeKobo: tx.providerFee,
+    paidAt: tx.paidAt,
+    channel: tx.channel,
+    authorizationHash:
+      tx.authorizationReference !== null ? createHash("sha256").update(tx.authorizationReference, "utf8").digest("hex") : null,
+    payload: tx.rawPayload,
+  };
+}
+
+export async function recordAndCapture(db: PaymentDb, tx: ProviderTransaction): Promise<ConfirmPaymentResult> {
   // T1: record what the provider said. The database moves the attempt
   // (captured / failed / needs_review) or, for pending, keeps it as evidence only.
   let recorded;
   try {
-    recorded = await recordProviderTransaction({
-      reference: tx.providerReference,
-      provider: tx.provider,
-      providerTransactionId: tx.providerTransactionId,
-      providerReference: tx.providerReference,
-      statusMapped: tx.status,
-      statusRaw: tx.providerStatusRaw,
-      amountKobo: tx.amount,
-      currency: tx.currency,
-      providerFeeKobo: tx.providerFee,
-      paidAt: tx.paidAt,
-      channel: tx.channel,
-      authorizationHash: tx.authorizationReference,
-      payload: tx.rawPayload,
-    });
+    recorded = await recordProviderTransaction(db, providerStatement(tx));
   } catch (error) {
     if (error instanceof DatabaseError) {
       if (error.code === "UNKNOWN_PAYMENT_REFERENCE") return { outcome: "not_found" };
@@ -241,7 +265,7 @@ async function recordAndCapture(tx: ProviderTransaction): Promise<ConfirmPayment
     return { outcome: "needs_review", attemptId: recorded.attempt_id, reason: recorded.review_reason };
   }
   if (recorded.status === "captured" || recorded.status === "completed") {
-    return capture(recorded.attempt_id);
+    return capture(db, recorded.attempt_id);
   }
   if (tx.status === "pending") return { outcome: "pending" };
   if (recorded.status === "failed" || recorded.status === "expired") {
@@ -252,10 +276,10 @@ async function recordAndCapture(tx: ProviderTransaction): Promise<ConfirmPayment
 }
 
 /** T2. Idempotent: a completed attempt returns the contribution it already produced. */
-async function capture(attemptId: string): Promise<ConfirmPaymentResult> {
+export async function capture(db: PaymentDb, attemptId: string): Promise<ConfirmPaymentResult> {
   let captured;
   try {
-    captured = await completePaymentCapture(attemptId);
+    captured = await completePaymentCapture(db, attemptId);
   } catch (error) {
     if (error instanceof DatabaseError) return { outcome: "error", code: error.code };
     throw error;

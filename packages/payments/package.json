@@ -1,0 +1,23 @@
+{
+  "name": "@kolekto/payments",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "The payment orchestrator (plan §4.3): checkout, verification + capture, and the sweep. Server only. Shared by the web app and the worker.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "test": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@kolekto/adapters": "*",
+    "@kolekto/config": "*",
+    "@kolekto/db": "*",
+    "@kolekto/domain": "*"
+  }
+}

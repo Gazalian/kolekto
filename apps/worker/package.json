@@ -15,7 +15,8 @@
     "@kolekto/adapters": "*",
     "@kolekto/config": "*",
     "@kolekto/db": "*",
-    "@kolekto/domain": "*"
+    "@kolekto/domain": "*",
+    "@kolekto/payments": "*"
   },
   "devDependencies": {
     "esbuild": "^0.21.5"
