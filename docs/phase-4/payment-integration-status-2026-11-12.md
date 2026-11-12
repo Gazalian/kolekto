@@ -50,7 +50,7 @@ Also: the callback action now accepts only a well-formed `KLK-` reference (`isPa
 - `supabase test db` (pgTAP) was not re-run; no SQL changed this session.
 - The form change (checkout key) was not tried in a browser. `crypto.randomUUID()` needs a secure context: it works on `localhost` and `https`, but not over plain-HTTP LAN addresses such as testing from a phone at `http://192.168.x.x`.
 
-**Still not committed.** All M8.5 work is uncommitted on `feat/payments-foundation`.
+**Committed, not pushed:** `ee09b40 feat(payments): wire checkout orchestrator to fake provider` on `feat/payments-foundation`. The pre-existing `layout.tsx` hydration change went in separately as `1bf9ed2`.
 
 ### Why this update
 
