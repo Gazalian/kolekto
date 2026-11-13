@@ -3,8 +3,12 @@
 **Date:** 2026-11-12  
 **Branch:** `feat/payments-foundation`  
 **Last commits:**
-- `558610e` feat(payments): add payment records and capture functions
-- `0d032b2` feat(collections): collection creation flow redesign (pre-existing work, now committed)
+- `925888c` fix(worker): use esbuild JS API in guard test for cross-platform compat
+- `28e7469` ci: fix invariants and gitleaks false positive
+- `f8710db` docs(payments): update M8.5 status report (sessions 5–6)
+- `1dce47b` test(e2e): payment E2E spec and updated review assertions
+- `370ce3c` fix(worker): scope M13.3 notification assertions to member rows
+- `5c42527` feat(payments): fee review, local fake checkout, sweep, 7-flow itest
 
 **Authoritative docs** (read these before changing anything):
 - [`docs/phase-4/paystack-integration-audit-and-plan-2026-11-10.md`](paystack-integration-audit-and-plan-2026-11-10.md) — full architecture, blueprints, security report, roadmap
@@ -17,73 +21,60 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-12, session 6 (stale E2E assertions updated, payments E2E built and run locally)
+**Last updated:** 2026-11-13, session 7 (committed, pushed, opened draft PR, fixing CI)
 
 ### What was done this session
 
 | Area | Change | Where |
 |---|---|---|
-| Shared review check | New `expectPaymentReview(page, { contributorName, contribution })`: the heading "Review and pay, {name}", the Contribution row equals the resolved amount, and either Contribution + Processing fee + Kolekto fee = Total to pay (fees above zero) or, when the community covers the fees, Total = Contribution and "… covers the payment fees". Ends by checking the only way on is an enabled `Pay {total}` button and no "Payment Successful" anywhere — the old "Nothing has been charged" guarantee, now stated against the real screen. | `tests/e2e/helpers/payments.ts` |
-| Stale assertions updated | The five listed assertions now use `expectPaymentReview`. Also found and updated: three clicks on "Back to the form" in `collection-types.spec.ts` (the button is "Edit" when a payment is offered) and `contributor.spec.ts`'s "Ready to continue to payment", which `5c42527` also removed. No check was dropped: each spec still asserts the amount, and now also the fee arithmetic and the Pay button. | `collection-types.spec.ts` (fundraiser, items), `collections.spec.ts` (managed fixed), `contributor.spec.ts` (managed fixed) |
-| Payments E2E | `tests/e2e/payments.spec.ts`, 9 tests. Seven flows (fixed, open, tiered, items, ticketing, fundraiser, recurring), each signed out: public page → order (member lookup for fixed and recurring) → Continue → review → `Pay ₦…` → fake checkout → "Pay successfully" → callback "Payment Successful". The DB is checked before paying (attempt `initialized`, frozen contribution/total/fees equal what the page showed, fee bearer, obligation, stock `reserved`, no contribution) and after (attempt `completed`, exactly one contribution with the frozen amounts and member, line count, stock `converted`, obligation `paid`, attendee names). A reload of the callback still shows success with the same single contribution. Plus "Card declined" and "Cancel payment" on the items flow: callback "Payment Failed", attempt `failed`, no contribution, stock `released`. | `tests/e2e/payments.spec.ts` |
-| Seeding | `seedPaymentFlow(name)` runs the integration lane's own `seedPaymentCommunity` / `seedFlow` (imported, not copied) in a transaction that commits, over the local superuser connection. It refuses any non-loopback database. Every seed is a new community with `e2e-pay-…` slugs; no teardown. | `tests/e2e/helpers/payments.ts` |
-| CI | **No change.** The existing `e2e` job already has `KOLEKTO_ENV=local`, `next start` (one process, so the in-memory fake is shared), the DB URL and two shards; Playwright picks up the new file. | `.github/workflows/ci.yml` (unchanged) |
-| SES payload | **Not touched.** The prompt left "fix it / leave it" unanswered, so nothing was changed. | `packages/db/src/webhook-events.ts:93` |
+| Commits | Three commits for sessions 5–6 work: `370ce3c` M13.3 integration test fix, `1dce47b` payment E2E spec + updated assertions, `f8710db` status doc. | `feat/payments-foundation` |
+| Draft PR | [#31](https://github.com/Gazalian/kolekto/pull/31) opened to `main`. | GitHub |
+| CI fix: invariants | `packages/payments/src/orchestrator.ts` added to the `one-fee-implementation` CALLERS allowlist — the orchestrator legitimately calls `calculateFees` to freeze the breakdown before storing the payment attempt. | `scripts/invariants/run-all.mjs` |
+| CI fix: gitleaks | `.gitleaks.toml` created to suppress the `generic-api-key` false positive on a test UUID constant (`8d6f1c2e-…`) in `packages/validation/test/collection.test.ts`. | `.gitleaks.toml` |
+| CI fix: esbuild | The `worker-guards.test.ts` "real bundle" `before()` hook was running `node esbuild/bin/esbuild`, but on Linux CI that file is the native ELF binary, not a JS wrapper. Switched to the esbuild JS API (`buildSync`) which works on all platforms. 65/65 locally. | `apps/worker/test/worker-guards.test.ts` |
+| Banner copy proposal | Proposed below. Not implemented. | `ContributeForm.tsx:758` |
+| SES payload | **Not touched.** The prompt left "fix it / leave it" unanswered again, so nothing was changed. | `packages/db/src/webhook-events.ts:93` |
 
-**Local runs of `payments.spec.ts`** (`--retries=0`; the CI config uses `retries: 1`)
+**CI runs:**
 
-| Run | Result |
-|---|---|
-| 1 | Did not start: Playwright's `webServer` (`next build && next start`) exceeded its 180 s limit on this machine. I then built `apps/web` separately (`NEXT_DIST_DIR=.next-e2e`) and started it on 3010 so Playwright reused it. |
-| 2 (cold server) | 6/9 pass. fixed (60 s test timeout), open and recurring failed. |
-| 3 (only those three) | 3/3 pass. |
-| 4 (full spec, warm) | 8/9 pass. items failed (it passed in run 2). |
+- **Run 1:** invariants and gitleaks failed; typecheck failed (esbuild); E2E pending.
+- **Run 2:** invariants and gitleaks fixed; typecheck still failed (esbuild); E2E/migrations pending then run cancelled by push.
+- **Run 3 (cancelled):** diagnostic commit showed the esbuild error (native ELF binary passed to Node).
+- **Run 4 (current):** esbuild fix applied (JS API). All six jobs pending at time of writing.
 
-**Every one of the 9 tests has passed at least once; no single local run was 9/9.** Every failure had the same shape: a server action (`submitContributionAction` on Continue, and in one case `confirmMemberAction` on "Yes, this is me", which is not payment code) stayed pending for more than 30 s. The trace shows that POST never answered while every other request finished in under a second, there was no error banner, and the server log was empty. This is the documented QA-ENV-01 stall (`docs/product/QA-ENV-01-BROWSER-E2E-BLOCKER.md`: intermittent server-action stalls on this machine, every dependency healthy). Timeouts were **not** raised to hide it. CI is the authority.
+**Banner copy proposal** (for `ContributeForm.tsx:758`):
 
-**Checks run**
+The form today does not know whether online payment is available — the `payment` state is set only after the server action responds. A new boolean prop `paymentEnabled` on `ContributeForm` (threaded from `CollectionView.tsx`) would gate the banner:
 
-- `tsc --noEmit` (temporary config on `tsconfig.base.json`) over `payments.spec.ts`, `helpers/payments.ts` and the three edited specs: clean. `tests/e2e` has no ESLint config, so lint does not apply there.
-- `next build` of `apps/web`: passes.
-- Payments spec: as in the table above.
-
-**Not verified**
-
-- **The three edited existing specs were not run.** They sign up through OTP and the wizard, which is the flow QA-ENV-01 stalls. They type-check, and their review assertions use the same helper the payments spec proved, but the first green run will be in CI.
-- No CI run yet (nothing pushed).
-- Local runs **committed rows to the local dev DB**: 21 `e2e-pay-…` communities with their collections, attempts and contributions. They are test data on the local stack only.
-
-**Nothing committed.** Uncommitted from session 5: the M13.3 integration test fix and the status doc. New this session: `tests/e2e/payments.spec.ts`, `tests/e2e/helpers/payments.ts`, and edits to `collection-types.spec.ts`, `collections.spec.ts`, `contributor.spec.ts`.
+- **Payment on:** "You'll pay securely online after reviewing your details."
+- **Payment off:** "Online payment is not available for this collection. You can check your details now; {organiser} will let you know how to pay."
 
 ### Why this update
 
-M8.5's acceptance is "all seven collection flows work against the fake provider; E2E passes in CI". The flows were proven at the database level in session 5. This session drives them through a real browser and the real fake checkout page, and repairs the existing suite that `5c42527` would otherwise have turned red.
+M8.5's acceptance is "all seven collection flows work against the fake provider; E2E passes in CI". Sessions 5–6 built the E2E spec and the integration tests. This session committed the work, pushed it to CI and fixed the two CI-config failures (invariants allowlist and gitleaks false positive). A third failure — the worker-guards esbuild bundle — is a pre-existing issue (not caused by sessions 5–7) that needs its CI stderr to diagnose.
 
 ### Still open
 
-- **CI evidence for M8.5:** push the branch and get the `browser e2e` job green (both shards), including the edited specs.
-- **Stale contributor banner (found, not fixed):** under the form, `ContributeForm.tsx:758` still says "Online payment for this collection is not open yet. You can check your details now; … will confirm how to pay." This now shows even when the form leads to Pay. It needs product copy for the payment-on and payment-off cases. Not asked for, so not changed.
-- **SES payload stored as a JSON string** (`webhook-events.ts:93`) — still needs your decision.
-- **Local E2E harness:** `webServer.timeout` (180 s) is shorter than `next build` on this machine. Not changed; build and start separately as above.
+- **CI run 4:** all six jobs pending. If all pass, M8.5's CI evidence is complete.
+- **Stale contributor banner:** copy proposed above, not implemented. Needs your approval or alternative copy.
+- **SES payload stored as a JSON string** (`webhook-events.ts:93`) — still needs your "fix it" or "leave it" decision.
 - Carried over: the fake checkout is in memory; the sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; the callback action needs rate limiting before the real Paystack adapter (M8.9).
 
 ### Next thing to do
 
-1. Review this session's changes and commit (with session 5's).
-2. Push and read the `browser e2e` result for both shards. If something fails there, fix the cause, not the timeout.
-3. Decide on the SES payload fix and the contributor banner copy.
-4. Then M8.5 can be closed and M8.9 (Paystack adapter) started.
+1. Wait for CI run 4 results. If anything fails, diagnose from logs/artifacts and fix.
+2. Once all six CI jobs are green, mark PR #31 as ready for review.
+3. Decide on the SES payload fix, the contributor banner copy, and start M8.9 (Paystack adapter).
 
 ### Prompt for the next session (copy and paste)
 
 ```
 Continue M8.5 on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
-1. Commit the uncommitted work from sessions 5 and 6 (M13.3 integration test fix, payments E2E spec and helper, the three updated E2E specs, status doc) in sensible commits. Show me the messages first.
-2. Push the branch and open a draft PR to main. Read the `browser e2e` result for both shards and the other CI jobs. If anything fails, find the cause from the logs and artifacts and fix it. Do not raise timeouts or weaken assertions.
-3. SES payload: [say "fix it" or "leave it"]. If fixing, change packages/db/src/webhook-events.ts:93 to `::text::jsonb` and add a test that asserts jsonb_typeof(payload) = 'object'.
-4. Contributor banner: propose copy for ContributeForm.tsx:758 for when online payment is on and when it is off. Do not change it yet.
-5. Replace the "Latest report" section of the status doc: what was done, why, what is still open, the next thing to do, and the next prompt.
+1. Check CI for PR #31 (run 4 or later). If anything fails, find the cause from the logs and artifacts and fix it. Do not raise timeouts or weaken assertions.
+2. SES payload: [say "fix it" or "leave it"]. If fixing, change packages/db/src/webhook-events.ts:93 to `::text::jsonb` and add a test that asserts jsonb_typeof(payload) = 'object'.
+3. Once CI is green, mark PR #31 as ready for review.
+4. Replace the "Latest report" section of the status doc: what was done, why, what is still open, the next thing to do, and the next prompt.
 ```
 
 ---
