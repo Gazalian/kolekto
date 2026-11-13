@@ -165,23 +165,24 @@ test("the fee decision changes the numbers, is saved, and charges nothing", asyn
         // The two fees are named separately, never summed into one line: an
         // organiser deciding whether to absorb them is entitled to know which
         // is the processor's and which is Kolekto's.
-        await expect(p.getByText("Estimated payment processing fee")).toBeVisible();
-        await expect(p.getByText("Estimated Kolekto service fee")).toBeVisible();
+        await expect(p.getByText("Processing fee", { exact: true })).toBeVisible();
+        await expect(p.getByText("Kolekto fee", { exact: true })).toBeVisible();
 
-        // D-10: 1.5% modeled provider fee and 1.5% Kolekto fee on ₦20,000 —
-        // ₦300 each, both under their caps.
-        await expect(p.getByText("₦300", { exact: true })).toHaveCount(2);
-        await expect(p.getByText("₦600", { exact: true })).toBeVisible();
+        // D-11/D-28, SCHEDULE_2026_11_FOUNDER: 1.5% processing + 0.5% Kolekto
+        // on ₦20,000 — ₦300 and ₦100, summed as ₦400 of estimated total fees.
+        await expect(p.getByText("₦300", { exact: true })).toBeVisible();
+        await expect(p.getByText("₦100", { exact: true })).toBeVisible();
+        await expect(p.getByText("₦400", { exact: true })).toBeVisible();
 
-        // Absorbing: the contributor pays ₦20,000, the community nets ₦19,400.
-        await expect(p.getByText("₦19,400")).toBeVisible();
+        // Absorbing: the contributor pays ₦20,000, the community nets ₦19,600.
+        await expect(p.getByText("₦19,600")).toBeVisible();
 
-        // Passing on: ₦20,000 + ₦600 of fees. NOT ₦20,619, which is what 3% of
-        // fees charged on the payable would produce (20,000 / 0.97) — the
+        // Passing on: ₦20,000 + ₦400 of fees. NOT ₦20,408, which is what 2% of
+        // fees charged on the payable would produce (20,000 / 0.98) — the
         // arithmetic is on the contribution, so it cannot compound.
         await chooseFeeBearer("Contributor pays")(p);
-        await expect(p.getByText("₦20,600")).toBeVisible();
-        await expect(p.getByText("₦20,619")).toHaveCount(0);
+        await expect(p.getByText("₦20,400")).toBeVisible();
+        await expect(p.getByText("₦20,408")).toHaveCount(0);
 
         await expect(p.getByText(/nothing has been charged/i)).toBeVisible();
       },

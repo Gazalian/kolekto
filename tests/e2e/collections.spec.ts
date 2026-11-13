@@ -152,8 +152,12 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await expect(anonymousPage.getByLabel("House number")).toBeVisible();
 
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
-  // Server-side validation: a contributor with no way to be reached is refused.
-  await expect(anonymousPage.getByText(/email address and phone number/i)).toBeVisible();
+  // A contributor with no way to be reached is refused before anything is
+  // submitted: the browser's own `required` validation focuses the first
+  // empty contact field rather than advancing to the review step. The
+  // server-side `CONTACT_REQUIRED` message in actions.ts remains as
+  // defense-in-depth for anyone bypassing the HTML form.
+  await expect(anonymousPage.getByLabel("Full name")).toBeFocused();
 
   await anonymousPage.getByLabel("Full name").fill("Ada Obi");
   await anonymousPage.getByLabel("Email address").fill("ada@example.test");
