@@ -50,8 +50,13 @@ const originalFetch = globalThis.fetch;
 let seenCalls: FetchArgs[] = [];
 
 function stubFetch(fn: FetchStub): void {
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  // `RequestInfo` is a DOM type and `packages/adapters/tsconfig.json` does
+  // not include the DOM lib (ES2023 only). Node's built-in `fetch` types
+  // declare `RequestInit` as a global but not `RequestInfo`, so the
+  // first-argument type is written structurally here.
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url =
+      typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const args = { url, init: init ?? {} };
     seenCalls.push(args);
     return fn(args);
