@@ -17,70 +17,73 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-12, session 4 (M8.5 fake flow end to end + seven-flow integration test)
+**Last updated:** 2026-11-12, session 6 (stale E2E assertions updated, payments E2E built and run locally)
 
 ### What was done this session
 
 | Area | Change | Where |
 |---|---|---|
-| Shared package | New `@kolekto/payments`: the orchestrator moved out of `apps/web` so the web app, the worker and the tests run the same code. It no longer reads `process.env` or opens a connection: the caller passes a `PaymentDb` executor, the environment and the app origin. | `packages/payments/src/{orchestrator,sweep,index}.ts` |
-| DB callers | Every payment caller takes a `PaymentDb` first (`ownerPaymentDb` on the web; `sql.begin` in the worker; a savepoint in tests). New `listDuePaymentAttempts(db, provider, limit)` for the sweep. | `packages/db/src/payments.ts` |
-| Fee review + redirect | After Continue, the form shows Contribution, Processing fee, Kolekto fee and Total to pay (all server-formatted, frozen on the attempt) and a `Pay ₦…` button that goes to `checkoutUrl`. When the community absorbs fees, only the total shows, with "… covers the payment fees". Edit returns to the form and rotates the checkout key. | `ContributeForm.tsx`, `actions.ts` (`feesAddedToTotal`) |
-| Local fake checkout | `/{community}/{collection}/payment/fake-checkout?reference=` — 404 unless `KOLEKTO_ENV=local`. Buttons: Pay successfully / Card declined / Cancel payment. It tells the in-memory fake how the payment ended, then redirects to the callback path (path only, never an absolute URL, so it cannot be used as an open redirect). The fake provider is one instance per process (`globalThis`), default scenario `pending`, and `getPaymentProvider()` returns null outside local. | `payment/fake-checkout/{page,actions}.ts(x)`, `lib/payments/provider-factory.ts`, `FakePaymentProvider.checkoutFor/completeCheckout` |
-| Worker sweep | Every 60 s: captured-but-not-completed → T2 again; created/initialized past hold → ask the provider: success/failed/abandoned recorded (T1, then T2 on success), pending kept until the 24 h check window then expired, "not found" expired, no answer left alone (D-27). One attempt's error never stops the run. **On only when** `KOLEKTO_ENV=local` and the role can execute the payment functions and read `payment_attempts` through forced RLS; it logs `payment_sweep_state` with the reason when off. Never fatal to the notification stages. | `packages/payments/src/sweep.ts`, `apps/worker/src/payment-sweep.ts`, `apps/worker/src/index.ts` |
-| **Bug fixed: card authorization stored raw** | T1 passed the provider's `authorizationReference` (a reusable charge token) as `authorization_hash`. The DB check (`^[a-f0-9]{64}$`) rejected it, so **every successful fake payment failed to record**. Now SHA-256 hashed in one place, `providerStatement()`, used by every caller (O-12). | `packages/payments/src/orchestrator.ts` |
-| **Bug fixed: contributors sent to /login** | The session middleware only treated `/{community}/{collection}` as public, so the callback page (and the new fake checkout) redirected a signed-out contributor to sign in. Added `isPublicPaymentPath` for exactly `/payment/callback` and `/payment/fake-checkout` under a collection, with tests. | `apps/web/lib/supabase/middleware.ts` (+ test) |
-| Lint | Callback component no longer calls setState inside its effect (initial state derived from the reference). | `PaymentCallback.tsx` |
-| Integration test | `payments-orchestrator.integration.test.ts` (11th lane file): all seven flows (fixed dues, open amount, tiered, items, ticketing, fundraiser, recurring) go checkout → pending callback → fake success → completed, asserting the frozen amounts, stock reserved → converted, obligation paid (fixed, recurring), attendee names (ticketing), contribution lines, and a repeat callback returning the same contribution. Plus declined / abandoned / amount mismatch / verify timeout, checkout-key reuse, and the sweep finishing a capture whose T2 never ran while leaving held attempts alone. Fixtures in `test/support/itest-payment-flows.ts`. | `apps/worker/test/integration/`, `itest-lane.ts` manifest, `itest-gate.test.ts` (count 10 → 11) |
-| Sweep unit tests | The time-dependent branches (expire, past check window) cannot happen inside one rolled-back transaction (the hold end is frozen and `now()` does not move), so they are unit-tested with a scripted DB: 8 tests. | `packages/payments/test/sweep.test.ts` |
+| Shared review check | New `expectPaymentReview(page, { contributorName, contribution })`: the heading "Review and pay, {name}", the Contribution row equals the resolved amount, and either Contribution + Processing fee + Kolekto fee = Total to pay (fees above zero) or, when the community covers the fees, Total = Contribution and "… covers the payment fees". Ends by checking the only way on is an enabled `Pay {total}` button and no "Payment Successful" anywhere — the old "Nothing has been charged" guarantee, now stated against the real screen. | `tests/e2e/helpers/payments.ts` |
+| Stale assertions updated | The five listed assertions now use `expectPaymentReview`. Also found and updated: three clicks on "Back to the form" in `collection-types.spec.ts` (the button is "Edit" when a payment is offered) and `contributor.spec.ts`'s "Ready to continue to payment", which `5c42527` also removed. No check was dropped: each spec still asserts the amount, and now also the fee arithmetic and the Pay button. | `collection-types.spec.ts` (fundraiser, items), `collections.spec.ts` (managed fixed), `contributor.spec.ts` (managed fixed) |
+| Payments E2E | `tests/e2e/payments.spec.ts`, 9 tests. Seven flows (fixed, open, tiered, items, ticketing, fundraiser, recurring), each signed out: public page → order (member lookup for fixed and recurring) → Continue → review → `Pay ₦…` → fake checkout → "Pay successfully" → callback "Payment Successful". The DB is checked before paying (attempt `initialized`, frozen contribution/total/fees equal what the page showed, fee bearer, obligation, stock `reserved`, no contribution) and after (attempt `completed`, exactly one contribution with the frozen amounts and member, line count, stock `converted`, obligation `paid`, attendee names). A reload of the callback still shows success with the same single contribution. Plus "Card declined" and "Cancel payment" on the items flow: callback "Payment Failed", attempt `failed`, no contribution, stock `released`. | `tests/e2e/payments.spec.ts` |
+| Seeding | `seedPaymentFlow(name)` runs the integration lane's own `seedPaymentCommunity` / `seedFlow` (imported, not copied) in a transaction that commits, over the local superuser connection. It refuses any non-loopback database. Every seed is a new community with `e2e-pay-…` slugs; no teardown. | `tests/e2e/helpers/payments.ts` |
+| CI | **No change.** The existing `e2e` job already has `KOLEKTO_ENV=local`, `next start` (one process, so the in-memory fake is shared), the DB URL and two shards; Playwright picks up the new file. | `.github/workflows/ci.yml` (unchanged) |
+| SES payload | **Not touched.** The prompt left "fix it / leave it" unanswered, so nothing was changed. | `packages/db/src/webhook-events.ts:93` |
+
+**Local runs of `payments.spec.ts`** (`--retries=0`; the CI config uses `retries: 1`)
+
+| Run | Result |
+|---|---|
+| 1 | Did not start: Playwright's `webServer` (`next build && next start`) exceeded its 180 s limit on this machine. I then built `apps/web` separately (`NEXT_DIST_DIR=.next-e2e`) and started it on 3010 so Playwright reused it. |
+| 2 (cold server) | 6/9 pass. fixed (60 s test timeout), open and recurring failed. |
+| 3 (only those three) | 3/3 pass. |
+| 4 (full spec, warm) | 8/9 pass. items failed (it passed in run 2). |
+
+**Every one of the 9 tests has passed at least once; no single local run was 9/9.** Every failure had the same shape: a server action (`submitContributionAction` on Continue, and in one case `confirmMemberAction` on "Yes, this is me", which is not payment code) stayed pending for more than 30 s. The trace shows that POST never answered while every other request finished in under a second, there was no error banner, and the server log was empty. This is the documented QA-ENV-01 stall (`docs/product/QA-ENV-01-BROWSER-E2E-BLOCKER.md`: intermittent server-action stalls on this machine, every dependency healthy). Timeouts were **not** raised to hide it. CI is the authority.
 
 **Checks run**
 
-- `tsc --build` for the whole monorepo: pass. Web `tsc --noEmit`: pass. ESLint on every changed web file: pass. Worker `esbuild` bundle: builds.
-- Unit tests: domain 216/216, adapters 165/165 (4 new for the fake checkout), db 6/6, payments 8/8, worker 778/778 (includes the lane's static guards against the new file), web middleware 17/17 (2 new).
-- **The new integration file's exact assertions against the local dev DB**, through a scratch shim that replaces only the gate, harness and connection (every test rolled back, 0 rows left): **10 of 10 pass**. This is how the authorization-hash bug was found.
-- **Browser, signed out, on the local dev server (port 3000):** tier event "Founders Breakfast 2026" → Continue → review showed ₦15,000 + ₦225 + ₦75 = ₦15,300 → Pay → fake checkout → Pay successfully → callback "Payment Successful". The DB confirms the attempt is `completed`, with one contribution and the authorization stored as a 64-character hash. This run **committed real rows to the local dev DB** (one completed attempt and contribution, plus one abandoned `initialized` attempt from a first try, which the sweep will expire).
-- Worker sweep gate against the dev DB: enabled for `local`; disabled for `staging` with `no_real_payment_provider_until_m8_9`.
+- `tsc --noEmit` (temporary config on `tsconfig.base.json`) over `payments.spec.ts`, `helpers/payments.ts` and the three edited specs: clean. `tests/e2e` has no ESLint config, so lint does not apply there.
+- `next build` of `apps/web`: passes.
+- Payments spec: as in the table above.
 
 **Not verified**
 
-- **The integration lane itself has not run the new file.** The itest database (port 55422) stops at migration `20261029100100`; it has no payment tables or functions. It needs `npm run itest:reset -- --confirm-reset-kolekto-itest`, which wipes the itest stack, rotates its credentials and removes the `kolekto_itest_worker` role (recreate it with `npm run itest:worker-role`; the worker-runtime files also need `npm run itest:net-lockdown` again). That needs your approval.
-- The worker loop was not started; its sweep tick was typechecked, bundled and its gate probed, but not run live.
-- `supabase test db` (pgTAP) was not re-run; no SQL changed.
-- No browser run of the Card declined / Cancel payment buttons, or of a fixed or managed collection (these are covered by the integration assertions, not by a browser).
-- No E2E (Playwright) test in CI yet — this is part of the M8.5 acceptance.
+- **The three edited existing specs were not run.** They sign up through OTP and the wizard, which is the flow QA-ENV-01 stalls. They type-check, and their review assertions use the same helper the payments spec proved, but the first green run will be in CI.
+- No CI run yet (nothing pushed).
+- Local runs **committed rows to the local dev DB**: 21 `e2e-pay-…` communities with their collections, attempts and contributions. They are test data on the local stack only.
 
-**Committed, not pushed** on `feat/payments-foundation` (see `git log`).
+**Nothing committed.** Uncommitted from session 5: the M13.3 integration test fix and the status doc. New this session: `tests/e2e/payments.spec.ts`, `tests/e2e/helpers/payments.ts`, and edits to `collection-types.spec.ts`, `collections.spec.ts`, `contributor.spec.ts`.
 
 ### Why this update
 
-The previous session left a checkout that created an attempt and held stock, with no way to pay or release it. This session closes that loop locally — review, pay, return, capture, and a sweep for anyone who never returns — and pins all seven collection types with a committed integration test. Running that test's assertions against the real SQL found a bug that would have failed every successful payment.
+M8.5's acceptance is "all seven collection flows work against the fake provider; E2E passes in CI". The flows were proven at the database level in session 5. This session drives them through a real browser and the real fake checkout page, and repairs the existing suite that `5c42527` would otherwise have turned red.
 
 ### Still open
 
-- **Run the lane on a reset itest DB** (approval needed, see above).
-- **The fake checkout is in memory.** Restarting the dev server loses open fake checkouts (the page says so). The worker's own fake knows none of the web app's checkouts, so locally the sweep expires any attempt past its 30-minute hold. A success reported later for an expired attempt goes to `needs_review` — never lost, but not automatic.
-- The sweep re-reads pending attempts every minute until their 24 h window ends (it writes nothing for them). Fine at local volume; revisit with real Paystack volume.
-- `listDuePaymentAttempts` filters on provider, status and `hold_expires_at`; the existing sweep index (`payment_attempts_sweep_idx`) is on `check_until`. Fine locally; check before production volume.
-- Unchanged from before: possible jsonb double-encoding in `packages/db/src/webhook-events.ts:93` (SES ingest, not verified); the callback action needs rate limiting before the real Paystack adapter (M8.9).
-- E2E (Playwright) for the seven flows in CI, for the M8.5 acceptance.
+- **CI evidence for M8.5:** push the branch and get the `browser e2e` job green (both shards), including the edited specs.
+- **Stale contributor banner (found, not fixed):** under the form, `ContributeForm.tsx:758` still says "Online payment for this collection is not open yet. You can check your details now; … will confirm how to pay." This now shows even when the form leads to Pay. It needs product copy for the payment-on and payment-off cases. Not asked for, so not changed.
+- **SES payload stored as a JSON string** (`webhook-events.ts:93`) — still needs your decision.
+- **Local E2E harness:** `webServer.timeout` (180 s) is shorter than `next build` on this machine. Not changed; build and start separately as above.
+- Carried over: the fake checkout is in memory; the sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; the callback action needs rate limiting before the real Paystack adapter (M8.9).
 
 ### Next thing to do
 
-1. **Approve and run the itest reset**, then run the lane with `--without-smtp` and confirm the new file passes there. So far it has only been proven against the dev DB through a shim.
-2. Then the Playwright E2E for the seven flows against the fake checkout page, to close M8.5's "E2E in CI" acceptance.
+1. Review this session's changes and commit (with session 5's).
+2. Push and read the `browser e2e` result for both shards. If something fails there, fix the cause, not the timeout.
+3. Decide on the SES payload fix and the contributor banner copy.
+4. Then M8.5 can be closed and M8.9 (Paystack adapter) started.
 
 ### Prompt for the next session (copy and paste)
 
 ```
 Continue M8.5 on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
-1. I approve resetting the integration-test stack. Run `npm run itest:reset -- --confirm-reset-kolekto-itest`, then `npm run itest:worker-role` (and `npm run itest:net-lockdown` if you will run the worker-runtime files). Confirm the itest DB now has public.payment_attempts and app.complete_payment_capture.
-2. In apps/worker run `npm run test:integration -- --without-smtp`. Report every file's result, especially payments-orchestrator.integration.test.ts. If it fails, fix the cause (do not weaken assertions) and re-run.
-3. Check whether packages/db/src/webhook-events.ts stores SES payloads as JSON strings (select jsonb_typeof(payload) on the local dev DB). Report only; do not fix without asking.
-4. Propose (do not build yet) the Playwright E2E for the seven collection flows through the local fake checkout page, and how it runs in CI.
+1. Commit the uncommitted work from sessions 5 and 6 (M13.3 integration test fix, payments E2E spec and helper, the three updated E2E specs, status doc) in sensible commits. Show me the messages first.
+2. Push the branch and open a draft PR to main. Read the `browser e2e` result for both shards and the other CI jobs. If anything fails, find the cause from the logs and artifacts and fix it. Do not raise timeouts or weaken assertions.
+3. SES payload: [say "fix it" or "leave it"]. If fixing, change packages/db/src/webhook-events.ts:93 to `::text::jsonb` and add a test that asserts jsonb_typeof(payload) = 'object'.
+4. Contributor banner: propose copy for ContributeForm.tsx:758 for when online payment is on and when it is off. Do not change it yet.
 5. Replace the "Latest report" section of the status doc: what was done, why, what is still open, the next thing to do, and the next prompt.
-Do not commit until I say so.
 ```
 
 ---
@@ -175,7 +178,7 @@ All functions use the operator-session idiom: `SECURITY DEFINER`, `set search_pa
 
 #### Still needed for M8.5 acceptance
 
-- Worker sweep, fee review, local fake checkout and the seven-flow integration test: **built in session 4** (see Latest report). The integration test still has to pass on the reset itest DB.
+- Worker sweep, fee review, local fake checkout and the seven-flow integration test: **built in session 4**. The integration test passes on the reset itest DB (session 5, 10/10).
 - **E2E test** — all seven collection flows end-to-end, in CI
 
 **Acceptance for M8.5:** full happy path + all seven collection flows work against `FakePaymentProvider`; E2E passes in CI.
