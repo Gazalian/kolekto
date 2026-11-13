@@ -196,9 +196,9 @@ describe("the real bundle: a refusal ends the process non-zero, before any conne
   const OUTFILE = "dist/guard-test/index.js";
 
   before(() => {
-    const esbuild = createRequire(import.meta.url).resolve("esbuild/bin/esbuild");
-    const built = spawnSync(process.execPath, [esbuild, "src/index.ts", "--bundle", "--platform=node", "--format=esm", "--target=node22", "--external:@aws-sdk/*", "--external:@smithy/*", `--outfile=${OUTFILE}`, "--log-level=error"], { cwd: WORKER_ROOT, encoding: "utf8", timeout: 120_000, windowsHide: true });
-    assert.equal(built.status, 0, `the bundle builds\nstdout: ${built.stdout}\nstderr: ${built.stderr}`);
+    const { buildSync } = createRequire(import.meta.url)("esbuild") as { buildSync: (opts: Record<string, unknown>) => { errors: unknown[] } };
+    const result = buildSync({ entryPoints: [path.join(WORKER_ROOT, "src/index.ts")], bundle: true, platform: "node", format: "esm", target: "node22", external: ["@aws-sdk/*", "@smithy/*"], outfile: path.join(WORKER_ROOT, OUTFILE), logLevel: "error" });
+    assert.equal(result.errors.length, 0, `the bundle builds: ${JSON.stringify(result.errors)}`);
   });
 
   /** An environment built from nothing. Only OS essentials, so no developer setting can reach the child. */
