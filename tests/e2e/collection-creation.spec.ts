@@ -159,7 +159,7 @@ test("the fee decision changes the numbers, is saved, and charges nothing", asyn
 
         // ── The estimate is available, and clearly marked as one ──────────────
         await p.getByRole("button", { name: "Show an estimate of the fees" }).click();
-        await expect(p.getByText(/An estimate, using Kolekto's fee schedule \(2026-09-founder\)/i)).toBeVisible();
+        await expect(p.getByText(/An estimate, using Kolekto's fee schedule \(2026-11-founder\)/i)).toBeVisible();
         await expect(p.getByText(/not a settlement amount/i)).toBeVisible();
 
         // The two fees are named separately, never summed into one line: an

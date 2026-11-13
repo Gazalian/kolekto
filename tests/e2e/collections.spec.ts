@@ -153,7 +153,7 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
 
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
   // Server-side validation: a contributor with no way to be reached is refused.
-  await expect(anonymousPage.getByText(/email address or a phone number/i)).toBeVisible();
+  await expect(anonymousPage.getByText(/email address and phone number/i)).toBeVisible();
 
   await anonymousPage.getByLabel("Full name").fill("Ada Obi");
   await anonymousPage.getByLabel("Email address").fill("ada@example.test");

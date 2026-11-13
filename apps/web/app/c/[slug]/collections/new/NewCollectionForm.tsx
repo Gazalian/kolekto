@@ -695,7 +695,6 @@ export function NewCollectionForm({
             <li
               key={`${entry.kind}-${index}`}
               aria-current={index + 1 === step ? "step" : undefined}
-              aria-label={entry.label}
               className={
                 index + 1 <= step
                   ? "h-1 flex-1 rounded-full bg-[var(--color-primary)]"

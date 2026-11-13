@@ -464,7 +464,7 @@ test("an open collection asks nobody to identify, and a closed one takes nothing
   await contributor.getByLabel("Phone number").fill("+2348011110501");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
-  await expect(contributor.getByText("Ready to continue to payment")).toBeVisible();
+  await expect(contributor.getByRole("heading", { name: "Review and pay, Ada Obi" })).toBeVisible();
   await expect(contributor.getByText("₦7,500").first()).toBeVisible();
 
   // Closing it takes the form away entirely — there is nothing to continue to.
