@@ -108,15 +108,32 @@ describe("the M13.3 communication policy against the real database", () => {
             where message ->> 'community_id' = ${COMMUNITY} and message ->> 'action' = ${action} and message ->> 'object_id' = ${objectId}
             order by msg_id`;
         const emailRowsFor = async (objectId: string) =>
-          tx<{ member: string; status: string; code: string | null; send_class: string; has_address: boolean; assurance: string | null }[]>`
-            select d.recipient_member_id::text as member, d.status::text as status, d.error_code as code, d.send_class,
+          tx<{ member: string | null; user_id: string | null; status: string; code: string | null; send_class: string; category: string | null; has_address: boolean; assurance: string | null }[]>`
+            select d.recipient_member_id::text as member, d.recipient_user_id::text as user_id, d.status::text as status, d.error_code as code, d.send_class,
+                   d.communication_category::text as category,
                    d.recipient_address is not null as has_address, d.recipient_address_assurance as assurance
             from public.notification_deliveries d
             join public.notification_events e on e.id = d.notification_event_id
             where d.community_id = ${COMMUNITY} and d.channel = 'email' and e.object_id = ${objectId}
             order by d.recipient_member_id`;
-        const byMember = (rows: { member: string; status: string; code: string | null }[]) =>
-          Object.fromEntries(rows.map((r) => [r.member === memberA ? "A" : r.member === memberB ? "B" : r.member === memberC ? "C" : r.member, `${r.status}:${r.code ?? "-"}`]));
+        type EmailRow = Awaited<ReturnType<typeof emailRowsFor>>[number];
+        // The audience rows (one per member). The publisher notice (migration 20261109130000) is the only
+        // member-less email row on collection.publish and is asserted separately by publisherNotice().
+        const memberRows = (rows: readonly EmailRow[]) => rows.filter((r) => r.member !== null);
+        const byMember = (rows: readonly EmailRow[]) =>
+          Object.fromEntries(memberRows(rows).map((r) => [r.member === memberA ? "A" : r.member === memberB ? "B" : r.member === memberC ? "C" : r.member, `${r.status}:${r.code ?? "-"}`]));
+        // Exactly one publisher notice, to the owner's account, essential (transactional, no community category),
+        // pending whatever the community's attestation state, since it is not member communication.
+        const publisherNotice = (rows: readonly EmailRow[], when: string) => {
+          const notices = rows.filter((r) => r.member === null);
+          assert.equal(notices.length, 1, `${when}: exactly one member-less (publisher notice) email row`);
+          const n = notices[0]!;
+          assert.deepEqual(
+            { user_id: n.user_id, status: n.status, code: n.code, send_class: n.send_class, category: n.category, has_address: n.has_address },
+            { user_id: OWNER, status: "pending", code: null, send_class: "transactional", category: null, has_address: true },
+            `${when}: the publisher notice goes to the publishing owner as an essential transactional email`,
+          );
+        };
 
         // ── 1. Not attested: nobody is pending; B's own opt-out is reported first.
         const attestedBefore = first(await tx<{ v: boolean }[]>`select app.community_communication_notice_attested(${COMMUNITY}::uuid) as v`).v;
@@ -128,7 +145,8 @@ describe("the M13.3 communication policy against the real database", () => {
         const before = await emailRowsFor(COL_BEFORE);
         evidence["before_attestation"] = byMember(before);
         assert.deepEqual(byMember(before), { A: "skipped:community_notice_missing", B: "skipped:opted_out", C: "skipped:community_notice_missing" });
-        assert.ok(before.every((r) => !r.has_address), "no address stored on any skipped row");
+        assert.ok(memberRows(before).every((r) => !r.has_address), "no address stored on any skipped row");
+        publisherNotice(before, "before attestation");
 
         // ── 2. The owner attests (real function). The worker detects it.
         await asOwner(() => tx`select app.attest_community_communication_notice(${COMMUNITY}::uuid, 'community-notice-v1')`);
@@ -143,7 +161,8 @@ describe("the M13.3 communication policy against the real database", () => {
         const a = after.find((r) => r.member === memberA)!;
         assert.equal(a.has_address, true);
         assert.equal(a.assurance, "unverified_supplied", "accountless member reached at the member-record address");
-        assert.ok(after.every((r) => r.send_class === "bulk"), "community email is bulk");
+        assert.ok(memberRows(after).every((r) => r.send_class === "bulk"), "community email is bulk");
+        publisherNotice(after, "after attestation");
 
         // ── 3. Payment-targeted publish: no email and no in-app delivery.
         await asOwner(() => tx`select app.publish_collection(${COL_UNPAID}::uuid, 'draft'::public.collection_status, null, 'unpaid')`);
@@ -238,14 +257,21 @@ describe("the M13.3 communication policy against the real database", () => {
           where message ->> 'community_id' = ${COMMUNITY} and message ->> 'action' = 'member.create' and message ->> 'object_id' = ${ids.Essential}`);
         await processNotificationMessage(tx as unknown as postgres.TransactionSql, confirmation.message);
 
-        const rows = await tx<{ id: string; member: string; status: string; category: string | null; event_type: string }[]>`
-          select d.id::text as id, d.recipient_member_id::text as member, d.status::text as status,
-                 d.communication_category as category, e.event_type
+        const rows = await tx<{ id: string; member: string | null; user_id: string | null; status: string; category: string | null; send_class: string; event_type: string }[]>`
+          select d.id::text as id, d.recipient_member_id::text as member, d.recipient_user_id::text as user_id, d.status::text as status,
+                 d.communication_category as category, d.send_class, e.event_type
           from public.notification_deliveries d join public.notification_events e on e.id = d.notification_event_id
           where d.community_id = ${COMMUNITY} and d.channel = 'email'`;
-        const label = (member: string) => Object.entries(ids).find(([, v]) => v === member)?.[0] ?? "?";
+        const label = (member: string | null) => (member === null ? "publisher" : Object.entries(ids).find(([, v]) => v === member)?.[0] ?? "?");
         evidence["queued"] = rows.map((r) => `${label(r.member)}:${r.event_type}:${r.status}:${r.category}`).sort();
-        assert.ok(rows.filter((r) => r.event_type === "collection.publish").every((r) => r.category === "community_operational"), "the worker recorded community_operational on every announcement row");
+        assert.ok(rows.filter((r) => r.event_type === "collection.publish" && r.member !== null).every((r) => r.category === "community_operational"), "the worker recorded community_operational on every announcement row");
+        // The publisher notice (migration 20261109130000) is the one member-less row: essential, so no category.
+        const publisherRows = rows.filter((r) => r.member === null);
+        assert.deepEqual(
+          publisherRows.map((r) => ({ user_id: r.user_id, event_type: r.event_type, status: r.status, category: r.category, send_class: r.send_class })),
+          [{ user_id: OWNER, event_type: "collection.publish", status: "pending", category: null, send_class: "transactional" }],
+          "exactly one publisher notice, to the owner, essential and transactional",
+        );
         assert.ok(rows.filter((r) => r.event_type === "member.create").every((r) => r.category === "essential"), "and essential on the confirmation");
         const pendingRow = (n: Name, eventType: string): string => {
           const r = rows.find((x) => x.member === ids[n] && x.event_type === eventType && x.status === "pending");
