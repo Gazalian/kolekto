@@ -198,7 +198,7 @@ describe("the real bundle: a refusal ends the process non-zero, before any conne
   before(() => {
     const esbuild = createRequire(import.meta.url).resolve("esbuild/bin/esbuild");
     const built = spawnSync(process.execPath, [esbuild, "src/index.ts", "--bundle", "--platform=node", "--format=esm", "--target=node22", "--external:@aws-sdk/*", "--external:@smithy/*", `--outfile=${OUTFILE}`, "--log-level=error"], { cwd: WORKER_ROOT, encoding: "utf8", timeout: 120_000, windowsHide: true });
-    assert.equal(built.status, 0, "the bundle builds");
+    assert.equal(built.status, 0, `the bundle builds\nstdout: ${built.stdout}\nstderr: ${built.stderr}`);
   });
 
   /** An environment built from nothing. Only OS essentials, so no developer setting can reach the child. */
