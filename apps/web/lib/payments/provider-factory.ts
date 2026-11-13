@@ -41,6 +41,16 @@ export function getPaymentProvider(): PaymentProvider | null {
   return getFakePaymentProvider();
 }
 
+/**
+ * Whether online checkout can start in this environment. Used by server
+ * components to decide what the contributor is told up front (a banner on
+ * the contribution form), without having to call the full
+ * `getPaymentContext()` from a render path.
+ */
+export function isPaymentEnabled(): boolean {
+  return getPaymentProvider() !== null;
+}
+
 /** Everything the orchestrator needs, or null when payments are not available here. */
 export function getPaymentContext(): (PaymentContext & {
   environment: ReturnType<typeof loadConfig>["environment"];

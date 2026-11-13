@@ -63,6 +63,7 @@ export function ContributeForm({
   fields,
   thankYouMessage,
   organiser,
+  paymentEnabled = false,
 }: {
   communitySlug: string;
   collectionSlug: string;
@@ -82,6 +83,15 @@ export function ContributeForm({
   fields: PublicField[];
   thankYouMessage: string | null;
   organiser: string;
+  /**
+   * Whether online checkout is available in this environment. Decided on
+   * the server and threaded in, so the banner at the top of the form can
+   * tell the contributor up front what will happen after Continue — pay
+   * securely online, or wait to hear from the organiser. The client
+   * cannot derive this; `payment` state only appears after the server
+   * action responds.
+   */
+  paymentEnabled?: boolean;
 }) {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -755,10 +765,16 @@ export function ContributeForm({
 
       {error && <Banner tone="danger">{error}</Banner>}
 
-      <Banner tone="info">
-        Online payment for this collection is not open yet. You can check your details now; {organiser} will confirm how
-        to pay.
-      </Banner>
+      {paymentEnabled ? (
+        <Banner tone="info">
+          Fill in your details and you&apos;ll be able to review your total and pay securely online.
+        </Banner>
+      ) : (
+        <Banner tone="info">
+          Online payment isn&apos;t available for this collection yet. You can fill in your details now — {organiser}{" "}
+          will let you know how to pay.
+        </Banner>
+      )}
 
       <Button type="submit" size="lg" loading={isPending}>
         Continue

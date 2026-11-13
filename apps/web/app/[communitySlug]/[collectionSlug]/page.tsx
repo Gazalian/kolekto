@@ -5,6 +5,7 @@ import {
   getPublicCollectionTiers,
 } from "@kolekto/db";
 import { notFound } from "next/navigation";
+import { isPaymentEnabled } from "../../../lib/payments/provider-factory.ts";
 import { CollectionView } from "./CollectionView.tsx";
 
 /**
@@ -59,6 +60,7 @@ export default async function PublicCollectionPage({
       communitySlug={communitySlug}
       collectionSlug={collectionSlug}
       collection={collection}
+      paymentEnabled={isPaymentEnabled()}
       tiers={tiers.map((tier) => ({
         id: tier.tier_id,
         name: tier.name,
