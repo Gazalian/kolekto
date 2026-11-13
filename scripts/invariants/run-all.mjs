@@ -246,6 +246,7 @@ async function ruleOneFeeImplementation() {
   const CALLERS = new Set([
     "packages/domain/src/fees.ts",
     "apps/web/app/c/[slug]/collections/FeeConfigurator.tsx",
+    "packages/payments/src/orchestrator.ts",
   ]);
 
   const files = await collect([".ts", ".tsx"], join(ROOT, "packages"));
