@@ -3,13 +3,13 @@
 **Date:** 2026-11-12  
 **Branch:** `feat/payments-foundation`  
 **Last commits:**
+- `46b6e16` feat(domain): M8.3b resolver hardening — stock, applied, status, ceiling
+- `9521283` fix(adapters): drop DOM-only `RequestInfo` type from fetch stub
+- `8c9eea6` docs(payments): update M8.9 status report (session 10 — Paystack adapter + webhook)
 - `9d9dc73` feat(payments): M8.9 Paystack adapter and webhook route
 - `57fc62a` docs(payments): update M8.5 status report (session 9 — CI green, banner shipped)
 - `a9b6606` fix(e2e): match 2026-11-founder fee labels and client-side contact guard
 - `30fb66f` feat(contribute): gate the pre-payment banner on whether checkout is available
-- `b075e86` fix(e2e): wizard aria-label collision and payment-flow assertion drift
-- `4ea3805` fix(db): store SES payload as JSON object, not double-encoded string
-- `e8b4e10` docs(payments): update M8.5 status report (session 7)
 
 **Authoritative docs** (read these before changing anything):
 - [`docs/phase-4/paystack-integration-audit-and-plan-2026-11-10.md`](paystack-integration-audit-and-plan-2026-11-10.md) — full architecture, blueprints, security report, roadmap
@@ -22,64 +22,69 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-13, session 10 (M8.9 Paystack adapter + webhook route landed)
+**Last updated:** 2026-11-13, session 11 (M8.3b resolver hardening; contributor onboarding flag; CI stays green)
 
 ### What was done this session
 
 | Area | Change | Where |
 |---|---|---|
-| Paystack adapter | New `PaystackPaymentProvider` implements the seam from `payment-provider.ts`. `initialize()` → POST /transaction/initialize with amount as a bigint-safe string; `verify()` → GET /transaction/verify/:reference; status mapping covers Paystack's full vocabulary (success / failed / abandoned / ongoing / processing / queued / pending → the DB's five-value set; `reversed` and anything unknown → `unrecognised` so capture routes it to `needs_review`). A 404 on verify is `not_found`, not a refusal. A null `fees` field is kept null (D-11: null ≠ zero). An init timeout is `unknown` with `safeToRetry=false` (a checkout may exist); a verify timeout is `unknown` with `safeToRetry=true` (reads cannot move money). | `packages/adapters/src/paystack-payment-provider.ts` |
-| Webhook verification | Dual-header: prefers the modern `Paystack-Signature` (HMAC-SHA512 over `${t}.${rawBody}`, 300-second replay window, rotation-safe multiple-v1 handling); falls back to legacy `x-paystack-signature` while `PAYSTACK_LEGACY_WEBHOOK_FALLBACK` is not `false`. Every rejection is a value, never an exception — a thrown error would be a rejection routed through a 5xx by mistake. | same file |
-| Config loader | `tryLoadPaystackConfigFromEnv()` lives inside `packages/adapters` because invariant 4 refuses `PAYSTACK_SECRET_KEY` as a string outside that package. Refuses non-`sk_test_`/`sk_live_` prefixes and non-`whsec_` prefixes at startup — a publishable key in the secret slot was the previous system's most dangerous misconfig. | same file |
-| Webhook route | `apps/web/app/api/webhooks/paystack/route.ts`: POST-only (405 other methods), application/json only (415), 256 KiB cap (413), raw bytes straight to the adapter, 401 on rejection (no body-content logged), 503 when Paystack is not configured for the env. Dispatches to `confirmPayment()` from `@kolekto/payments` — the same capture path redirect and sweep call, so three triggers converge on one idempotent-by-attempt path. Outcome mapping: completed/needs_review/pending/failed/not_found → 200 (Paystack stops retrying); provider_unavailable/error → 5xx (Paystack retries, sweep covers). Transfer and unsupported events are acknowledged without acting (subsystems deferred). | `apps/web/app/api/webhooks/paystack/route.ts` |
-| Factory | `provider-factory.ts` now returns `getPaystackPaymentProvider()` for staging/production, with the fake kept for local only. Paystack instance is cached on `globalThis` so the route and orchestrator share one per process; returns null when env is incomplete (so the banner reads "not available yet" rather than exposing a half-configured deploy). | `apps/web/lib/payments/paystack.ts`, `apps/web/lib/payments/provider-factory.ts` |
-| Tests — adapter | 37 new tests exercise the audit §9 matrix: initialize ok/refused/5xx/timeout/echo-mismatch/unparseable; verify success/failed/abandoned/pending/reversed/not_found/5xx/null-fees; signature valid-modern, valid-bare-v1, two-v1 rotation, wrong secret, stale t, future t, malformed header, re-serialised body, missing event id; legacy fallback valid/invalid/off. All 201 adapter tests green (165 pre-existing + 36 new; one additional config-loader test). | `packages/adapters/test/paystack-payment-provider.test.ts` |
-| Tests — route | 20 new vitest route tests: method gate, content-type, size, 503 unconfigured, signature rejection does NOT call `confirmPayment`, and every `ConfirmPaymentResult` outcome maps to the right status. Full `apps/web` suite: 195 tests green. | `apps/web/app/api/webhooks/paystack/route.test.ts` |
-| Env | `.env.example` documents `PAYSTACK_SECRET_KEY`, `PAYSTACK_WEBHOOK_SECRET`, `PAYSTACK_API_BASE`, `PAYSTACK_LEGACY_WEBHOOK_FALLBACK` with their guardrails. | `.env.example` |
+| CI | Run 7 (session-10 code) failed on all three E2E jobs + typecheck: root cause was a DOM-only `RequestInfo` type in the Paystack adapter test's fetch stub, invisible to local incremental builds but fatal to CI's clean build. Replaced with `string \| URL \| Request` (what Node's fetch accepts without the DOM lib). Run 9 landed all seven checks green on commit `9521283`: invariants (9s), secrets (28s), typecheck (1m1s), pgTAP (3m7s), shard 1 (11m14s), shard 2 (6m9s), aggregate (3s). | `packages/adapters/test/paystack-payment-provider.test.ts` |
+| M8.3b: ceiling | Added `MAX_PAYMENT_KOBO = 500_000_000n` (₦5,000,000, audit §14.5) and `assertWithinCeiling()`, applied AFTER model-specific resolution so every model — fixed/open/tiered/basketed/items/per-member — is bounded identically. The DB's `payment_limits.max_payment_kobo` row stays authoritative; this is a pre-DB refusal so the UI never accepts what the DB would reject. | `packages/domain/src/contribution.ts` |
+| M8.3b: single-tier stock | The basket path already refuses `quantity > quantityLimit`; the single-tier "choose one" path (quantity = 1) now also refuses a tier with `quantityLimit = 0` as "sold out". Without it, a plain-tier collection could sell past its limit from the public page, bypassing the stock lock the basket path and the DB both enforce. | same |
+| M8.3b: `amountOwed = expected − waived − applied` | `ContributionObligation` gains an optional `appliedKobo` field (absent reads as zero, backward-compatible). The resolver now subtracts applied contributions so a repeat visit does not offer the full amount again — matters the moment installments land (O-7, O-13), and matters sooner as a safety net for the audit §4.6 reconciliation gap (capture failing to flip obligation status). Negative applied is refused as MISCONFIGURED. | same |
+| M8.3b: status mapping | `in_installments` now raises `INSTALLMENTS_NOT_SUPPORTED` with a clear user message rather than falling through (D-19). `overdue` is accepted — a late payment is still accepted; the window check is separate. `unpaid`, `paid`, `exempt`, `cancelled` behave as before. Added `INSTALLMENTS_NOT_SUPPORTED` and `PAYMENT_ABOVE_CEILING` to `ContributionErrorCode` (both already referenced by `CHECKOUT_ERROR_MESSAGES` in `actions.ts`). | same |
+| M8.3b: tests | 19 new tests cover each addition at its boundary: single-tier sold-out, tier still has stock, applied-subtract, applied-zero default, applied-meets-balance → NOTHING_OWED, negative applied → MISCONFIGURED, each obligation status (unpaid, overdue, in_installments, exempt, cancelled, paid), ceiling exactly-at, fixed above, open-amount above, tiered basket SUM above, items order SUM above, obligation remaining above. 235 domain tests green (216 + 19 new). | `packages/domain/test/contribution.test.ts` |
+| Pure window check | Already exists in `packages/domain/src/contribution-window.ts` as `isOpenForContributions(opensOn, closesOn, now)` with the correct date-string signature; built in a prior session. The resolver does not duplicate it — a redundant Date-based variant written this session was removed before commit. | n/a |
 
-**Verification run locally:**
+**Verification locally:** `npm run typecheck` clean, `node scripts/invariants/run-all.mjs` all seven ok, 235 domain + 195 web tests pass.
 
-- `npm run typecheck` — clean across the workspace.
-- `node scripts/invariants/run-all.mjs --verbose` — all seven invariants hold, including "one Paystack caller" (api.paystack.co and PAYSTACK_SECRET_KEY stay inside `packages/adapters`).
-- `npm test` — 201 adapter, 195 web, 8 payments, 63 domain+validation+config tests pass. No pgTAP changes (M8.9 touches no SQL).
-- `npm run lint` on the new web files — clean.
+### Flagged — contributor onboarding scenario (needs product scope before coding)
 
-### Why this update
+The user described a scenario that this session investigated but did not fix. The investigation is documented here so the next session can act on a clear option set rather than re-trace it.
 
-M8.5 shipped the fake provider with the seam ready for a real one. M8.9 fills the seam: the real adapter needs to speak Paystack's HTTP and the signature protocols, and a webhook route has to run that signing path against the exact bytes Paystack sent. Three things made the shape:
+**Scenario.** A community member who has NOT been added to a specific collection's roll makes a payment and the system counts it. Later the organiser adds that member to the roll — the payment should still be reflected as paid.
 
-1. **Every uncertainty is a value.** `payment-provider.ts` is explicit that a timeout is NOT a failure (D-27). The adapter never throws on a transport error, a 5xx, a non-JSON body or an aborted request — each becomes a `ProviderResult` variant with a correct `safeToRetry` so a caller cannot accidentally catch too broadly and treat "we don't know" as "it failed".
-2. **The route is the signing boundary.** The HMAC runs on the exact bytes the client sent. The route reads a raw `Uint8Array` and hands it to the adapter unchanged — no JSON round-trip, no header normalisation, no content-type-guided decode — because any byte change breaks the signature. The tests include a re-serialisation case that must fail: it does.
-3. **Invariant 4 stays sacred.** The previous estate had five Paystack call sites across three runtimes, which is why FIN-02 was unachievable. `api.paystack.co` and `PAYSTACK_SECRET_KEY` appear only in `packages/adapters` now, enforced by the pre-build scan. The env loader lives inside the adapter package for the same reason.
+**Current behaviour, per audience mode** (`supabase/migrations/20260920150000_collection_audience.sql`, `20260922100000_member_context_reference.sql`, `20261111100100_payment_functions.sql`):
+
+- `public` — anyone with the link can pay. No obligation; no "paid" state against a roll.
+- `all_members` / `groups` — `resolve_collection_audience` INCLUDES every eligible community member, obligation or not. `find_collection_member` finds them; `create_payment_attempt` accepts them; the fixed-amount path falls back to `collection.fixed_amount_kobo` when there is no obligation. **The payment goes through**, but `complete_payment_capture` only `update obligations set status='paid'` when `attempt.obligation_id` is non-null, and the contribution is written with `obligation_id = null`. If the organiser later runs `sync_collection_obligations` (the "Assign" / "Add members" action), it inserts a fresh obligation row with the default `status='unpaid'`. The contributor has paid; the obligation reads unpaid. **This is the correctness gap the user is describing.**
+- `selected_members` — `resolve_collection_audience` ONLY returns members with an existing obligation row. `find_collection_member` cannot find a community member who is not on the selected list, so they cannot pay at all. "Selected" and "obligated" are the same act, by design.
+
+**Options for a fix** (owner picks scope; all three are substantial migrations):
+
+1. **Lazy obligation materialisation at capture time.** In `complete_payment_capture`, if `attempt.member_id is not null` and `attempt.obligation_id is null`, create an obligation for that member with `status='paid'` and link the contribution to it. Audit-log the creation with a distinct action. Needs a new path through the `block_manual_paid_status` trigger — the trigger allows 'paid' only when a matching captured contribution exists; this flow has the contribution in the same transaction. Tested by pgTAP. Only applicable to `all_members` / `groups`.
+2. **Reconcile on sync.** In `sync_collection_obligations`, when inserting a new obligation, check for a matching completed contribution (same collection, member, cycle) and set `status='paid'` + backlink the contribution row's `obligation_id`. Simpler to write, but silently mutates an append-only column on contributions, which weakens the ledger discipline the rest of the schema upholds.
+3. **No obligation at all for these audiences.** Treat `all_members` / `groups` as "contribution-is-the-evidence" — the Members view reads paid state by joining `contributions ⨝ members`, never from `obligations.status`. Removes a lot of code but is a wide-reaching product/UX change (the "Assign" flow disappears for these audiences).
+
+**Recommendation for the owner.** Option 1 — lazy materialisation at capture — matches the user's stated semantics most directly ("the system just counts it as paid even after they are onboarded"), preserves the append-only ledger, and leaves `selected_members` semantics intact. Roughly a half-day of migration + pgTAP + tests. Do not touch `selected_members` without a separate explicit decision — the current "hand-picked only" rule is intentional.
 
 ### Still open
 
-- **CI for M8.9:** not yet pushed. Run 7 was an infra flake (port 54322 in use during supabase start on shard 1); M8.9's changes are on top of session 9 commits. Push and watch the next CI run — expect green; the only risk is the vitest run picking up the new webhook test file, which is already proven locally.
-- **Sandbox matrix against a real Paystack test account:** infrastructural, outside this repo. The audit §9 matrix exercises card success, failed card, abandoned, bank transfer, webhook-before-redirect, resend-from-dashboard, reversed, `fees` field present, subaccount split, and settlement timing. The adapter is unit-tested against synthetic bodies that match the shapes in the audit; a real run swaps the bodies in with no code change.
-- **Deferred for M8.10+:** the `financial_events` table + worker-based processing (audit §4.6); subaccount splits (PA-06); the "actual provider fee > fee charged" alarm (M8.7); transfers, refunds, disputes.
-- **Carried over** (no change this session): the fake checkout is in memory; the sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; the callback action needs rate limiting.
-- **PR #31 state at session start:** ready for review on green run 6. Session's new commit will push a new CI run; marking ready stays as it was.
+- **CI for session 11:** M8.3b not yet pushed. Expect clean — the change is domain-only, pure TypeScript, new test file, no SQL or route touched.
+- **Contributor onboarding fix:** the three options above; needs an owner call before coding. The pgTAP suite will need new tests for whichever path is chosen.
+- **Sandbox matrix against a real Paystack test account:** infrastructural, outside this repo. The adapter is unit-tested against synthetic bodies that match the shapes in the audit; a real run swaps the bodies in with no code change.
+- **Deferred for M8.10+:** `financial_events` table + worker-based processing (audit §4.6); subaccount splits (PA-06); "actual Paystack fee > fee charged" alarm (M8.7); transfers, refunds, disputes.
+- **Carried over** (no change): fake checkout is in memory; sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; callback action needs rate limiting.
+- **PR shape:** kept on PR #31 — the four new commits (banner, M8.9 adapter+route, typecheck fix, M8.3b) are all payments-foundation work. If the owner prefers a split, M8.9 and M8.3b can each move to their own PR off a short-lived branch.
 
 ### Next thing to do
 
-1. Push session 10 and watch CI. If the supabase-port flake recurs, `gh run rerun --failed`; the fix is the GitHub Actions runner's own, not code.
-2. Decide whether to keep session 10's commits on PR #31 or open a separate PR for M8.9. (Owner decision; "keep on #31" keeps the payments foundation as one atomic change, "separate PR" makes M8.9 reviewable on its own.)
-3. Arrange the external infra for the sandbox matrix: a Paystack test account on the NEW (not legacy) project, a public staging URL (for Paystack to call back), and `whsec_` provisioned. Then run the §9 matrix through the deployed route.
-4. Start M8.3b (resolver hardening) or M8.7 (monitoring alarms — especially "actual Paystack fee > fee charged"), per owner priority.
+1. Push session 11 and watch CI.
+2. Decide the contributor-onboarding option (1, 2, or 3 above) and implement the chosen one, including pgTAP tests. Only `all_members` / `groups` are in scope unless `selected_members` is explicitly reopened.
+3. Arrange the external infra for the Paystack sandbox matrix: a NEW test account, a public HTTPS staging URL, and `whsec_` provisioned. Run the §9 matrix through the deployed route.
+4. Start M8.7 (monitoring alarms — especially "actual Paystack fee > fee charged") when the owner is ready.
 
 ### Prompt for the next session (copy and paste)
 
 ```
 Continue payments on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
-M8.9 (Paystack adapter + webhook route) is done locally and committed. Next:
-
-1. Check CI on the latest commit of feat/payments-foundation. If the supabase port 54322 flake recurs on an E2E shard, re-run that one job (`gh run rerun --failed`) rather than editing code. If anything else fails, diagnose from the logs and fix without weakening assertions or raising timeouts.
-2. Decide the PR shape: keep M8.9 on PR #31 (one atomic payments foundation), or open a second PR off main scoped to M8.9 alone. Follow the owner's preference.
-3. Start M8.3b — resolver hardening — if the owner has not redirected: pure `isOpenForContributions(collection, now)` in `packages/domain/src/contribution.ts`; single-tier stock check; `amountOwed − applied`; ceiling; status mapping including `reversed`; unit tests for each.
+1. Check CI on the latest commit. If a supabase port 54322 flake recurs on an E2E shard, `gh run rerun --failed`; otherwise diagnose from logs without raising timeouts or weakening assertions.
+2. The "Flagged — contributor onboarding scenario" section of the status doc lists three options for the "community member pays before being onboarded → obligation reads unpaid" gap. Say which option to take (1 = lazy materialisation at capture; 2 = reconcile on sync; 3 = no obligation for all_members/groups). Then implement it: SQL migration, `apps/web` and `packages/db` callers as needed, and pgTAP tests. Do not touch selected_members semantics without a separate decision.
+3. If an owner redirect names something else — sandbox matrix, M8.7 alarms, something new — do that instead.
 4. At stop, replace this doc's "Latest report" section with what you built, why, what is still open, the next thing to do, and the next prompt.
 
-Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 `COLLECTION_IMPORTED` guard. For Paystack-sandbox testing, the test keys go only in `.env.local` (git-ignored); the external infra (public staging URL, Paystack test account, `whsec_`) must be arranged out of this repo.
+Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 `COLLECTION_IMPORTED` guard. Any obligation-creation path added must preserve CASH-02 / SEC-20a (the `block_manual_paid_status` trigger allows 'paid' only when a matching captured contribution exists).
 ```
 
 ---
