@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { expectPaymentReview } from "./helpers/payments.ts";
 import { openWizard, walkWizard, type StepFiller } from "./helpers/wizard.ts";
 import type { SectionKind } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
 
@@ -229,9 +230,9 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
   await contributor.getByLabel("House number").fill("14B Sobi Close");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
-  // The payment boundary: the amount is resolved, and nothing has been charged.
-  await expect(contributor.getByText("Ready to continue to payment")).toBeVisible();
-  await expect(contributor.getByText(/Nothing has been charged/)).toBeVisible();
+  // The payment boundary: the amount is resolved, and nothing has been charged
+  // until the contributor presses Pay.
+  await expectPaymentReview(contributor, { contributorName: "Grace Adeyemi", contribution: "₦5,000" });
   await expect(contributor.getByText("₦5,000").first()).toBeVisible();
 
   await anonymous.close();

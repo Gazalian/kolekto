@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { expectPaymentReview } from "./helpers/payments.ts";
 import { fillTier, openWizard, walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -160,10 +161,10 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await anonymousPage.getByLabel("House number").fill("14B Sobi Close");
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
 
-  await expect(anonymousPage.getByText(/Your details are checked, Ada Obi/)).toBeVisible();
   await expect(anonymousPage.getByText("₦5,000").first()).toBeVisible();
-  // The honest confirmation: no receipt, no "payment successful".
-  await expect(anonymousPage.getByText(/Nothing has been charged/)).toBeVisible();
+  // The honest confirmation: the frozen figures for ₦5,000, and a Pay button —
+  // no receipt, no "payment successful".
+  await expectPaymentReview(anonymousPage, { contributorName: "Ada Obi", contribution: "₦5,000" });
 
   await anonymous.close();
 });
