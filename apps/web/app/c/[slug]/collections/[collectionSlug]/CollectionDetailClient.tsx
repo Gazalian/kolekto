@@ -34,7 +34,9 @@ import {
   publishCollectionAction,
   sendCollectionReminderAction,
   transitionCollectionStatusAction,
+  announceCollectionUpdateAction,
 } from "../actions.ts";
+import type { AnnouncementRecipientPreview } from "@kolekto/db";
 import { ObligationsPanel } from "./ObligationsPanel.tsx";
 import { CheckInPanel, type CheckInPerson } from "./CheckInPanel.tsx";
 import { ExportPanel } from "./ExportPanel.tsx";
@@ -187,26 +189,23 @@ export function CollectionDetailClient({
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   /**
-   * M13.3: the host's publish-time notification target. 'all' is the
-   * previous default (notify every eligible audience member with an
-   * account); 'unpaid' targets only members with an outstanding obligation
-   * on this collection; 'none' publishes without notifying. Preview counts
-   * come from `app.count_collection_publish_recipients` + the audience split
-   * via the server action.
+   * The host's publish-time notification target: 'all' notifies the
+   * collection's members (in-app for account holders, email from the member
+   * record for everyone eligible); 'none' publishes without notifying.
+   * "Members who have not paid" is not offered: payment status cannot be
+   * established (no payments are recorded), see RecipientPreview below.
    */
-  const [notifyMode, setNotifyMode] = useState<"all" | "unpaid" | "none">("all");
-  const [recipientPreview, setRecipientPreview] = useState<
-    | { kind: "idle" }
-    | { kind: "loading" }
-    | { kind: "ready"; eligible: number; unpaid: number; with_obligation: number; awaiting: number }
-    | { kind: "error"; message: string }
-  >({ kind: "idle" });
+  const [notifyMode, setNotifyMode] = useState<NotifyMode>("all");
+  const [recipientPreview, setRecipientPreview] = useState<RecipientPreview>({ kind: "idle" });
 
   // Post-publish reminder dialog state (20261029100000). Opened from the
   // "Send reminder" button for an active or scheduled collection. The
   // dialog's own component owns the local form state (choice, submission,
   // outcome) so the parent only decides when the dialog is open.
   const [reminderOpen, setReminderOpen] = useState(false);
+  // Member announcements: "Announce changes" is an explicit organiser action;
+  // editing a collection never notifies anyone by itself.
+  const [announceOpen, setAnnounceOpen] = useState(false);
 
   const status = collection.status as CollectionStatus;
   const publicUrl = typeof window === "undefined" ? "" : `${window.location.origin}${collectionPath(communitySlug, collection.slug)}`;
@@ -296,6 +295,15 @@ export function CollectionDetailClient({
                   onClick={() => setReminderOpen(true)}
                 >
                   Send reminder
+                </Button>
+              )}
+              {(status === "active" || status === "scheduled" || status === "paused") && (
+                <Button
+                  variant="secondary"
+                  disabled={isPending}
+                  onClick={() => setAnnounceOpen(true)}
+                >
+                  Announce changes
                 </Button>
               )}
               {actionsFor(status).map((action) => (
@@ -645,6 +653,15 @@ export function CollectionDetailClient({
           onClose={() => setReminderOpen(false)}
         />
       )}
+
+      {announceOpen && (
+        <AnnounceUpdateDialog
+          collectionId={collection.id}
+          collectionName={collection.name}
+          communityGroups={exportGroups}
+          onClose={() => setAnnounceOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -659,19 +676,21 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 /**
- * Publish-time notification controls (M13.3).
+ * Publish-time notification controls.
  *
- * The host decides whether an in-app notification fires on publish. The
- * recipient preview comes from `app.count_collection_audience` — never a
- * fabricated category: `eligible` is the full audience, `with_obligation`
- * counts who already has an obligation record (used elsewhere as the
- * "already set up" cohort), `awaiting` is eligible-with-no-obligation (what
- * the "newly eligible" prompt also counts).
+ * Members are community records, not accounts. A notification reaches:
+ *   · in-app — members who have a Kolekto account (`eligible`);
+ *   · email — members whose record has a usable email address and who have
+ *     not opted out, once an owner or admin has confirmed the community's
+ *     communication notice (M13.3; consent is not required). Counts come from
+ *     app.preview_collection_announcement_recipients (`email`). Null until
+ *     that function is installed.
+ * Counts are shown before sending and say "queued", never "delivered".
  *
- * "Email" is not an option here on purpose: `email_sending_enabled` is off
- * in every environment and no mail is sent until the operator release gates
- * close (M13.2 decision record §11.2). The dialog is explicit about this so
- * a host does not expect email to go out.
+ * "Only members who have not paid" is deliberately NOT offered. Kolekto does
+ * not record payments yet (no contributions, cash or transfers are entered,
+ * and no obligation is ever marked paid), so such a list would include people
+ * who have already paid.
  */
 type RecipientPreview =
   | { kind: "idle" }
@@ -679,13 +698,94 @@ type RecipientPreview =
   | {
       kind: "ready";
       eligible: number;
-      unpaid: number;
       with_obligation: number;
       awaiting: number;
+      email: AnnouncementRecipientPreview | null;
     }
   | { kind: "error"; message: string };
 
-type NotifyMode = "all" | "unpaid" | "none";
+type NotifyMode = "all" | "none";
+
+/** Why "members who have not paid" is unavailable. One sentence, used by every dialog. */
+const UNPAID_UNAVAILABLE =
+  "Kolekto does not record payments yet, so it cannot tell who has paid. Sending to “members who have not paid” could reach people who already paid in cash or by transfer.";
+
+/** Who an announcement reaches, by channel, and why the rest are skipped. Counts only — never addresses. */
+function AnnouncementReach({ preview }: { preview: RecipientPreview }) {
+  if (preview.kind === "loading") return <p className="text-xs text-[var(--color-text-muted)]">Counting recipients…</p>;
+  if (preview.kind === "error") {
+    return (
+      <p className="text-xs text-[var(--color-danger)]" role="alert">
+        Could not load the recipient preview: {preview.message}
+      </p>
+    );
+  }
+  if (preview.kind !== "ready") return null;
+  const e = preview.email;
+  return (
+    <div className="flex flex-col gap-1 rounded-[var(--radius-sm)] bg-[var(--color-bg)] p-3 text-xs text-[var(--color-text-muted)]">
+      <p>
+        <strong className="font-semibold text-[var(--color-text)]">In-app:</strong> {preview.eligible}{" "}
+        {preview.eligible === 1 ? "member has" : "members have"} a Kolekto account.
+      </p>
+      {e === null ? (
+        <p>
+          <strong className="font-semibold text-[var(--color-text)]">Email:</strong> email to members is not available yet.
+          Members do not need an account to be reached by email once it is.
+        </p>
+      ) : (
+        <>
+          <p>
+            <strong className="font-semibold text-[var(--color-text)]">Email:</strong> {e.emailEligible} of {e.audienceTotal}{" "}
+            {e.audienceTotal === 1 ? "member" : "members"} can be emailed at the address on their member record (no account needed).
+          </p>
+          {!e.collectionReachable && (
+            <p>
+              No email will be sent: this collection’s page cannot be opened without an account (it is members-only, or the community
+              is not active). Make it public or unlisted to email members a link.
+            </p>
+          )}
+          {e.collectionReachable && e.startsLater && (
+            <p>No email will be sent while the collection has not started: its page opens on the start date.</p>
+          )}
+          {!e.communityNoticeAttested && e.skippedNoticeMissing > 0 && (
+            <p>
+              No community email will be sent yet: an owner or admin has not confirmed that members were told how their contact
+              details are used for community messages ({e.skippedNoticeMissing}{" "}
+              {e.skippedNoticeMissing === 1 ? "member" : "members"} waiting).
+            </p>
+          )}
+          <SkipLine count={e.skippedOptedOut} text="have opted out of these messages" />
+          <SkipLine count={e.skippedNoEmail} text="have no email address on their member record" />
+          <SkipLine count={e.skippedInvalidEmail} text="have an email address that is not valid" />
+          <SkipLine count={e.skippedUnverifiedAccount} text="have an account whose email is not confirmed" />
+          <p>Emails are queued when you confirm and sent only once email delivery is switched on.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SkipLine({ count, text }: { count: number; text: string }) {
+  if (count === 0) return null;
+  return (
+    <p>
+      Not emailed: {count} {count === 1 ? "member" : "members"} {text}.
+    </p>
+  );
+}
+
+function UnpaidUnavailableNote() {
+  return (
+    <div className="flex items-start gap-3 opacity-70">
+      <input type="radio" disabled className="mt-1" aria-label="Only members who have not paid (unavailable)" />
+      <span className="flex flex-col gap-0.5">
+        <span className="text-sm font-medium text-[var(--color-text)]">Only members who have not paid — not available</span>
+        <span className="text-xs text-[var(--color-text-muted)]">{UNPAID_UNAVAILABLE}</span>
+      </span>
+    </div>
+  );
+}
 
 function PublishNotifyControls({
   mode,
@@ -698,17 +798,11 @@ function PublishNotifyControls({
   preview: RecipientPreview;
   disabled: boolean;
 }) {
-  const eligible = preview.kind === "ready" ? preview.eligible : null;
-  const unpaid = preview.kind === "ready" ? preview.unpaid : null;
-
   return (
     <fieldset className="flex flex-col gap-3 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
       <legend className="px-1 text-sm font-medium text-[var(--color-text)]">
         Notify members on publish
       </legend>
-      <p className="text-xs text-[var(--color-text-muted)]">
-        An in-app notification appears in each recipient&apos;s notification bell. Email is not sent in this environment.
-      </p>
       <label className="flex items-start gap-3">
         <input
           type="radio"
@@ -720,38 +814,13 @@ function PublishNotifyControls({
           className="mt-1"
         />
         <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium text-[var(--color-text)]">Notify every eligible member</span>
+          <span className="text-sm font-medium text-[var(--color-text)]">Announce to all members of this collection</span>
           <span className="text-xs text-[var(--color-text-muted)]">
-            <PreviewCount preview={preview} count={eligible} suffix="eligible member" fallback="Every" />
-            {" will see this collection in their notification bell. Members without an account are not reached in-app."}
+            Members get the collection name, details, deadline and a link to pay. No account is needed to open it.
           </span>
         </span>
       </label>
-      <label className="flex items-start gap-3">
-        <input
-          type="radio"
-          name="notify-mode"
-          value="unpaid"
-          checked={mode === "unpaid"}
-          onChange={() => onChange("unpaid")}
-          disabled={disabled || (preview.kind === "ready" && preview.unpaid === 0)}
-          className="mt-1"
-        />
-        <span className="flex flex-col gap-0.5">
-          <span className="text-sm font-medium text-[var(--color-text)]">Only members who still owe payment</span>
-          <span className="text-xs text-[var(--color-text-muted)]">
-            <PreviewCount preview={preview} count={unpaid} suffix="member" fallback="Members" />
-            {" with an obligation that is unpaid, in instalments or overdue. Exempt, paid and cancelled are excluded; "}
-            {"members with no obligation yet are excluded too — the data does not say they owe this payment."}
-          </span>
-          {preview.kind === "ready" && preview.unpaid === 0 && (
-            <span className="text-xs text-[var(--color-text-faint)]">
-              No one is in this cohort yet. Obligations are not usually set up before publishing — this option is more
-              useful later, after obligations exist.
-            </span>
-          )}
-        </span>
-      </label>
+      <UnpaidUnavailableNote />
       <label className="flex items-start gap-3">
         <input
           type="radio"
@@ -769,40 +838,8 @@ function PublishNotifyControls({
           </span>
         </span>
       </label>
-      {preview.kind === "ready" && (
-        <p className="text-xs text-[var(--color-text-faint)]">
-          Audience: {preview.eligible} eligible — {preview.with_obligation} already have an obligation,{" "}
-          {preview.awaiting} are awaiting one.
-        </p>
-      )}
-      {preview.kind === "error" && (
-        <p className="text-xs text-[var(--color-danger)]" role="alert">
-          Could not load the recipient preview: {preview.message}
-        </p>
-      )}
+      {mode === "all" && <AnnouncementReach preview={preview} />}
     </fieldset>
-  );
-}
-
-function PreviewCount({
-  preview,
-  count,
-  suffix,
-  fallback,
-}: {
-  preview: RecipientPreview;
-  count: number | null;
-  suffix: string;
-  fallback: string;
-}) {
-  if (preview.kind === "loading") return <span>Counting recipients…</span>;
-  if (preview.kind === "error") return <span>Unknown number of</span>;
-  if (count === null) return <span>{fallback}</span>;
-  return (
-    <strong className="font-semibold text-[var(--color-text)]">
-      {count} {suffix}
-      {count === 1 ? "" : "s"}
-    </strong>
   );
 }
 
@@ -884,7 +921,7 @@ function SendReminderDialog({
       ? crypto.randomUUID()
       : `rk-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
   );
-  const [mode, setMode] = useState<"all" | "unpaid" | "none">("all");
+  const [mode, setMode] = useState<NotifyMode>("all");
   const [preview, setPreview] = useState<RecipientPreview>({ kind: "loading" });
   const [state, setState] = useState<
     | { kind: "idle" }
@@ -896,7 +933,7 @@ function SendReminderDialog({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const result = await previewPublishRecipientsAction(collectionId);
+      const result = await previewPublishRecipientsAction(collectionId, "reminder");
       if (cancelled) return;
       if ("error" in result) {
         setPreview({ kind: "error", message: result.error });
@@ -909,12 +946,7 @@ function SendReminderDialog({
     };
   }, [collectionId]);
 
-  // Target recipient count for the confirmation summary. For "none" there is
-  // no server-side recipient resolution — the submit button becomes "Close
-  // without notifying" and the UI never calls the server.
-  const targetCount =
-    preview.kind === "ready" ? (mode === "all" ? preview.eligible : mode === "unpaid" ? preview.unpaid : 0) : null;
-  const unpaidEmpty = preview.kind === "ready" && preview.unpaid === 0;
+  const queued = queuedCounts(preview);
   const isBusy = state.kind === "submitting";
   const alreadySent = state.kind === "sent";
 
@@ -937,7 +969,7 @@ function SendReminderDialog({
     }
     setState({
       kind: "sent",
-      recipients: targetCount ?? 0,
+      recipients: queued.inApp + queued.email,
       reused: !result.created,
     });
   }
@@ -949,7 +981,7 @@ function SendReminderDialog({
       open
       onClose={isBusy ? () => undefined : onClose}
       title={dialogTitle}
-      description="Send a notification to members who should see this collection in their notification bell. Email is not sent in this environment."
+      description="Remind this collection’s members about it. The reminder does not say anyone owes money — Kolekto cannot tell who has paid yet."
     >
       <div className="flex flex-col gap-4">
         {state.kind !== "sent" && (
@@ -966,36 +998,13 @@ function SendReminderDialog({
                 className="mt-1"
               />
               <span className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium text-[var(--color-text)]">All eligible members</span>
+                <span className="text-sm font-medium text-[var(--color-text)]">All members of this collection</span>
                 <span className="text-xs text-[var(--color-text-muted)]">
-                  <PreviewCount preview={preview} count={preview.kind === "ready" ? preview.eligible : null} suffix="eligible member" fallback="Every" />
-                  {" will see this reminder in their notification bell."}
+                  In-app for members with an account, and email for members who can be emailed.
                 </span>
               </span>
             </label>
-            <label className="flex items-start gap-3">
-              <input
-                type="radio"
-                name="reminder-mode"
-                value="unpaid"
-                checked={mode === "unpaid"}
-                onChange={() => setMode("unpaid")}
-                disabled={isBusy || unpaidEmpty}
-                className="mt-1"
-              />
-              <span className="flex flex-col gap-0.5">
-                <span className="text-sm font-medium text-[var(--color-text)]">Members who still owe payment</span>
-                <span className="text-xs text-[var(--color-text-muted)]">
-                  <PreviewCount preview={preview} count={preview.kind === "ready" ? preview.unpaid : null} suffix="member" fallback="Members" />
-                  {" with an obligation that is unpaid, in instalments or overdue. Exempt, paid and cancelled are excluded."}
-                </span>
-                {unpaidEmpty && (
-                  <span className="text-xs text-[var(--color-text-faint)]">
-                    No one is in this cohort right now — nobody has an outstanding obligation on this collection.
-                  </span>
-                )}
-              </span>
-            </label>
+            <UnpaidUnavailableNote />
             <label className="flex items-start gap-3">
               <input
                 type="radio"
@@ -1013,6 +1022,7 @@ function SendReminderDialog({
                 </span>
               </span>
             </label>
+            {mode === "all" && <AnnouncementReach preview={preview} />}
           </fieldset>
         )}
 
@@ -1024,7 +1034,8 @@ function SendReminderDialog({
                 : `Reminder queued for ${state.recipients} ${state.recipients === 1 ? "recipient" : "recipients"}.`}
             </p>
             <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-              Deliveries appear in the notification bell as the worker processes them. Email is disabled in this environment.
+              Queued is not delivered: in-app notifications appear as they are processed, and emails are sent only once email
+              delivery is switched on.
             </p>
           </div>
         )}
@@ -1048,14 +1059,258 @@ function SendReminderDialog({
               <Button
                 variant="primary"
                 loading={isBusy}
-                disabled={preview.kind === "loading" || (mode === "unpaid" && unpaidEmpty)}
+                disabled={preview.kind === "loading"}
                 onClick={onSubmit}
               >
-                {mode === "none"
-                  ? "Close without notifying"
-                  : mode === "unpaid"
-                    ? `Send to ${targetCount ?? 0} ${targetCount === 1 ? "member" : "members"}`
-                    : `Send to ${targetCount ?? "every"} ${targetCount === 1 ? "member" : "members"}`}
+                {mode === "none" ? "Close without notifying" : "Send reminder"}
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </Dialog>
+  );
+}
+
+/** In-app and email counts the organiser is about to queue. Email is 0 when not available or not reachable. */
+function queuedCounts(preview: RecipientPreview): { inApp: number; email: number } {
+  if (preview.kind !== "ready") return { inApp: 0, email: 0 };
+  const e = preview.email;
+  const email = e && e.collectionReachable && !e.startsLater ? e.emailEligible : 0;
+  return { inApp: preview.eligible, email };
+}
+
+const CHANGE_OPTIONS: { value: "name" | "description" | "deadline" | "start_date" | "story" | "other"; label: string }[] = [
+  { value: "deadline", label: "Payment deadline" },
+  { value: "description", label: "Description" },
+  { value: "name", label: "Collection name" },
+  { value: "start_date", label: "Start date" },
+  { value: "story", label: "Collection details or instructions" },
+  { value: "other", label: "Something else" },
+];
+
+/**
+ * AnnounceUpdateDialog — member announcements.
+ *
+ * The organiser tells members that a live collection changed. Nothing is sent
+ * when a collection is edited; this dialog is the only way, and the organiser
+ * chooses what to announce from a fixed list (no free text reaches members).
+ * The email shows the collection's current details and links to its page.
+ * Idempotent on a key minted when the dialog opens.
+ */
+type AnnounceAudience = "default" | "all_members" | "groups" | "selected_members";
+
+function AnnounceUpdateDialog({
+  collectionId,
+  collectionName,
+  communityGroups,
+  onClose,
+}: {
+  collectionId: string;
+  collectionName: string;
+  communityGroups: MemberGroup[];
+  onClose: () => void;
+}) {
+  const [idempotencyKey] = useState(() =>
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `ak-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+  );
+  const [changed, setChanged] = useState<string[]>([]);
+  const [message, setMessage] = useState<string>("");
+  const [audience, setAudience] = useState<AnnounceAudience>("default");
+  const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [preview, setPreview] = useState<RecipientPreview>({ kind: "loading" });
+  const [state, setState] = useState<
+    | { kind: "idle" }
+    | { kind: "submitting" }
+    | { kind: "sent"; recipients: number; reused: boolean }
+    | { kind: "error"; message: string }
+  >({ kind: "idle" });
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await previewPublishRecipientsAction(collectionId, "update");
+      if (cancelled) return;
+      if ("error" in result) setPreview({ kind: "error", message: result.error });
+      else setPreview({ kind: "ready", ...result });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [collectionId]);
+
+  const isBusy = state.kind === "submitting";
+  const unavailable = preview.kind === "ready" && preview.email === null;
+  const trimmedMessage = message.trim();
+  const messageOverLimit = trimmedMessage.length > 1000;
+  const needsGroups = audience === "groups" && groupIds.length === 0;
+  const canSubmit = changed.length > 0 && !messageOverLimit && !needsGroups;
+
+  function toggle(value: string): void {
+    setChanged((prev) => (prev.includes(value) ? prev.filter((v) => v !== value) : [...prev, value]));
+  }
+
+  function toggleGroup(id: string): void {
+    setGroupIds((prev) => (prev.includes(id) ? prev.filter((g) => g !== id) : [...prev, id]));
+  }
+
+  async function onSubmit(): Promise<void> {
+    if (isBusy || state.kind === "sent" || !canSubmit) return;
+    setState({ kind: "submitting" });
+    const result = await announceCollectionUpdateAction({
+      collectionId,
+      changedFields: changed,
+      idempotencyKey,
+      customMessage: trimmedMessage.length > 0 ? trimmedMessage : undefined,
+      targetAudience: audience === "default" ? undefined : audience,
+      targetGroupIds: audience === "groups" ? groupIds : [],
+    });
+    if ("error" in result && result.error) {
+      setState({ kind: "error", message: result.error });
+      return;
+    }
+    const q = queuedCounts(preview);
+    setState({ kind: "sent", recipients: q.inApp + q.email, reused: "created" in result && result.created === false });
+  }
+
+  const activeGroups = communityGroups.filter((g) => g.archived_at === null);
+
+  return (
+    <Dialog
+      open
+      onClose={isBusy ? () => undefined : onClose}
+      title={`Announce changes to ${collectionName}`}
+      description="Tell this collection’s members what changed. Editing a collection never notifies anyone on its own."
+    >
+      <div className="flex flex-col gap-4">
+        {state.kind !== "sent" && (
+          <>
+            <fieldset className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
+              <legend className="px-1 text-sm font-medium text-[var(--color-text)]">What changed?</legend>
+              {CHANGE_OPTIONS.map((option) => (
+                <label key={option.value} className="flex items-center gap-3 text-sm text-[var(--color-text)]">
+                  <input
+                    type="checkbox"
+                    checked={changed.includes(option.value)}
+                    onChange={() => toggle(option.value)}
+                    disabled={isBusy}
+                  />
+                  {option.label}
+                </label>
+              ))}
+            </fieldset>
+
+            <div className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
+              <label htmlFor="announce-message" className="text-sm font-medium text-[var(--color-text)]">
+                Message (optional)
+              </label>
+              <textarea
+                id="announce-message"
+                value={message}
+                onChange={(e) => setMessage(e.target.value)}
+                disabled={isBusy}
+                maxLength={1200}
+                rows={4}
+                placeholder="Add a short note for members. Email addresses are removed before sending."
+                className="w-full rounded-[var(--radius-sm)] border border-[var(--color-border)] bg-[var(--color-bg)] px-3 py-2 text-sm text-[var(--color-text)]"
+              />
+              <p className={`text-xs ${messageOverLimit ? "text-[var(--color-danger)]" : "text-[var(--color-text-muted)]"}`}>
+                {trimmedMessage.length}/1000 characters. The email will also carry a “View &amp; pay” button linking to this collection.
+              </p>
+            </div>
+
+            <fieldset className="flex flex-col gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-4">
+              <legend className="px-1 text-sm font-medium text-[var(--color-text)]">Who receives this</legend>
+              {(
+                [
+                  { value: "default", label: "This collection’s current audience" },
+                  { value: "all_members", label: "All members of the community" },
+                  { value: "groups", label: "Members in selected groups" },
+                  { value: "selected_members", label: "Only members who already have an obligation on this collection" },
+                ] as { value: AnnounceAudience; label: string }[]
+              ).map((option) => (
+                <label key={option.value} className="flex items-center gap-3 text-sm text-[var(--color-text)]">
+                  <input
+                    type="radio"
+                    name="announce-audience"
+                    checked={audience === option.value}
+                    onChange={() => setAudience(option.value)}
+                    disabled={isBusy}
+                  />
+                  {option.label}
+                </label>
+              ))}
+
+              {audience === "groups" && (
+                <div className="mt-2 flex flex-col gap-1 rounded-[var(--radius-sm)] border border-[var(--color-border)] p-3">
+                  <p className="text-xs font-medium text-[var(--color-text-muted)]">Groups</p>
+                  {activeGroups.length === 0 ? (
+                    <p className="text-xs text-[var(--color-text-muted)]">This community has no groups yet.</p>
+                  ) : (
+                    activeGroups.map((g) => (
+                      <label key={g.id} className="flex items-center gap-3 text-sm text-[var(--color-text)]">
+                        <input
+                          type="checkbox"
+                          checked={groupIds.includes(g.id)}
+                          onChange={() => toggleGroup(g.id)}
+                          disabled={isBusy}
+                        />
+                        {g.name}
+                      </label>
+                    ))
+                  )}
+                  {needsGroups && (
+                    <p className="text-xs text-[var(--color-danger)]">Choose at least one group.</p>
+                  )}
+                </div>
+              )}
+
+              <p className="text-xs text-[var(--color-text-muted)]">
+                “Members who have not paid” is not available. {UNPAID_UNAVAILABLE}
+              </p>
+              <AnnouncementReach preview={preview} />
+            </fieldset>
+          </>
+        )}
+
+        {state.kind === "sent" && (
+          <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+            <p className="text-sm font-medium text-[var(--color-text)]">
+              {state.reused
+                ? "This announcement was already sent."
+                : `Announcement queued for ${state.recipients} ${state.recipients === 1 ? "recipient" : "recipients"}.`}
+            </p>
+            <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+              Queued is not delivered: emails are sent only once email delivery is switched on.
+            </p>
+          </div>
+        )}
+
+        {state.kind === "error" && (
+          <p className="text-xs text-[var(--color-danger)]" role="alert">
+            {state.message}
+          </p>
+        )}
+
+        <div className="flex flex-wrap justify-end gap-2">
+          {state.kind === "sent" ? (
+            <Button variant="primary" onClick={onClose}>
+              Done
+            </Button>
+          ) : (
+            <>
+              <Button variant="ghost" onClick={onClose} disabled={isBusy}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                loading={isBusy}
+                disabled={preview.kind === "loading" || !canSubmit || unavailable}
+                onClick={onSubmit}
+              >
+                {unavailable ? "Not available yet" : "Send announcement"}
               </Button>
             </>
           )}

@@ -10,6 +10,7 @@ import {
   MAX_EVENT_AGE_MS,
   narrowRequester,
   parseAuditMessage,
+  parseChangedFields,
   recipientPlan,
   redactEmails,
   WATCHED_ACTIONS,
@@ -44,10 +45,11 @@ function msg(patch: Record<string, unknown> = {}): AuditMessage {
 }
 
 describe("the watched actions", () => {
-  it("are exactly the ten approved ones (M13.3: + remind, remind_unpaid, publish_remind_unpaid)", () => {
+  it("are exactly the eleven approved ones (M13.3: + remind, remind_unpaid, publish_remind_unpaid, announce_update)", () => {
     assert.deepEqual(
       [...WATCHED_ACTIONS].sort(),
       [
+        "collection.announce_update",
         "collection.publish",
         "collection.publish_remind_unpaid",
         "collection.remind",
@@ -60,6 +62,10 @@ describe("the watched actions", () => {
         "officer_term.end",
       ].sort(),
     );
+  });
+
+  it("collection.announce_update is watched (trigger change in 20261109100100)", () => {
+    assert.equal(isWatchedAction("collection.announce_update"), true);
   });
 
   it("do not include restore, archive or update, which must never notify", () => {
@@ -80,6 +86,8 @@ describe("the watched actions", () => {
     // Without an audit_log_id, remind falls back to the object key (defensive — the
     // processor always has one in practice).
     assert.equal(eventKey("collection.remind", OBJECT), `collection.remind:${OBJECT}`);
+    // An update announcement fires once per organiser click, like a reminder.
+    assert.equal(eventKey("collection.announce_update", OBJECT, AUDIT), `collection.announce_update:${AUDIT}`);
   });
 });
 
@@ -178,14 +186,12 @@ describe("isImportedMember", () => {
 describe("recipientPlan", () => {
   it("tells the right in-app audience for each action", () => {
     assert.deepEqual(recipientPlan("collection.publish"), { kind: "collection_audience" });
-    // M13.3: a targeted-publish narrows the audience to members with an
-    // outstanding obligation on this collection. The processor filters here;
-    // the trigger is dumb about which plan applies.
-    assert.deepEqual(recipientPlan("collection.publish_remind_unpaid"), { kind: "collection_audience_unpaid" });
-    // M13.3 post-publish reminders: reuse the publish-time plans so one audience
-    // resolver covers both the publish and the later reminder.
+    // Payment-status targeting is disabled: no contributions are recorded and
+    // no path sets an obligation to paid, so "unpaid" cannot be established.
+    assert.deepEqual(recipientPlan("collection.publish_remind_unpaid"), { kind: "payment_status_unavailable" });
     assert.deepEqual(recipientPlan("collection.remind"), { kind: "collection_audience" });
-    assert.deepEqual(recipientPlan("collection.remind_unpaid"), { kind: "collection_audience_unpaid" });
+    assert.deepEqual(recipientPlan("collection.remind_unpaid"), { kind: "payment_status_unavailable" });
+    assert.deepEqual(recipientPlan("collection.announce_update"), { kind: "collection_audience" });
     assert.deepEqual(recipientPlan("member.create"), { kind: "member_self" });
     assert.deepEqual(recipientPlan("member.approve_join"), { kind: "member_self" });
     assert.deepEqual(recipientPlan("officer_invitation.accept"), { kind: "officer_term_holder" });
@@ -241,6 +247,7 @@ describe("buildPayload: names, codes and slugs only", () => {
     "collection.publish_remind_unpaid": ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"],
     "collection.remind": ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"],
     "collection.remind_unpaid": ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"],
+    "collection.announce_update": ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"],
     "member.create": ["actor_name", "community_id", "community_name", "community_slug", "member_code", "member_name"],
     "member.approve_join": ["actor_name", "community_id", "community_name", "community_slug", "member_code", "member_name"],
     "member.join_via_invite": ["actor_name", "community_id", "community_name", "community_slug", "member_name"],
@@ -285,5 +292,55 @@ describe("buildPayload: names, codes and slugs only", () => {
     const p = buildPayload(msg({ action: "officer_term.end" }), {});
     assert.equal(p["officer_role"], null);
     assert.equal(p["community_id"], COMMUNITY);
+  });
+});
+
+describe("member announcements: collection payload facts", () => {
+  const base = { communitySlug: "kwasu", collectionName: "Dues", collectionSlug: "dues", communityName: "KWASU Alumni" };
+  const ctx = {
+    ...base,
+    announcementContext: true,
+    collectionDescription: "Pay by Friday. Ask ada@example.com",
+    amountModel: "fixed",
+    fixedAmountKobo: "500000",
+    deadlineAt: "2026-12-31T22:59:00.000Z",
+    changedFields: ["deadline", "description"],
+  };
+
+  it("adds nothing unless the announcement context was read", () => {
+    const p = buildPayload(msg({ action: "collection.publish" }), { ...ctx, announcementContext: false });
+    assert.deepEqual(Object.keys(p).sort(), ["actor_name", "collection_name", "collection_slug", "community_id", "community_slug"]);
+  });
+
+  it("publish: community name, redacted description, digit-string kobo, ISO deadline; no changed_fields", () => {
+    const p = buildPayload(msg({ action: "collection.publish" }), ctx);
+    assert.equal(p["community_name"], "KWASU Alumni");
+    assert.equal(p["collection_description"], "Pay by Friday. Ask [email removed]");
+    assert.equal(p["fixed_amount_kobo"], "500000");
+    assert.equal(p["deadline_at"], "2026-12-31T22:59:00.000Z");
+    assert.ok(!("changed_fields" in p));
+  });
+
+  it("announce_update: changed_fields as an allow-listed comma list", () => {
+    const p = buildPayload(msg({ action: "collection.announce_update" }), ctx);
+    assert.equal(p["changed_fields"], "description,deadline");
+  });
+
+  it("rejects malformed money and dates rather than passing them through", () => {
+    for (const bad of ["0", "-5", "12.5", "1e9", "abc", "1234567890123456"]) {
+      assert.equal(buildPayload(msg({ action: "collection.publish" }), { ...ctx, fixedAmountKobo: bad })["fixed_amount_kobo"], null, bad);
+    }
+    assert.equal(buildPayload(msg({ action: "collection.publish" }), { ...ctx, deadlineAt: "next friday" })["deadline_at"], null);
+  });
+
+  it("clamps the description to 500 characters", () => {
+    const p = buildPayload(msg({ action: "collection.publish" }), { ...ctx, collectionDescription: "x".repeat(2000) });
+    assert.equal(String(p["collection_description"]).length, 500);
+  });
+
+  it("parseChangedFields keeps only allow-listed names, deduplicated, in a fixed order", () => {
+    assert.deepEqual(parseChangedFields({ changed_fields: ["deadline", "name", "deadline", "drop table", "a@b.co", 5] }), ["name", "deadline"]);
+    assert.deepEqual(parseChangedFields({ changed_fields: "deadline" }), []);
+    assert.deepEqual(parseChangedFields(null), []);
   });
 });

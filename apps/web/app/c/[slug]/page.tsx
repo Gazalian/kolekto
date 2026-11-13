@@ -1,12 +1,19 @@
 import type { Community } from "@kolekto/db";
 import { Badge, Card, CardBody } from "@kolekto/ui";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { createClient } from "../../../lib/supabase/server.ts";
 
 export default async function CommunityOverviewPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const supabase = await createClient();
-  const { data: community } = await supabase.from("communities").select("*").eq("slug", slug).single();
+  // RLS hides a community from a caller with no role in it, which is
+  // indistinguishable from "it does not exist" (SEC-18). `.single()` would
+  // throw there, as it does when the session has just evaporated — which
+  // crashed the server under slow local e2e runs. `maybeSingle` + `notFound`
+  // produces a 404 instead.
+  const { data: community } = await supabase.from("communities").select("*").eq("slug", slug).maybeSingle();
+  if (!community) notFound();
   const c = community as Community;
 
   const [{ count: memberCount }, { count: officerCount }] = await Promise.all([

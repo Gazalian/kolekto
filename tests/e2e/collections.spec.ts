@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { expectPaymentReview } from "./helpers/payments.ts";
 import { fillTier, openWizard, walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -80,7 +81,9 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
       fees: async (p) => {
         // Part 3: the policy is stated without asserting a figure Kolekto has
         // not committed to. The computed split lives behind the estimate.
-        await expect(p.getByText("₦5,000 − applicable fees")).toBeVisible();
+        // Contributors pay the fees unless the organiser says otherwise.
+        await expect(p.getByRole("radio", { name: "Contributor pays" })).toBeChecked();
+        await expect(p.getByText("₦5,000 + applicable fees")).toBeVisible();
         await expect(p.getByText(/nothing has been charged/i)).toBeVisible();
       },
       audience: async (p) => {
@@ -149,18 +152,23 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await expect(anonymousPage.getByLabel("House number")).toBeVisible();
 
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
-  // Server-side validation: a contributor with no way to be reached is refused.
-  await expect(anonymousPage.getByText(/email address or a phone number/i)).toBeVisible();
+  // A contributor with no way to be reached is refused before anything is
+  // submitted: the browser's own `required` validation focuses the first
+  // empty contact field rather than advancing to the review step. The
+  // server-side `CONTACT_REQUIRED` message in actions.ts remains as
+  // defense-in-depth for anyone bypassing the HTML form.
+  await expect(anonymousPage.getByLabel("Full name")).toBeFocused();
 
   await anonymousPage.getByLabel("Full name").fill("Ada Obi");
   await anonymousPage.getByLabel("Email address").fill("ada@example.test");
+  await anonymousPage.getByLabel("Phone number").fill("+2348011119999");
   await anonymousPage.getByLabel("House number").fill("14B Sobi Close");
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
 
-  await expect(anonymousPage.getByText(/Your details are checked, Ada Obi/)).toBeVisible();
   await expect(anonymousPage.getByText("₦5,000").first()).toBeVisible();
-  // The honest confirmation: no receipt, no "payment successful".
-  await expect(anonymousPage.getByText(/Nothing has been charged/)).toBeVisible();
+  // The honest confirmation: the frozen figures for ₦5,000, and a Pay button —
+  // no receipt, no "payment successful".
+  await expectPaymentReview(anonymousPage, { contributorName: "Ada Obi", contribution: "₦5,000" });
 
   await anonymous.close();
 });
@@ -192,8 +200,8 @@ test("a tiered collection prices a contribution from the option the contributor 
         // One example per package, because absorbing fees on ₦5,000 and on
         // ₦20,000 are two different decisions and one averaged line would
         // hide that.
-        await expect(p.getByText("₦5,000 − applicable fees")).toBeVisible();
-        await expect(p.getByText("₦20,000 − applicable fees")).toBeVisible();
+        await expect(p.getByText("₦5,000 + applicable fees")).toBeVisible();
+        await expect(p.getByText("₦20,000 + applicable fees")).toBeVisible();
         await expect(p.getByText("Standard")).toBeVisible();
         await expect(p.getByText("VIP")).toBeVisible();
       },
@@ -214,6 +222,7 @@ test("a tiered collection prices a contribution from the option the contributor 
 
   await anonymousPage.getByRole("radio").nth(1).check(); // VIP
   await anonymousPage.getByLabel("Full name").fill("Ada Obi");
+  await anonymousPage.getByLabel("Email address").fill("contributor@example.test");
   await anonymousPage.getByLabel("Phone number").fill("+2348011112222");
   await anonymousPage.getByRole("button", { name: "Continue" }).click();
 

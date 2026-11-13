@@ -88,7 +88,7 @@ test("mobile: items wizard, 390px", async ({ page }) => {
   await walkWizard(page, {
     flowKey: "items",
     intent: /^Items/,
-    stopBefore: "orderRules",
+    stopBefore: "fees",
     fill: {
       basics: async (p) => {
         await p.getByLabel("What is this catalogue called?").fill("Mobile Merch 2026");
@@ -110,7 +110,7 @@ test("mobile: ticketing wizard, 390px", async ({ page }) => {
   await walkWizard(page, {
     flowKey: "ticketing",
     intent: /^Tickets/,
-    stopBefore: "purchaseRules",
+    stopBefore: "fees",
     fill: {
       event: async (p) => {
         await noOverflow(p, "ticketing event step");

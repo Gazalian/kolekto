@@ -1,0 +1,40 @@
+{"at":"2026-11-06T10:41:36.469Z","label":"bundle","value":{"sha256":"c441079bf4985cdca20ed75e4f57f8c66582d56c9915348b0301f853ed2d0401"}}
+{"at":"2026-11-06T10:41:44.323Z","label":"rt1-startup remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:41:44.348Z","label":"RT-1","value":{"sessions":1,"exit":{"code":0,"signal":null}}}
+{"at":"2026-11-06T10:41:54.365Z","label":"EV-1 sent","value":{"deliveryId":"01a1b073-410e-70d3-8bb4-40b1df2e747c","messageId":"f99418aa8a4c45c7467533f36459550e@kolekto.invalid","mailpitId":"1rSAljVPoUjyRx7mRni3fh","attempt":1}}
+{"at":"2026-11-06T10:42:10.871Z","label":"EV-1 paused again","value":{"deliveryId":"01a1b073-8a04-765f-8e3b-b84ce03c2c1a","status":"pending"}}
+{"at":"2026-11-06T10:42:12.718Z","label":"ev1-member-create remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:42:14.246Z","label":"EV-2 sent","value":{"deliveryId":"01a1b073-ae41-7493-abc2-e59bbd0044ee","messageId":"5cffb5ef11abd9703266126461593c44@kolekto.invalid","mailpitId":"4Q2yUVgHiSFZytWxWPL5dx"}}
+{"at":"2026-11-06T10:42:22.294Z","label":"ev2-officer-term-end remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:42:23.570Z","label":"EV-3 sent","value":{"deliveryId":"01a1b073-d3ec-72c7-846d-e99e7fa9717b","messageId":"8691a415076fefd00c8776959c71d089@kolekto.invalid","mailpitId":"5z5eRv3DepecaTxkq2E7XR"}}
+{"at":"2026-11-06T10:42:31.773Z","label":"ev3-officer-invitation-accept remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:42:32.592Z","label":"rt4-skips remote addresses","value":[]}
+{"at":"2026-11-06T10:42:32.603Z","label":"RT-4","value":{"invalid_message":"375","unwatched_action":"376","event_too_old":"377","member_unavailable":"378"}}
+{"at":"2026-11-06T10:42:36.890Z","label":"rt3-in-app remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:42:37.576Z","label":"PS-RESTORE","value":{"rows":1,"column":false,"fn":false}}
+{"at":"2026-11-06T10:42:44.737Z","label":"rc-lock-release remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:42:47.557Z","label":"rt6-drain remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:42:48.689Z","label":"rc1-killed remote addresses","value":[]}
+{"at":"2026-11-06T10:43:22.355Z","label":"rc1-restarted remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:44:01.523Z","label":"rc2-ack-failure remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:47:05.282Z","label":"RC-5","value":{"poison":"388","sampledReadCounts":[1,2,3,4,5],"archived":{"read_ct":6,"archived":true}}}
+{"at":"2026-11-06T10:47:07.317Z","label":"rc5-poison remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:47:15.591Z","label":"SM-RETRY","value":{"deliveryId":"01a1b078-2f0c-72fa-8700-67ea66b5ba56","retryInS":276,"attempts":2,"mailpitId":"3YrZb9NBaS8kWtsxV2uXHt","proxy":[{"verbs":["EHLO","MAIL","RCPT"],"outcome":"rejected-451"},{"verbs":["EHLO","MAIL","RCPT","DATA","QUIT"],"outcome":"client-closed"}]}}
+{"at":"2026-11-06T10:47:17.512Z","label":"sm-retry remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:47:23.091Z","label":"SM-EXHAUST","value":{"deliveryId":"01a1b078-54d9-7a3b-bd04-ef40bb0b6744","firstRetryInS":295,"secondRetryInS":1512,"final":"retries_exhausted"}}
+{"at":"2026-11-06T10:47:24.943Z","label":"sm-exhaust remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:47:28.840Z","label":"SM-PERM","value":{"deliveryId":"01a1b078-7430-71f0-bd53-758606af99c1","proxy":[{"verbs":["EHLO","MAIL","RCPT"],"outcome":"rejected-550"}]}}
+{"at":"2026-11-06T10:47:30.838Z","label":"sm-perm remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:47:36.447Z","label":"SM-AMBIG","value":{"deliveryId":"01a1b078-88c8-764c-a4b2-d92bdb2d417d","mailpitId":"5lQC7PjupSo0OgmXIVeCGQ","proxy":[{"verbs":["EHLO","MAIL","RCPT","DATA"],"outcome":"delivered-then-dropped"}]}}
+{"at":"2026-11-06T10:47:38.312Z","label":"sm-ambiguous remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:47:50.111Z","label":"SM-TIMEOUT","value":{"deliveryId":"01a1b078-a84a-7447-b6bc-f488f06f4f62","proxy":[{"verbs":["EHLO","MAIL","RCPT","DATA"],"outcome":"held-after-data"}]}}
+{"at":"2026-11-06T10:47:52.131Z","label":"sm-timeout remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:47:53.016Z","label":"rc-send-killed remote addresses","value":[]}
+{"at":"2026-11-06T10:47:53.836Z","label":"RC-SEND","value":{"deliveryId":"01a1b078-daf3-7320-91a5-3ba55b9ded3d","final":"outcome_unknown"}}
+{"at":"2026-11-06T10:47:55.686Z","label":"rc-send-recovered remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:48:06.025Z","label":"CFG","value":{"unset":{"code":1,"signal":null},"malformed":{"code":1,"signal":null},"closed":{"code":1,"signal":null},"wrong":{"code":1,"signal":null}}}
+{"at":"2026-11-06T10:48:08.918Z","label":"CFG-REVOKED","value":{"exit":{"code":1,"signal":null}}}
+{"at":"2026-11-06T10:48:16.453Z","label":"cfg-sender-refused remote addresses","value":["127.0.0.1"]}
+{"at":"2026-11-06T10:48:16.712Z","label":"LP-3 reachable relations, all","value":["extensions.pg_all_foreign_keys","extensions.pg_stat_statements","extensions.pg_stat_statements_info","extensions.tap_funky","pgmq.a_notification_events","pgmq.q_notification_events","public.collections","public.communities","public.members","public.notification_deliveries","public.notification_events","public.obligations","public.officer_terms","public.role_permissions"]}
+{"at":"2026-11-06T10:48:16.716Z","label":"LP-3 denied","value":[{"statement":"select app.set_email_sending_enabled(true)","code":"42501"},{"statement":"select pgmq.send('notification_events', '{}'::jsonb)","code":"42501"},{"statement":"select pgmq.purge_queue('notification_events')","code":"42501"},{"statement":"select pgmq.drop_queue('notification_events')","code":"42501"},{"statement":"select * from pgmq.a_notification_events limit 1","code":"42501"},{"statement":"select * from pgmq.meta limit 1","code":"42501"},{"statement":"insert into pgmq.q_notification_events (message) values ('{}')","code":"42501"},{"statement":"delete from pgmq.a_notification_events","code":"42501"},{"statement":"select * from public.audit_logs limit 1","code":"42501"},{"statement":"select * from public.users limit 1","code":"42501"},{"statement":"select * from auth.users limit 1","code":"42501"},{"statement":"select * from public.notification_send_attempts limit 1","code":"42501"},{"statement":"select * from public.notification_sender_state limit 1","code":"42501"},{"statement":"select email from public.members limit 1","code":"42501"},{"statement":"select phone_e164 from public.members limit 1","code":"42501"},{"statement":"select * from public.members limit 1","code":"42501"},{"statement":"update public.notification_deliveries set status = 'dead'","code":"42501"},{"statement":"delete from public.notification_deliveries","code":"42501"},{"statement":"update public.notification_events set payload = '{}'::jsonb","code":"42501"},{"statement":"delete from public.notification_events","code":"42501"},{"statement":"update public.members set full_name = 'x'","code":"42501"},{"statement":"create table public.itest_should_not_exist (id int)","code":"42501"},{"statement":"create table app.itest_should_not_exist (id int)","code":"42501"},{"statement":"set role postgres","code":"42501"},{"statement":"set role service_role","code":"42501"},{"statement":"alter role kolekto_itest_worker bypassrls","code":"42501"},{"statement":"select app.create_member('00000000-0000-0000-0000-000000000000'::uuid, 'x', '+2348000000000', null)","code":"42501"}]}
+{"at":"2026-11-06T10:48:16.764Z","label":"F-2","value":{"summary":{"name":"PostgresError","code":"23514","severity":"ERROR","constraint":"notification_deliveries_email_has_valid_address","table":"notification_deliveries"}}}

@@ -32,7 +32,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(39);
+select plan(40);
 
 create function pg_temp.try_as(p_role text, p_sql text) returns text language plpgsql as $$
 begin
@@ -107,6 +107,10 @@ select is((select processing_status
 select is((select processing_attempts
   from public.email_delivery_events where provider_event_id = 'SNS-NEW-001'),
   0, 'B: new row has processing_attempts = 0');
+
+select is((select jsonb_typeof(payload)
+  from public.email_delivery_events where provider_event_id = 'SNS-NEW-001'),
+  'object', 'B: payload stored as a JSON object, not a double-encoded string');
 
 
 -- ── C. record_ses_notification on a duplicate ──────────────────────────────

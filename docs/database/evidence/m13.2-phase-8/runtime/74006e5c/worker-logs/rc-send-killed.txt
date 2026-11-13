@@ -1,0 +1,5 @@
+Kolekto worker: connected. Polling notification_events queue.
+{"msg":"worker_database_timeouts","lock_timeout":"5s","statement_timeout":"15s","idle_in_transaction_session_timeout":"30s"}
+Email sender configured: provider=mailpit, idempotency=none. Sending stays off until the email_sending_enabled pause switch is on.
+{"msg":"notification_event_processed","msg_id":"394","read_ct":1,"action":"member.create","deliveries":0,"email":{"kind":"pending"}}
+{"msg":"notification_event_health","queue_depth":0,"queue_max_read_ct":0,"queue_oldest_age_s":0,"queue_parked":0,"processed_total":1,"skipped_total":0,"failed_total":0,"dead_lettered_total":0,"poll_failures_total":0,"ack_failures_total":0,"ack_recovered_total":0,"archive_failures_total":0,"parked_total":0,"park_failures_total":0}

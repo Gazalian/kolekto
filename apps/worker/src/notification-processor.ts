@@ -27,17 +27,23 @@
  *
  * A message that cannot or should not be processed is SKIPPED (acknowledged, reported
  * through the return value), never thrown: a thrown error leaves the message in the
- * queue to reappear every 30 seconds, and there is no retry cap until P6.
+ * queue to reappear every 30 seconds. The event loop (index.ts) archives messages
+ * past a read_ct threshold so a poison message is not retried forever (P6).
  */
 
 import type postgres from "postgres";
 
 import {
+  COLLECTION_EMAIL_SEND_CLASS,
+  collectionEmailCategory,
+  collectionMemberDecision,
   emailDedupeKey,
   isEmailEvaluationEvent,
+  type CollectionEmailCategory,
   type EligibilitySkipReason,
   type EmailOutcome,
 } from "./notification-eligibility.ts";
+import { eventPolicy, type CommunicationCategory } from "./communication-policy.ts";
 import {
   admission,
   buildPayload,
@@ -45,8 +51,13 @@ import {
   isImportedMember,
   isUnavailableMember,
   narrowRequester,
+  parseAnnouncementBody,
+  parseAnnounceGroupIds,
+  parseAnnounceTarget,
   parseAuditMessage,
+  parseChangedFields,
   recipientPlan,
+  type AnnounceTarget,
   type AuditMessage,
   type PayloadFacts,
   type SkipReason,
@@ -157,13 +168,112 @@ export async function processNotificationMessage(
     // are untouched by whatever happens here: an email skip never deletes or
     // prevents a valid in-app delivery. No provider is contacted — dispatch,
     // leases, retries and rate limits belong to the later sender milestone.
-    const email = await evaluateEmail(tx, msg, facts.recipientHints, event.id);
+    //
+    // Member announcements: collection events evaluate email per audience
+    // MEMBER from the member record (no account needed). Only one of the two
+    // evaluations can apply to any action.
+    const category = collectionEmailCategory(msg.action);
+    const email = category
+      ? await evaluateCollectionEmail(tx, msg, event.id, category)
+      : await evaluateEmail(tx, msg, facts.recipientHints, event.id);
+
+    // Publisher notice: when a collection is PUBLISHED, email the officer who
+    // published it (the actor) at their confirmed account email, as an
+    // essential confirmation. Publish only — not reminders or change
+    // announcements. Skipped silently when the actor-email function is not
+    // installed, when there is no officer actor, or when the same address is
+    // already queued as an audience member (no duplicate to one inbox).
+    if (msg.action === "collection.publish") {
+      await notifyPublisher(tx, msg, event.id);
+    }
 
     return { outcome: "processed", deliveries: recipients.length, email };
   });
 }
 
+// ── Publisher notice (collection.publish) ────────────────────────────────────
+
+/**
+ * Create one email delivery to the officer who published the collection, at
+ * their confirmed account email. Essential (transactional): it carries no
+ * communication_category, so the send-time recheck treats it as an
+ * account-addressed essential notice rather than member communication. Never
+ * creates a second delivery for an address already queued for this event, and
+ * never throws — a publisher-notice failure must not fail the whole message.
+ */
+async function notifyPublisher(sql: Db, msg: AuditMessage, eventId: string): Promise<void> {
+  if (msg.actor_type !== "officer" || !msg.actor_user_id) return;
+
+  // Feature-detect the helper so a worker on an older database (or without the
+  // grant) keeps processing the rest of the message.
+  const [probe] = await sql<{ available: boolean }[]>`
+    select coalesce(has_function_privilege(
+      to_regprocedure('app.evaluate_actor_email(uuid)'), 'execute'), false) as available
+  `;
+  if (probe?.available !== true) return;
+
+  const [actor] = await sql<{ address: string | null; assurance: string | null; skip_reason: string | null }[]>`
+    select address, assurance, skip_reason from app.evaluate_actor_email(${msg.actor_user_id}::uuid)
+  `;
+  if (!actor || actor.address === null || actor.assurance === null) return;
+
+  // Do not email the same address twice for one event (the publisher may also
+  // be an audience member). Compared case-insensitively, against rows already
+  // written in this transaction.
+  const [dup] = await sql<{ exists: boolean }[]>`
+    select exists (
+      select 1 from public.notification_deliveries
+      where notification_event_id = ${eventId}::uuid
+        and channel = 'email'
+        and recipient_address is not null
+        and lower(recipient_address) = lower(${actor.address})
+    ) as exists
+  `;
+  if (dup?.exists === true) return;
+
+  await sql`
+    insert into public.notification_deliveries (
+      notification_event_id, community_id,
+      recipient_member_id, recipient_user_id,
+      recipient_address, recipient_address_assurance,
+      channel, status, send_class
+    ) values (
+      ${eventId}::uuid,
+      ${msg.community_id}::uuid,
+      null,
+      ${msg.actor_user_id}::uuid,
+      ${actor.address},
+      ${actor.assurance},
+      'email',
+      'pending',
+      'transactional'
+    )
+    on conflict do nothing
+  `;
+}
+
 // ── Email evaluation (P4) ────────────────────────────────────────────────────
+
+/**
+ * M13.3 R3: the communication category to store on new email deliveries, or
+ * null when the database has no `notification_deliveries.communication_category`
+ * column yet (the M13.3 policy migration is not applied). Existence is read
+ * from the catalogue, which every role may read; the worker role's table-level
+ * INSERT covers the new column, so no new grant is needed.
+ */
+async function deliveryCategoryFor(sql: Db, action: string): Promise<CommunicationCategory | null> {
+  const category = eventPolicy(action)?.category ?? null;
+  if (category === null) return null;
+  const [row] = await sql<{ supported: boolean }[]>`
+    select exists (
+      select 1 from pg_catalog.pg_attribute
+      where attrelid = 'public.notification_deliveries'::regclass
+        and attname = 'communication_category'
+        and not attisdropped
+    ) as supported
+  `;
+  return row?.supported === true ? category : null;
+}
 
 interface EligibilityRow {
   eligible: boolean;
@@ -205,10 +315,36 @@ async function evaluateEmail(
   const memberId = isMembership ? (hints.memberId ?? null) : null;
   const userId = assertedUserId;
 
+  const category = await deliveryCategoryFor(sql, msg.action);
+
   if (found?.eligible === true && found.address !== null && found.assurance !== null) {
     // The dedupe key is set on eligible rows only: a skipped evaluation must
     // never block a later eligible one for the same member.
     const dedupe = emailDedupeKey(msg.action, hints.memberId ?? msg.object_id);
+    if (category !== null) {
+      await sql`
+        insert into public.notification_deliveries (
+          notification_event_id, community_id,
+          recipient_member_id, recipient_user_id,
+          recipient_address, recipient_address_assurance,
+          channel, status, dedupe_key, send_class, communication_category
+        ) values (
+          ${eventId}::uuid,
+          ${msg.community_id}::uuid,
+          ${memberId}::uuid,
+          ${userId}::uuid,
+          ${found.address},
+          ${found.assurance},
+          'email',
+          'pending',
+          ${dedupe},
+          'transactional',
+          ${category}
+        )
+        on conflict do nothing
+      `;
+      return { kind: "pending" };
+    }
     await sql`
       insert into public.notification_deliveries (
         notification_event_id, community_id,
@@ -236,6 +372,27 @@ async function evaluateEmail(
     return { kind: "pending" };
   }
 
+  if (category !== null) {
+    await sql`
+      insert into public.notification_deliveries (
+        notification_event_id, community_id,
+        recipient_member_id, recipient_user_id,
+        channel, status, error_code, send_class, communication_category
+      ) values (
+        ${eventId}::uuid,
+        ${msg.community_id}::uuid,
+        ${memberId}::uuid,
+        ${userId}::uuid,
+        'email',
+        'skipped',
+        ${reason},
+        'transactional',
+        ${category}
+      )
+      on conflict do nothing
+    `;
+    return { kind: "skipped", reason };
+  }
   await sql`
     insert into public.notification_deliveries (
       notification_event_id, community_id,
@@ -254,6 +411,227 @@ async function evaluateEmail(
     on conflict do nothing
   `;
   return { kind: "skipped", reason };
+}
+
+// ── Collection email to members (member announcements) ───────────────────────
+
+interface CollectionRecipientRow {
+  member_id: string;
+  user_id: string | null;
+  eligible: boolean;
+  address: string | null;
+  assurance: string | null;
+  skip_reason: string | null;
+}
+
+/**
+ * Whether the member-announcement functions are installed AND executable by
+ * this connection. Checked rather than assumed so a worker deployed before
+ * the proposal is applied (or before the worker role is granted EXECUTE)
+ * keeps processing in-app deliveries instead of failing the transaction.
+ */
+async function announcementSupport(
+  sql: Db,
+): Promise<{ context: boolean; eligibility: boolean; notice: boolean; targeted: boolean }> {
+  const [row] = await sql<{ context: boolean; eligibility: boolean; notice: boolean; targeted: boolean }[]>`
+    select
+      coalesce(has_function_privilege(
+        to_regprocedure('app.collection_announcement_context(uuid)'), 'execute'), false) as context,
+      coalesce(has_function_privilege(
+        to_regprocedure('app.evaluate_collection_email_recipients(uuid, text)'), 'execute'), false) as eligibility,
+      coalesce(has_function_privilege(
+        to_regprocedure('app.community_communication_notice_attested(uuid)'), 'execute'), false) as notice,
+      coalesce(has_function_privilege(
+        to_regprocedure('app.evaluate_collection_email_recipients_targeted(uuid, text, text, uuid[])'), 'execute'), false) as targeted
+  `;
+  return {
+    context: row?.context === true,
+    eligibility: row?.eligibility === true,
+    notice: row?.notice === true,
+    targeted: row?.targeted === true,
+  };
+}
+
+/**
+ * Whether an authorised organiser has completed the community communication
+ * notice attestation (R0 decision 3). The attestation store is R2: until
+ * app.community_communication_notice_attested(uuid) exists and is executable,
+ * the answer is the restrictive one (false), so no community operational email
+ * becomes pending.
+ */
+async function communityNoticeAttested(sql: Db, communityId: string, available: boolean): Promise<boolean> {
+  if (!available) return false;
+  const [row] = await sql<{ attested: boolean | null }[]>`
+    select app.community_communication_notice_attested(${communityId}::uuid) as attested
+  `;
+  return row?.attested === true;
+}
+
+/**
+ * Write one email delivery per audience member: `pending` with the address
+ * the database chose, or `skipped` with a stable reason and no address.
+ * The database function supplies the facts (reachability, availability,
+ * stored opt-out, address); the central communication policy decides what
+ * they require (collectionMemberDecision). Replays are idempotent on the
+ * per-event recipient index (one row per event × member × channel), so a
+ * retried message never creates a second delivery for the same member.
+ */
+async function evaluateCollectionEmail(
+  sql: Db,
+  msg: AuditMessage,
+  eventId: string,
+  category: CollectionEmailCategory,
+): Promise<EmailOutcome> {
+  const support = await announcementSupport(sql);
+  if (!support.eligibility) return { kind: "collection_unavailable" };
+
+  // Member announcements v2: when the audit payload carries a per-send target,
+  // use the targeted evaluator (same decision logic, members filtered first).
+  // The targeted function is feature-detected (support.targeted) BEFORE it is
+  // called: a failed query would abort this whole transaction, so there is no
+  // in-transaction fallback. A worker on a database without the v2 migration
+  // falls back here to the untargeted evaluator and emails the collection's own
+  // audience — the audit row's target is simply not honoured until the migration
+  // is applied.
+  const target: AnnounceTarget | null =
+    msg.action === "collection.announce_update" && support.targeted ? parseAnnounceTarget(msg.after_state) : null;
+  const groupIds: string[] =
+    target === "groups" ? parseAnnounceGroupIds(msg.after_state) : [];
+
+  const rows = target
+    ? await sql<CollectionRecipientRow[]>`
+        select member_id, user_id, eligible, address, assurance, skip_reason
+        from app.evaluate_collection_email_recipients_targeted(
+          ${msg.object_id}::uuid, ${category}, ${target}, ${groupIds}::uuid[]
+        )
+      `
+    : await sql<CollectionRecipientRow[]>`
+        select member_id, user_id, eligible, address, assurance, skip_reason
+        from app.evaluate_collection_email_recipients(${msg.object_id}::uuid, ${category})
+      `;
+  const attested = await communityNoticeAttested(sql, msg.community_id, support.notice);
+  const deliveryCategory = await deliveryCategoryFor(sql, msg.action);
+
+  let pending = 0;
+  let skipped = 0;
+  for (const r of rows) {
+    const decision = collectionMemberDecision(msg.action, r, { communityNoticeAttested: attested });
+    if (deliveryCategory !== null) {
+      // M13.3 R3: same rows, with the category the decision was made under.
+      if (decision.send && r.address !== null && r.assurance !== null) {
+        await sql`
+          insert into public.notification_deliveries (
+            notification_event_id, community_id,
+            recipient_member_id, recipient_user_id,
+            recipient_address, recipient_address_assurance,
+            channel, status, send_class, communication_category
+          ) values (
+            ${eventId}::uuid,
+            ${msg.community_id}::uuid,
+            ${r.member_id}::uuid,
+            ${r.user_id}::uuid,
+            ${r.address},
+            ${r.assurance},
+            'email',
+            'pending',
+            ${COLLECTION_EMAIL_SEND_CLASS},
+            ${deliveryCategory}
+          )
+          on conflict do nothing
+        `;
+        pending += 1;
+      } else {
+        await sql`
+          insert into public.notification_deliveries (
+            notification_event_id, community_id,
+            recipient_member_id, recipient_user_id,
+            channel, status, error_code, send_class, communication_category
+          ) values (
+            ${eventId}::uuid,
+            ${msg.community_id}::uuid,
+            ${r.member_id}::uuid,
+            ${r.user_id}::uuid,
+            'email',
+            'skipped',
+            ${decision.send ? "no_recipient" : decision.reason},
+            ${COLLECTION_EMAIL_SEND_CLASS},
+            ${deliveryCategory}
+          )
+          on conflict do nothing
+        `;
+        skipped += 1;
+      }
+      continue;
+    }
+    if (decision.send && r.address !== null && r.assurance !== null) {
+      await sql`
+        insert into public.notification_deliveries (
+          notification_event_id, community_id,
+          recipient_member_id, recipient_user_id,
+          recipient_address, recipient_address_assurance,
+          channel, status, send_class
+        ) values (
+          ${eventId}::uuid,
+          ${msg.community_id}::uuid,
+          ${r.member_id}::uuid,
+          ${r.user_id}::uuid,
+          ${r.address},
+          ${r.assurance},
+          'email',
+          'pending',
+          ${COLLECTION_EMAIL_SEND_CLASS}
+        )
+        on conflict do nothing
+      `;
+      pending += 1;
+    } else {
+      await sql`
+        insert into public.notification_deliveries (
+          notification_event_id, community_id,
+          recipient_member_id, recipient_user_id,
+          channel, status, error_code, send_class
+        ) values (
+          ${eventId}::uuid,
+          ${msg.community_id}::uuid,
+          ${r.member_id}::uuid,
+          ${r.user_id}::uuid,
+          'email',
+          'skipped',
+          ${decision.send ? "no_recipient" : decision.reason},
+          ${COLLECTION_EMAIL_SEND_CLASS}
+        )
+        on conflict do nothing
+      `;
+      skipped += 1;
+    }
+  }
+  return { kind: "collection", pending, skipped };
+}
+
+interface AnnouncementContextRow {
+  community_name: string | null;
+  description_excerpt: string | null;
+  amount_model: string | null;
+  fixed_amount_kobo: string | number | null;
+  deadline_at: Date | string | null;
+}
+
+/** Collection facts for the announcement payload, or null when the context function is unavailable. */
+async function readAnnouncementContext(sql: Db, collectionId: string): Promise<AnnouncementContextRow | null> {
+  const support = await announcementSupport(sql);
+  if (!support.context) return null;
+  const [row] = await sql<AnnouncementContextRow[]>`
+    select community_name, description_excerpt, amount_model, fixed_amount_kobo, deadline_at
+    from app.collection_announcement_context(${collectionId}::uuid)
+  `;
+  return row ?? null;
+}
+
+/** Kobo crosses a JSON boundary as a digit string, never a JSON number (packages/domain toJSON). */
+function koboToString(value: string | number | bigint | null): string | null {
+  if (value === null) return null;
+  const s = String(value);
+  return /^[0-9]{1,15}$/.test(s) ? s : null;
 }
 
 // ── Reading facts ────────────────────────────────────────────────────────────
@@ -277,17 +655,35 @@ async function readFacts(
     case "collection.publish":
     case "collection.publish_remind_unpaid":
     case "collection.remind":
-    case "collection.remind_unpaid": {
+    case "collection.remind_unpaid":
+    case "collection.announce_update": {
       const [col] = await sql<{ name: string; slug: string; community_slug: string }[]>`
         select c.name, c.slug, cm.slug as community_slug
         from public.collections c
         join public.communities cm on cm.id = c.community_id
         where c.id = ${msg.object_id}::uuid
       `;
+      if (!col) return { payload: {}, recipientHints: {} };
+      const base = { collectionName: col.name, collectionSlug: col.slug, communitySlug: col.community_slug };
+      // Member announcements: richer facts for the email, only when the
+      // context function exists. Without it the payload is exactly as before.
+      const ctx = collectionEmailCategory(msg.action) ? await readAnnouncementContext(sql, msg.object_id) : null;
+      if (!ctx) return { payload: base, recipientHints: {} };
+      const deadline = ctx.deadline_at instanceof Date ? ctx.deadline_at.toISOString() : ctx.deadline_at;
       return {
-        payload: col
-          ? { collectionName: col.name, collectionSlug: col.slug, communitySlug: col.community_slug }
-          : {},
+        payload: {
+          ...base,
+          announcementContext: true,
+          communityName: ctx.community_name,
+          collectionDescription: ctx.description_excerpt,
+          amountModel: ctx.amount_model,
+          fixedAmountKobo: koboToString(ctx.fixed_amount_kobo),
+          deadlineAt: deadline,
+          changedFields: msg.action === "collection.announce_update" ? parseChangedFields(msg.after_state) : null,
+          announcementBody: msg.action === "collection.announce_update" ? parseAnnouncementBody(msg.after_state) : null,
+          targetAudience: msg.action === "collection.announce_update" ? parseAnnounceTarget(msg.after_state) : null,
+          targetGroupIds: msg.action === "collection.announce_update" ? parseAnnounceGroupIds(msg.after_state) : null,
+        },
         recipientHints: {},
       };
     }
@@ -389,24 +785,14 @@ async function resolveRecipients(sql: Db, msg: AuditMessage, hints: Facts["recip
         where m.user_id is not null
       `;
 
-    case "collection_audience_unpaid":
-      // M13.3: audience restricted to members with an outstanding obligation
-      // on this collection. `exempt`, `paid` and `cancelled` are excluded; a
-      // member with no obligation yet is excluded too (the data does not say
-      // they owe this payment, only that they are eligible for one). The
-      // worker filters here rather than in SQL inside the trigger so the
-      // trigger stays dumb and the recipient plan is a single source of
-      // truth.
-      return sql<Recipient[]>`
-        select a.member_id, m.user_id
-        from app.resolve_collection_audience(${msg.object_id}::uuid) a
-        join public.members m on m.id = a.member_id
-        join public.obligations o
-          on o.collection_id = ${msg.object_id}::uuid
-         and o.member_id = a.member_id
-         and o.status in ('unpaid', 'in_installments', 'overdue')
-        where m.user_id is not null
-      `;
+    case "payment_status_unavailable":
+      // Disabled on purpose. obligations.status is 'unpaid' by default and no
+      // code path ever sets 'paid' or 'in_installments' (there is no
+      // contributions record, and cash/transfer payments cannot be entered),
+      // so "unpaid" would include members who have already paid. Telling
+      // them they still owe is worse than telling no one. The event row is
+      // kept for the audit trail; no delivery is created.
+      return [];
 
     case "member_self":
       // Only a member who has an account can be told in-app. None do yet (D-LINK).

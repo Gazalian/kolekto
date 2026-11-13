@@ -1,12 +1,14 @@
 "use client";
 
-import type { Community, OfficerInvitation, OfficerRole, OfficerTerm } from "@kolekto/db";
+import type { Community, CommunityNoticeStatus, OfficerInvitation, OfficerRole, OfficerTerm } from "@kolekto/db";
 import { OFFICER_ROLES } from "@kolekto/validation";
 import { Badge, Banner, Button, CheckboxField, Dialog, SelectField, TextField } from "@kolekto/ui";
 import { useState, useTransition } from "react";
 import {
+  attestCommunityNoticeAction,
   createOfficerInvitationAction,
   endOfficerTermAction,
+  revokeCommunityNoticeAction,
   revokeOfficerInvitationAction,
   updateCommunityProfileAction,
 } from "./actions.ts";
@@ -23,18 +25,22 @@ interface Props {
   canEditProfile: boolean;
   canInviteOfficers: boolean;
   canRemoveOwner: boolean;
+  canAttestNotice: boolean;
+  /** Null when the caller cannot see it or the database lacks the M13.3 migration. */
+  noticeStatus: CommunityNoticeStatus | null;
   currentUserId: string;
 }
 
 export function SettingsClient(props: Props) {
-  const [tab, setTab] = useState<"profile" | "team">("profile");
+  const [tab, setTab] = useState<"profile" | "team" | "notifications">("profile");
+  const tabs = props.noticeStatus ? (["profile", "team", "notifications"] as const) : (["profile", "team"] as const);
 
   return (
     <div className="flex flex-col gap-6">
       <h1 className="text-xl font-semibold text-[var(--color-text)]">Settings</h1>
 
       <div className="flex gap-1 border-b border-[var(--color-border)]">
-        {(["profile", "team"] as const).map((t) => (
+        {tabs.map((t) => (
           <button
             key={t}
             type="button"
@@ -49,7 +55,89 @@ export function SettingsClient(props: Props) {
         ))}
       </div>
 
-      {tab === "profile" ? <ProfileTab {...props} /> : <TeamTab {...props} />}
+      {tab === "profile" && <ProfileTab {...props} />}
+      {tab === "team" && <TeamTab {...props} />}
+      {tab === "notifications" && props.noticeStatus && (
+        <NotificationsTab slug={props.slug} community={props.community} status={props.noticeStatus} canAttest={props.canAttestNotice} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Community communication notice (draft community-notice-v1 wording from the
+ * M13.3 R3 report; pending legal review). Until an owner/admin confirms it,
+ * collection announcements, updates and reminders are not emailed to members.
+ */
+function NotificationsTab({
+  slug,
+  community,
+  status,
+  canAttest,
+}: {
+  slug: string;
+  community: Community;
+  status: CommunityNoticeStatus;
+  canAttest: boolean;
+}) {
+  const [isPending, startTransition] = useTransition();
+  const [result, setResult] = useState<{ error?: string; ok?: boolean } | null>(null);
+  const name = community.name;
+
+  return (
+    <div className="flex max-w-2xl flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <h2 className="text-sm font-semibold text-[var(--color-text)]">Member email notifications</h2>
+        <Badge tone={status.attested ? "success" : "warning"}>{status.attested ? "On" : "Off"}</Badge>
+      </div>
+
+      <p className="text-sm text-[var(--color-text-muted)]">
+        Members are emailed (no Kolekto account needed) when you publish a collection with “notify members”, announce changes, or send a
+        reminder. Before any of that goes out, an owner or admin must confirm members have been told the following:
+      </p>
+
+      <blockquote className="rounded-[var(--radius-lg)] border border-[var(--color-border)] p-4 text-sm text-[var(--color-text)]">
+        <p className="font-medium">How {name} uses your contact details on Kolekto.</p>
+        <p className="mt-2">
+          {name} keeps a member list on Kolekto to run its collections and activities. Kolekto sends messages on {name}’s behalf to the email
+          address on your member record: confirmations of your membership, notices about collections and their changes, and reminders that a
+          collection is open or closing. You do not need a Kolekto account. To stop these messages, ask {name}’s organisers;
+          confirmations about your own membership and payments still reach you. Kolekto will not message you on WhatsApp or SMS, or send
+          marketing, unless you agree yourself. Questions or corrections: contact {name}’s organisers.
+        </p>
+      </blockquote>
+
+      {status.recordedAt && (
+        <p className="text-xs text-[var(--color-text-muted)]">
+          Last {status.latestAction === "revoke" ? "withdrawn" : "confirmed"}
+          {status.recordedByName ? ` by ${status.recordedByName}` : ""} on {new Date(status.recordedAt).toLocaleString("en-NG")}.
+        </p>
+      )}
+
+      {result?.error && <Banner tone="danger">{result.error}</Banner>}
+
+      {canAttest ? (
+        status.attested ? (
+          <Button
+            variant="secondary"
+            className="w-fit"
+            loading={isPending}
+            onClick={() => startTransition(async () => setResult(await revokeCommunityNoticeAction(slug, community.id)))}
+          >
+            Stop member emails
+          </Button>
+        ) : (
+          <Button
+            className="w-fit"
+            loading={isPending}
+            onClick={() => startTransition(async () => setResult(await attestCommunityNoticeAction(slug, community.id)))}
+          >
+            Members have been told — turn on member emails
+          </Button>
+        )
+      ) : (
+        <p className="text-sm text-[var(--color-text-muted)]">Only an owner or admin can change this.</p>
+      )}
     </div>
   );
 }

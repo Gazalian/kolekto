@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { expectPaymentReview } from "./helpers/payments.ts";
 import { chooseFeeBearer, configureReferences, fillTier, openWizard, walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -106,8 +107,12 @@ test("a fundraiser suggests amounts, and a contributor can still choose their ow
         // §6: an open campaign has no single price, so the preview is priced
         // at the suggestions the organiser just set — their own figures, not
         // an invented one.
-        await expect(p.getByText("If somebody gives ₦5000")).toBeVisible();
-        await expect(p.getByText("If somebody gives ₦20000")).toBeVisible();
+        // The fee decision shares this screen with the amounts, so one example
+        // shows until the rest are asked for.
+        await expect(p.getByText("If somebody gives ₦5,000")).toBeVisible();
+        await expect(p.getByText("If somebody gives ₦20,000")).toHaveCount(0);
+        await p.getByRole("button", { name: /Show for each amount/ }).click();
+        await expect(p.getByText("If somebody gives ₦20,000")).toBeVisible();
       },
       review: async (p) => {
         // §23: a campaign is reviewed by reading its story back.
@@ -140,15 +145,17 @@ test("a fundraiser suggests amounts, and a contributor can still choose their ow
   // Typing over it is the point of an open collection.
   await contributor.getByLabel("How much would you like to contribute?").fill("7500");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
-  await expect(contributor.getByText(/Your details are checked, Ada Obi/)).toBeVisible();
   await expect(contributor.getByText("₦7,500").first()).toBeVisible();
-  await expect(contributor.getByText(/Nothing has been charged/)).toBeVisible();
+  // The M8.5 review: the server's frozen figures for ₦7,500, and nothing
+  // charged until the contributor presses Pay.
+  await expectPaymentReview(contributor, { contributorName: "Ada Obi", contribution: "₦7,500" });
 
   // Below the minimum is refused by the server, not by the browser.
-  await contributor.getByRole("button", { name: "Back to the form" }).click();
+  await contributor.getByRole("button", { name: "Edit", exact: true }).click();
   await contributor.getByLabel("How much would you like to contribute?").fill("100");
   await contributor.getByRole("button", { name: "Continue" }).click();
   await expect(contributor.getByText(/below the smallest contribution/i)).toBeVisible();
@@ -186,8 +193,10 @@ test("an item collection prices an order by the item chosen and how many", async
       fees: async (p) => {
         // One example per item, from what the organiser typed — and no
         // computed figure until the estimate is asked for (Part 3).
-        await expect(p.getByText("₦35,000 − applicable fees")).toBeVisible();
-        await expect(p.getByText("₦50,000 − applicable fees")).toBeVisible();
+        // Contributors pay the fees unless the organiser says otherwise.
+        await expect(p.getByRole("radio", { name: "Contributor pays" })).toBeChecked();
+        await expect(p.getByText("₦35,000 + applicable fees")).toBeVisible();
+        await expect(p.getByText("₦50,000 + applicable fees")).toBeVisible();
         await expect(p.getByText("Estimated total fees")).toHaveCount(0);
       },
       review: async (p) => {
@@ -212,6 +221,7 @@ test("an item collection prices an order by the item chosen and how many", async
   await contributor.getByRole("checkbox").nth(1).check(); // Gold, ₦50,000
   await contributor.getByLabel("How many Gold?").fill("3");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -220,7 +230,7 @@ test("an item collection prices an order by the item chosen and how many", async
 
   // §6: several different items in one order, totalled by the server from its
   // own prices — 2 × ₦35,000 + 3 × ₦50,000.
-  await contributor.getByRole("button", { name: "Back to the form" }).click();
+  await contributor.getByRole("button", { name: "Edit", exact: true }).click();
   await contributor.getByRole("checkbox").first().check(); // Blue, ₦35,000, at most 2
   await contributor.getByLabel("How many Blue?").fill("2");
   await contributor.getByRole("button", { name: "Continue" }).click();
@@ -231,7 +241,7 @@ test("an item collection prices an order by the item chosen and how many", async
 
   // The per-order limit is the database's, and it is enforced whatever the
   // browser shows.
-  await contributor.getByRole("button", { name: "Back to the form" }).click();
+  await contributor.getByRole("button", { name: "Edit", exact: true }).click();
   await contributor.getByLabel("How many Blue?").fill("5");
   await contributor.getByRole("button", { name: "Continue" }).click();
   await expect(contributor.getByText(/at most 2 of "Blue" in one order/i)).toBeVisible();
@@ -382,17 +392,19 @@ test("a flyer can be uploaded during creation, shown on the public page, and rem
         await p.getByLabel("What is this collection called?").fill("Harvest Offering 2026");
       },
       cover: async (p) => {
-        await expect(p.getByText("No flyer yet")).toBeVisible();
+        // The image sits beside the name on the first step; choosing a file
+        // creates the draft it is saved against.
+        await expect(p.getByText("No image yet")).toBeVisible();
 
         // The browser holds no storage credential: this posts bytes to a
         // server action, which is what talks to the bucket.
-        await p.getByLabel("Collection flyer").setInputFiles({
+        await p.getByLabel("Collection image").setInputFiles({
           name: "flyer.png",
           mimeType: "image/png",
           buffer: TINY_PNG,
         });
 
-        const flyer = p.getByRole("img", { name: "Collection flyer" });
+        const flyer = p.getByRole("img", { name: "Collection image" });
         await expect(flyer).toBeVisible({ timeout: 45_000 });
         await expect(flyer).toHaveAttribute("src", /\/storage\/v1\/object\/public\/collection-covers\//, {
           timeout: 45_000,
@@ -443,14 +455,14 @@ test("a file that is not an image is refused before it reaches storage", async (
         await p.getByLabel("What is this collection called?").fill("Building Fund 2026");
       },
       cover: async (p) => {
-        await p.getByLabel("Collection flyer").setInputFiles({
+        await p.getByLabel("Collection image").setInputFiles({
           name: "notes.txt",
           mimeType: "text/plain",
           buffer: Buffer.from("this is not an image"),
         });
 
         await expect(p.getByText("Upload a JPG, PNG or WebP image.")).toBeVisible();
-        await expect(p.getByText("No flyer yet")).toBeVisible();
+        await expect(p.getByText("No image yet")).toBeVisible();
         // A rejected file does not block the rest of the wizard — the page did
         // not break, which is the defect this feature was built to rule out.
       },
@@ -522,7 +534,7 @@ test("three items carry three different images through edit, remove and a reload
   await walkWizard(page, {
     flowKey: "items",
     intent: /^Items/,
-    stopBefore: "orderRules",
+    stopBefore: "fees",
     fill: {
       basics: async (p) => {
         await p.getByLabel("What is this catalogue called?").fill("Anniversary Merchandise 2026");
@@ -649,6 +661,7 @@ test("a ticket buyer can take more than one type, and name an attendee per ticke
   await contributor.getByLabel("Regular — attendee 1").fill("Chidi Eze");
 
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -682,7 +695,7 @@ test("ticket types can be reordered, and the public page follows that order", as
         // stays against Gold.
         await p.getByRole("button", { name: "Move Gold up" }).click();
         await expect(p.getByLabel("Package name").first()).toHaveValue("Gold");
-        await expect(p.getByLabel("Price").first()).toHaveValue("25000");
+        await expect(p.getByLabel("Price").first()).toHaveValue("25,000");
       },
     },
   });
@@ -702,6 +715,7 @@ test("ticket types can be reordered, and the public page follows that order", as
   const firstRadio = contributor.getByRole("radio").first();
   await firstRadio.check();
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -793,6 +807,7 @@ test("the public page works at phone width", async ({ page, browser }) => {
 
   await contributor.getByLabel("How much would you like to contribute?").fill("2500");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
   await expect(contributor.getByText("₦2,500").first()).toBeVisible();
@@ -844,7 +859,7 @@ test("a half-finished collection survives leaving the browser, and resumes where
   await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Item").first()).toHaveValue("Jollof");
   await expect(page.getByLabel("Item").nth(1)).toHaveValue("Chicken");
-  await expect(page.getByLabel("Price").first()).toHaveValue("3000");
+  await expect(page.getByLabel("Price").first()).toHaveValue("3,000");
 
   // Editing an item twice must not leave two of it: ids are stable across saves.
   await page.getByLabel("Item").first().fill("Jollof Rice");

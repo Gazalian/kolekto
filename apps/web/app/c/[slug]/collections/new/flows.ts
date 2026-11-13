@@ -1,3 +1,5 @@
+import { formatAmountDisplay } from "@kolekto/domain";
+
 /**
  * What each kind of collection asks, in what order, and in whose words.
  *
@@ -30,35 +32,60 @@
 export type AmountModelKey = "fixed" | "open_amount" | "tiers" | "per_member" | "items";
 
 /**
- * One screen's worth of the wizard.
+ * One block of questions — the unit that is rendered, validated and saved.
  *
- * `purpose` is the intent picker and belongs to no flow — it is position zero
- * everywhere, and choosing on it is what selects the flow.
+ * A step shows one or more sections. Until the 2026-11 redesign every section
+ * was its own screen, which is how a flow came to be ten screens long with
+ * several holding a single optional control. Sections that answer one
+ * question together now share a screen: the price beside who bears the fees
+ * on it, who can pay beside until when, the image beside the name.
+ *
+ * `purpose` is the type picker and belongs to no flow. It is shown before the
+ * steps and is not counted as one.
  */
-export type StepKind =
+export type SectionKind =
   | "purpose"
   | "basics" // name, description — a collection, a campaign, a plan
-  | "event" // ticketing only: name, description, date, venue AND the flyer
-  | "story" // fundraising only: what, why, what it funds, and a prominent cover
-  | "cover" // the collection's own image, where it is not already asked for
+  | "event" // ticketing only: name, description, the flyer, date, venue
+  | "story" // fundraising only: title, the image, what, why, what it funds
+  | "cover" // the collection's image, beside its name
   | "amount" // one price everyone pays
   | "openAmount" // a range and some suggestions
   | "goal" // a target, and what to suggest
   | "packages" // tiers, in the language of packages
   | "tickets" // tiers, in the language of tickets, with per-ticket prefixes
   | "items" // a catalogue, each item with its own image
-  | "orderRules" // how many of a thing one person may order
-  | "purchaseRules" // how many tickets, and whose names are needed
+  | "purchaseRules" // whose names are needed per ticket
   | "schedule" // how often a recurring plan charges
   | "fees" // who bears the fees, with a live breakdown
-  | "audience" // who it is for
+  | "audience" // who it is for, and whether it is listed
   | "questions" // what else to ask a contributor
   | "reference" // contributor references
   | "timing" // type-aware dates; absent entirely from some flows
   | "review";
 
+/** One screen of the wizard. */
+export type StepKind =
+  | "purpose"
+  | "details" // name, description, image
+  | "event" // the event, flyer included
+  | "story" // the campaign, image included
+  | "price" // one amount, and who bears the fees on it
+  | "plan" // a recurring amount, how often, and who bears the fees
+  | "giving" // what people may give, and who bears the fees
+  | "goal" // a target and suggestions, and who bears the fees
+  | "packages"
+  | "tickets" // ticket types, and whether each ticket needs a name
+  | "items" // the catalogue
+  | "fees" // who bears the fees — its own screen where there is one price per row
+  | "whoWhen" // who can pay, whether it is listed, and the dates
+  | "extras" // optional: extra questions and contributor references
+  | "review";
+
 export interface FlowStep {
   readonly kind: StepKind;
+  /** What this screen asks, in the order it asks it. Saved in this order too. */
+  readonly sections: readonly SectionKind[];
   /** The word in the progress line. Short. */
   readonly label: string;
   /** The heading on the step itself. A question wherever a question is what is being asked. */
@@ -112,25 +139,27 @@ export interface Flow {
   readonly namePlaceholder: string;
   /** The placeholder in the description field. */
   readonly descriptionPlaceholder: string;
-  /** Everything after the intent picker. */
+  /** What a contributor reference is, in this flow's words. Shown in the references section. */
+  readonly referenceHint: string;
+  /** Everything after the type picker. The picker is not a step. */
   readonly steps: readonly FlowStep[];
 }
 
-const REFERENCE_STEP: FlowStep = {
-  kind: "reference",
-  label: "References",
-  heading: "Give each contributor a reference?",
-  hint: "A short code you can quote on a receipt, read out at a door, or search for when somebody rings up about their money.",
-};
+const REFERENCE_HINT =
+  "A short code you can quote on a receipt, read out at a door, or search for when somebody rings up about their money.";
 
-const QUESTIONS_STEP: FlowStep = {
-  kind: "questions",
-  label: "Their details",
-  heading: "Anything else to ask?",
+/** Optional configuration, on one screen. Both parts can be changed later in Settings. */
+const EXTRAS_STEP: FlowStep = {
+  kind: "extras",
+  sections: ["questions", "reference"],
+  label: "Extras",
+  heading: "Anything else to set up?",
+  hint: "Optional. Skip this and both can be set later in Settings.",
 };
 
 const FEES_STEP: FlowStep = {
   kind: "fees",
+  sections: ["fees"],
   label: "Fees",
   heading: "Who pays the fees?",
 };
@@ -141,6 +170,12 @@ const FEES_STEP: FlowStep = {
  * Neutral examples throughout (§27): associations, estates, clubs, conferences,
  * merchandise, appeals, memberships. A university department is one kind of
  * Kolekto customer and was never meant to be the default one.
+ *
+ * Every flow opens on its identity — the name and the image together — and
+ * keeps money in one place: one price sits beside the fee decision on it,
+ * while a flow with a price per row (packages, tickets, items) keeps the fee
+ * decision on its own screen, because one breakdown per row does not fit
+ * under the rows on a phone.
  */
 export const FLOWS: readonly Flow[] = [
   {
@@ -156,16 +191,18 @@ export const FLOWS: readonly Flow[] = [
     timing: "closing_date",
     namePlaceholder: "Ikoyi Residents Annual Levy 2026",
     descriptionPlaceholder: "What the levy covers this year, and what it is for.",
+    referenceHint: REFERENCE_HINT,
     steps: [
-      { kind: "basics", label: "Basics", heading: "What are you collecting?" },
-      { kind: "amount", label: "Amount", heading: "How much does each person pay?" },
-      FEES_STEP,
-      { kind: "cover", label: "Image", heading: "Add an image" },
-      { kind: "audience", label: "Who pays", heading: "Who is expected to contribute?" },
-      QUESTIONS_STEP,
-      REFERENCE_STEP,
-      { kind: "timing", label: "Closing", heading: "When does it close?" },
-      { kind: "review", label: "Review", heading: "Check this over" },
+      { kind: "details", sections: ["basics", "cover"], label: "Details", heading: "What are you collecting?" },
+      { kind: "price", sections: ["amount", "fees"], label: "Amount", heading: "How much does each person pay?" },
+      {
+        kind: "whoWhen",
+        sections: ["audience", "timing"],
+        label: "Who & when",
+        heading: "Who is expected to contribute?",
+      },
+      EXTRAS_STEP,
+      { kind: "review", sections: ["review"], label: "Review", heading: "Check this over" },
     ],
   },
 
@@ -182,21 +219,19 @@ export const FLOWS: readonly Flow[] = [
     timing: "closing_date",
     namePlaceholder: "Ilorin Traders Welfare Fund",
     descriptionPlaceholder: "What the fund is for, and who it helps.",
+    referenceHint: REFERENCE_HINT,
     steps: [
-      { kind: "basics", label: "Purpose", heading: "What are people giving to?" },
+      { kind: "details", sections: ["basics", "cover"], label: "Purpose", heading: "What are people giving to?" },
       {
-        kind: "openAmount",
+        kind: "giving",
+        sections: ["openAmount", "fees"],
         label: "Giving",
         heading: "What may people give?",
         hint: "Leave the limits empty to accept any amount.",
       },
-      FEES_STEP,
-      { kind: "cover", label: "Image", heading: "Add an image" },
-      { kind: "audience", label: "Who can give", heading: "Who can contribute?" },
-      QUESTIONS_STEP,
-      REFERENCE_STEP,
-      { kind: "timing", label: "Closing", heading: "When does it close?" },
-      { kind: "review", label: "Review", heading: "Check this over" },
+      { kind: "whoWhen", sections: ["audience", "timing"], label: "Who can give", heading: "Who can contribute?" },
+      EXTRAS_STEP,
+      { kind: "review", sections: ["review"], label: "Review", heading: "Check this over" },
     ],
   },
 
@@ -218,25 +253,26 @@ export const FLOWS: readonly Flow[] = [
     timing: "closing_date",
     namePlaceholder: "Lagos Business Forum Sponsorship 2026",
     descriptionPlaceholder: "What sponsors get, and what the forum is for.",
+    referenceHint:
+      "A code per contributor. Give a package its own prefix and it gets its own series — GOLD-0001 beside SILVER-0001.",
     steps: [
-      { kind: "basics", label: "Basics", heading: "What are you offering packages for?" },
+      {
+        kind: "details",
+        sections: ["basics", "cover"],
+        label: "Basics",
+        heading: "What are you offering packages for?",
+      },
       {
         kind: "packages",
+        sections: ["packages"],
         label: "Packages",
         heading: "What packages are you offering?",
         hint: "Each package is a name, a price and what it includes. A contributor picks one.",
       },
       FEES_STEP,
-      { kind: "cover", label: "Image", heading: "Add an image" },
-      { kind: "audience", label: "Who can choose", heading: "Who can take a package?" },
-      QUESTIONS_STEP,
-      {
-        ...REFERENCE_STEP,
-        heading: "Give each contributor a reference?",
-        hint: "A code per contributor. Give a package its own prefix and it gets its own series — GOLD-0001 beside SILVER-0001.",
-      },
-      { kind: "timing", label: "Closing", heading: "When does it close?" },
-      { kind: "review", label: "Review", heading: "Check this over" },
+      { kind: "whoWhen", sections: ["audience", "timing"], label: "Who can choose", heading: "Who can take a package?" },
+      EXTRAS_STEP,
+      { kind: "review", sections: ["review"], label: "Review", heading: "Check this over" },
     ],
   },
 
@@ -258,27 +294,27 @@ export const FLOWS: readonly Flow[] = [
     timing: "order_window",
     namePlaceholder: "Association Anniversary Merchandise",
     descriptionPlaceholder: "What is on offer, and when orders will be delivered.",
+    referenceHint: REFERENCE_HINT,
     steps: [
-      { kind: "basics", label: "Basics", heading: "What are you taking orders for?" },
+      { kind: "details", sections: ["basics", "cover"], label: "Basics", heading: "What are you taking orders for?" },
       {
         kind: "items",
+        sections: ["items"],
         label: "Items",
         heading: "What is in the catalogue?",
-        hint: "Each item takes a photo, a price and how many are available. People see the photos and choose.",
-      },
-      {
-        kind: "orderRules",
-        label: "Order rules",
-        heading: "How may people order?",
-        hint: "Per-item limits are set on the item itself. This is the rule for the whole order.",
+        hint:
+          "Each item takes a photo, a price, how many are available and the most one person may take. " +
+          "Nothing is reserved until an order is paid for, so stock is not held while somebody browses.",
       },
       FEES_STEP,
-      { kind: "cover", label: "Cover", heading: "Add a cover image" },
-      { kind: "audience", label: "Who can order", heading: "Who can place an order?" },
-      QUESTIONS_STEP,
-      REFERENCE_STEP,
-      { kind: "timing", label: "Orders", heading: "When are orders open?" },
-      { kind: "review", label: "Review", heading: "Check the catalogue" },
+      {
+        kind: "whoWhen",
+        sections: ["audience", "timing"],
+        label: "Who can order",
+        heading: "Who can place an order?",
+      },
+      EXTRAS_STEP,
+      { kind: "review", sections: ["review"], label: "Review", heading: "Check the catalogue" },
     ],
   },
 
@@ -300,39 +336,33 @@ export const FLOWS: readonly Flow[] = [
     timing: "sales_window",
     namePlaceholder: "West Africa Founders Dinner 2026",
     descriptionPlaceholder: "What the evening is, who it is for, and what a ticket includes.",
+    referenceHint:
+      "A code per ticket holder. Give a ticket type its own prefix and it gets its own series — VIP-0001 beside REG-0001.",
     steps: [
       {
         kind: "event",
+        sections: ["event"],
         label: "The event",
         heading: "Tell us about the event",
         hint: "The flyer goes here, with the rest of it — it is the first thing anybody sees.",
       },
       {
         kind: "tickets",
+        sections: ["tickets", "purchaseRules"],
         label: "Tickets",
         heading: "What tickets are you selling?",
         hint: "Each type takes a name, a price and how many exist. Give one its own prefix and its references start at one.",
       },
-      {
-        kind: "purchaseRules",
-        label: "Buying",
-        heading: "How may people buy?",
-      },
       FEES_STEP,
-      { kind: "audience", label: "Who can buy", heading: "Who can buy a ticket?" },
-      QUESTIONS_STEP,
       {
-        ...REFERENCE_STEP,
-        heading: "Give each ticket a reference?",
-        hint: "A code per ticket holder. Give a ticket type its own prefix and it gets its own series — VIP-0001 beside REG-0001.",
+        kind: "whoWhen",
+        sections: ["audience", "timing"],
+        label: "Who can buy",
+        heading: "Who can buy a ticket?",
+        hint: "The sales dates here are when people can buy — not when the event is. The event's own date is on the first step.",
       },
-      {
-        kind: "timing",
-        label: "Sales",
-        heading: "When are tickets on sale?",
-        hint: "This is when people can buy — not when the event is. The event's own date is on the first step.",
-      },
-      { kind: "review", label: "Review", heading: "Check the event" },
+      EXTRAS_STEP,
+      { kind: "review", sections: ["review"], label: "Review", heading: "Check the event" },
     ],
   },
 
@@ -353,25 +383,25 @@ export const FLOWS: readonly Flow[] = [
     timing: "campaign_end",
     namePlaceholder: "Rebuild the Community Health Post",
     descriptionPlaceholder: "One line people will see beside the title.",
+    referenceHint: REFERENCE_HINT,
     steps: [
       {
         kind: "story",
+        sections: ["story"],
         label: "The story",
         heading: "Tell your story",
         hint: "This is the first thing a supporter reads, and it is what decides whether they give.",
       },
       {
         kind: "goal",
+        sections: ["goal", "fees"],
         label: "Goal",
         heading: "What are you working toward?",
         hint: "A target gives people something to get behind. Suggested amounts make giving one tap.",
       },
-      FEES_STEP,
-      { kind: "audience", label: "Who can give", heading: "Who can donate?" },
-      QUESTIONS_STEP,
-      { ...REFERENCE_STEP, heading: "Give each supporter a reference?" },
-      { kind: "timing", label: "Timing", heading: "When does the campaign end?" },
-      { kind: "review", label: "Review", heading: "Check the campaign" },
+      { kind: "whoWhen", sections: ["audience", "timing"], label: "Who can give", heading: "Who can donate?" },
+      EXTRAS_STEP,
+      { kind: "review", sections: ["review"], label: "Review", heading: "Check the campaign" },
     ],
   },
 
@@ -388,24 +418,33 @@ export const FLOWS: readonly Flow[] = [
     timing: "none",
     namePlaceholder: "Estate Service Charge",
     descriptionPlaceholder: "What the charge covers each period.",
+    referenceHint: REFERENCE_HINT,
     steps: [
-      { kind: "basics", label: "Basics", heading: "What is being charged for?" },
-      { kind: "amount", label: "Amount", heading: "How much per period?" },
+      { kind: "details", sections: ["basics", "cover"], label: "Basics", heading: "What is being charged for?" },
       {
-        kind: "schedule",
-        label: "Frequency",
-        heading: "How often, and when is it due?",
+        kind: "plan",
+        sections: ["amount", "schedule", "fees"],
+        label: "Amount",
+        heading: "How much, and how often?",
         hint: "Each period is asked for separately. Paying one does not settle the next.",
       },
-      FEES_STEP,
-      { kind: "cover", label: "Image", heading: "Add an image" },
-      { kind: "audience", label: "Who pays", heading: "Who is expected to pay?" },
-      QUESTIONS_STEP,
-      REFERENCE_STEP,
-      { kind: "review", label: "Review", heading: "Check the plan" },
+      // No dates: a plan that repeats does not close (§21).
+      { kind: "whoWhen", sections: ["audience"], label: "Who's included", heading: "Who is expected to pay?" },
+      EXTRAS_STEP,
+      { kind: "review", sections: ["review"], label: "Review", heading: "Check the plan" },
     ],
   },
 ];
+
+/** Whether a step asks the given section. */
+export function stepHas(step: FlowStep, section: SectionKind): boolean {
+  return step.sections.includes(section);
+}
+
+/** Whether any step of the flow asks the given section. */
+export function flowHas(flow: Flow, section: SectionKind): boolean {
+  return flow.steps.some((step) => stepHas(step, section));
+}
 
 export function flowFor(key: string): Flow {
   return FLOWS.find((flow) => flow.key === key) ?? FLOWS[0]!;
@@ -462,7 +501,7 @@ export function feePreviewRows(input: {
   if (flow.amountModel === "open_amount") {
     const suggestions = input.suggestedAmounts.map((amount) => amount.trim()).filter((amount) => amount !== "");
     if (suggestions.length > 0) {
-      return suggestions.map((amount) => ({ label: `If somebody gives ₦${amount}`, naira: amount }));
+      return suggestions.map((amount) => ({ label: `If somebody gives ₦${formatAmountDisplay(amount)}`, naira: amount }));
     }
     if (input.minAmount.trim() !== "") return [{ label: "At the smallest amount", naira: input.minAmount }];
     // Nothing to go on yet — an open collection may never name a figure. Price

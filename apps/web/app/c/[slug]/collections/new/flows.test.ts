@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { calculateFees, fromNaira } from "@kolekto/domain";
-import { FLOWS, feePreviewRows, flowFor, flowKeyFor, type Flow, type StepKind } from "./flows.ts";
+import { FLOWS, feePreviewRows, flowFor, flowHas, flowKeyFor, type Flow, type SectionKind, type StepKind } from "./flows.ts";
 
 /**
  * The seven flows, pinned (M7.7 §3, §4, §12–22, §28).
@@ -14,7 +14,8 @@ import { FLOWS, feePreviewRows, flowFor, flowKeyFor, type Flow, type StepKind } 
  */
 
 const kindsOf = (flow: Flow): StepKind[] => flow.steps.map((step) => step.kind);
-const has = (flow: Flow, kind: StepKind): boolean => kindsOf(flow).includes(kind);
+const sectionsOf = (flow: Flow): SectionKind[] => flow.steps.flatMap((step) => [...step.sections]);
+const has = (flow: Flow, section: SectionKind): boolean => flowHas(flow, section);
 
 describe("the catalogue of flows", () => {
   it("offers exactly the seven types the schema can express", () => {
@@ -86,6 +87,9 @@ describe("the flows are genuinely different, not renamed", () => {
     // sequence would pass every other test in this file.
     const sequences = new Set(FLOWS.map((flow) => kindsOf(flow).join(">")));
     expect(sequences.size).toBe(FLOWS.length);
+    // And not the same questions either, screen for screen.
+    const asked = new Set(FLOWS.map((flow) => sectionsOf(flow).join(">")));
+    expect(asked.size).toBe(FLOWS.length);
   });
 
   it("does not give every flow the same length", () => {
@@ -99,7 +103,7 @@ describe("the flows are genuinely different, not renamed", () => {
     // story. Neither opens on a generic "basics".
     expect(opening.ticketing).toBe("event");
     expect(opening.fundraiser).toBe("story");
-    expect(opening.items).toBe("basics");
+    expect(opening.items).toBe("details");
   });
 
   it("asks a ticketed event about its tickets and never about a plain amount", () => {
@@ -111,10 +115,9 @@ describe("the flows are genuinely different, not renamed", () => {
     expect(has(ticketing, "cover")).toBe(false);
   });
 
-  it("asks a catalogue about items and order rules", () => {
+  it("asks a catalogue about items, and not about tickets", () => {
     const items = flowFor("items");
     expect(has(items, "items")).toBe(true);
-    expect(has(items, "orderRules")).toBe(true);
     expect(has(items, "purchaseRules")).toBe(false);
   });
 
@@ -156,7 +159,7 @@ describe("timing is type-aware (§21)", () => {
     // The dinner is one date; sales closing is another. Collapsing them makes
     // one of the two wrong on the public page.
     const ticketing = flowFor("ticketing");
-    const sales = ticketing.steps.find((step) => step.kind === "timing");
+    const sales = ticketing.steps.find((step) => step.sections.includes("timing"));
     expect(sales?.hint ?? "").toMatch(/not when the event is/i);
   });
 });
@@ -346,5 +349,70 @@ describe("the fee preview cannot compound (§6)", () => {
     expect(passed.net).toBe(amount);
     expect(absorbed.totalPayable).toBe(amount);
     expect(absorbed.net).toBe(amount - absorbed.totalFees);
+  });
+});
+
+describe("the 2026-11 redesign: fewer screens, identity first", () => {
+  it("does not count the type picker as a step", () => {
+    for (const flow of FLOWS) {
+      expect(kindsOf(flow), flow.key).not.toContain("purpose");
+      expect(sectionsOf(flow), flow.key).not.toContain("purpose");
+    }
+  });
+
+  it("gives every flow five or six steps", () => {
+    const lengths = Object.fromEntries(FLOWS.map((flow) => [flow.key, flow.steps.length]));
+    expect(lengths).toEqual({ fixed: 5, open: 5, tiered: 6, items: 6, ticketing: 6, fundraiser: 5, recurring: 5 });
+  });
+
+  it("asks for the image on the first step, beside the name, in every flow", () => {
+    for (const flow of FLOWS) {
+      const first = flow.steps[0]!;
+      // The event and the story render their own flyer/image beside the title.
+      const hasImage = first.sections.includes("cover") || first.kind === "event" || first.kind === "story";
+      expect(hasImage, flow.key).toBe(true);
+      expect(flow.steps.slice(1).some((step) => step.sections.includes("cover")), flow.key).toBe(false);
+    }
+  });
+
+  it("puts a single price and who bears the fees on it on the same screen", () => {
+    for (const key of ["fixed", "open", "fundraiser", "recurring"]) {
+      const flow = flowFor(key);
+      const fees = flow.steps.find((step) => step.sections.includes("fees"))!;
+      expect(fees.sections.length, key).toBeGreaterThan(1);
+    }
+  });
+
+  it("keeps the fee decision on its own screen where every row has its own price", () => {
+    for (const key of ["tiered", "items", "ticketing"]) {
+      const fees = flowFor(key).steps.find((step) => step.sections.includes("fees"))!;
+      expect(fees.sections, key).toEqual(["fees"]);
+    }
+  });
+
+  it("asks who and until when together", () => {
+    for (const flow of FLOWS) {
+      const audience = flow.steps.find((step) => step.sections.includes("audience"))!;
+      expect(audience.sections.includes("timing"), flow.key).toBe(flow.timing !== "none");
+    }
+  });
+
+  it("keeps the optional questions and references on one screen", () => {
+    for (const flow of FLOWS) {
+      const extras = flow.steps.find((step) => step.kind === "extras")!;
+      expect(extras.sections, flow.key).toEqual(["questions", "reference"]);
+    }
+  });
+
+  it("asks whether each ticket needs a name beside the ticket types", () => {
+    const tickets = flowFor("ticketing").steps.find((step) => step.kind === "tickets")!;
+    expect(tickets.sections).toEqual(["tickets", "purchaseRules"]);
+  });
+
+  it("never asks the same section twice in one flow", () => {
+    for (const flow of FLOWS) {
+      const sections = sectionsOf(flow);
+      expect(new Set(sections).size, flow.key).toBe(sections.length);
+    }
   });
 });

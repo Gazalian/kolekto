@@ -47,6 +47,10 @@ export const WATCHED_ACTIONS = [
   // plan; `collection.remind_unpaid` reuses the outstanding-obligation filter.
   "collection.remind",
   "collection.remind_unpaid",
+  // An organiser explicitly announces changes to a live collection. Queued by
+  // the trigger since 20261109100100_member_collection_announcements.sql;
+  // scripts/invariants keeps this list equal to the trigger's c_watched.
+  "collection.announce_update",
   "member.create",
   "member.approve_join",
   "member.reject_join",
@@ -86,8 +90,15 @@ export function isWatchedAction(action: string): action is WatchedAction {
  * audit_log_id instead. A redelivered reminder still dedupes (same
  * audit_log_id), while a later reminder gets its own event.
  */
+/** Actions an organiser may fire many times for one collection; each fire is its own event. */
+export const REPEATABLE_ACTIONS: readonly string[] = [
+  "collection.remind",
+  "collection.remind_unpaid",
+  "collection.announce_update",
+];
+
 export function eventKey(action: string, objectId: string, auditLogId?: string): string {
-  if ((action === "collection.remind" || action === "collection.remind_unpaid") && auditLogId) {
+  if (REPEATABLE_ACTIONS.includes(action) && auditLogId) {
     return `${action}:${auditLogId}`;
   }
   return `${action}:${objectId}`;
@@ -109,8 +120,8 @@ function objectOrNull(value: unknown): Record<string, unknown> | null {
 
 /**
  * Check the shape of a queued message and copy out only the fields the processor uses.
- * Never throws: a malformed message is a skip, not a poison message that would be
- * retried forever (there is no retry cap until P6).
+ * Never throws: a malformed message is a skip, not a poison message. The event
+ * loop (index.ts) archives messages past a read_ct threshold (P6).
  */
 export function parseAuditMessage(raw: unknown): ParseResult {
   const r = objectOrNull(raw);
@@ -199,13 +210,14 @@ export function isImportedMember(m: { readonly is_imported?: boolean | null; rea
 
 export type RecipientPlan =
   | { readonly kind: "collection_audience" }
-  // M13.3: the audience restricted to members with an outstanding obligation
-  // on this collection (status unpaid / in_installments / overdue).
-  | { readonly kind: "collection_audience_unpaid" }
   | { readonly kind: "member_self" }
   | { readonly kind: "officers_with_permission"; readonly permission: string }
   | { readonly kind: "officer_term_holder" }
-  | { readonly kind: "nobody" };
+  | { readonly kind: "nobody" }
+  // Payment-status targeting is disabled: Kolekto records no contributions
+  // and nothing ever moves an obligation to paid, so "unpaid" would include
+  // people who have paid (cash, transfer). The event is kept; nobody is told.
+  | { readonly kind: "payment_status_unavailable" };
 
 /**
  * The in-app plan for each action.
@@ -221,10 +233,11 @@ export function recipientPlan(action: string): RecipientPlan {
   switch (action) {
     case "collection.publish":
     case "collection.remind":
+    case "collection.announce_update":
       return { kind: "collection_audience" };
     case "collection.publish_remind_unpaid":
     case "collection.remind_unpaid":
-      return { kind: "collection_audience_unpaid" };
+      return { kind: "payment_status_unavailable" };
     case "member.create":
     case "member.approve_join":
       return { kind: "member_self" };
@@ -286,6 +299,20 @@ export interface PayloadFacts {
   readonly memberCode?: string | null;
   readonly officerRole?: string | null;
   readonly endReason?: string | null;
+  /** Member announcements: true only when app.collection_announcement_context was read; gates every field below. */
+  readonly announcementContext?: boolean;
+  readonly collectionDescription?: string | null;
+  readonly amountModel?: string | null;
+  /** Integer kobo as a digit string (JSON-safe). */
+  readonly fixedAmountKobo?: string | null;
+  readonly deadlineAt?: string | null;
+  readonly changedFields?: readonly string[] | null;
+  /** Member announcements: organiser-authored message (stripped of email addresses in the DB, ≤1000 chars). */
+  readonly announcementBody?: string | null;
+  /** Member announcements: per-send target ("all_members" | "groups" | "selected_members"). */
+  readonly targetAudience?: string | null;
+  /** Member announcements: group ids when target=groups. */
+  readonly targetGroupIds?: readonly string[] | null;
 }
 
 /**
@@ -305,11 +332,13 @@ export function buildPayload(message: AuditMessage, facts: PayloadFacts): Payloa
     case "collection.publish_remind_unpaid":
     case "collection.remind":
     case "collection.remind_unpaid":
+    case "collection.announce_update":
       return {
         ...base,
         collection_name: text(facts.collectionName, 200),
         collection_slug: text(facts.collectionSlug, 80),
         community_slug: slug,
+        ...collectionAnnouncementFields(message.action, facts),
       };
     case "member.create":
     case "member.approve_join":
@@ -353,4 +382,107 @@ export function buildPayload(message: AuditMessage, facts: PayloadFacts): Payloa
     default:
       return base;
   }
+}
+
+// ── Member announcements: extra collection facts ─────────────────────────────
+
+/** The change names an organiser may announce. Mirrors the allow-list in app.announce_collection_update. */
+export const ANNOUNCEABLE_CHANGES = ["name", "description", "deadline", "start_date", "story", "other"] as const;
+
+/**
+ * Read the changed-field names from a collection.announce_update after_state.
+ * Only allow-listed names survive; anything else (free text, an address, a
+ * nested object) is dropped. Deduplicated and in allow-list order.
+ */
+export function parseChangedFields(afterState: Record<string, unknown> | null): string[] {
+  const raw = afterState?.["changed_fields"];
+  if (!Array.isArray(raw)) return [];
+  const given = new Set(raw.filter((v): v is string => typeof v === "string"));
+  return ANNOUNCEABLE_CHANGES.filter((c) => given.has(c));
+}
+
+/**
+ * Member announcements v2: read the optional target the organiser chose. The
+ * DB has already validated it; this is a defensive read on the worker side so
+ * an older or malformed payload falls back to the collection's own audience.
+ */
+export const ANNOUNCE_TARGETS = ["all_members", "groups", "selected_members"] as const;
+export type AnnounceTarget = (typeof ANNOUNCE_TARGETS)[number];
+
+export function parseAnnounceTarget(afterState: Record<string, unknown> | null): AnnounceTarget | null {
+  const raw = afterState?.["target_audience"];
+  if (typeof raw !== "string") return null;
+  return (ANNOUNCE_TARGETS as readonly string[]).includes(raw) ? (raw as AnnounceTarget) : null;
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export function parseAnnounceGroupIds(afterState: Record<string, unknown> | null): string[] {
+  const raw = afterState?.["target_group_ids"];
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  for (const v of raw) {
+    if (typeof v === "string" && UUID_RE.test(v)) seen.add(v.toLowerCase());
+  }
+  // Bounded: the audience picker caps at 100, and so does the DB.
+  return [...seen].slice(0, 100);
+}
+
+/**
+ * Member announcements v2: read the optional organiser message. Clamp length
+ * and run one more email-redaction pass; the DB already did one, this is
+ * defence in depth for a payload coming off the queue.
+ */
+export function parseAnnouncementBody(afterState: Record<string, unknown> | null): string | null {
+  const raw = afterState?.["announcement_body"];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  const stripped = trimmed.replace(
+    /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
+    "[address removed]",
+  );
+  return stripped.length > 1000 ? stripped.slice(0, 1000) : stripped;
+}
+
+const SAFE_ISO = /^\d{4}-\d{2}-\d{2}T[0-9:.]+(Z|[+-]\d{2}:?\d{2})$/;
+
+/**
+ * Payload keys added to collection events when the announcement context was
+ * read. Absent facts add no key, so an event processed without the context
+ * function has exactly the pre-existing payload. No key here is on the
+ * database's banned list (message, reason, note, email, ...); descriptions are
+ * email-redacted and clamped like every other text value.
+ */
+function collectionAnnouncementFields(action: string, facts: PayloadFacts): Payload {
+  const out: Payload = {};
+  if (facts.announcementContext !== true) return out;
+  if (facts.communityName !== undefined) out["community_name"] = text(facts.communityName, 120);
+  if (facts.collectionDescription !== undefined) out["collection_description"] = text(facts.collectionDescription, 500);
+  if (facts.amountModel !== undefined) out["amount_model"] = text(facts.amountModel, 20);
+  if (facts.fixedAmountKobo !== undefined) {
+    const k = facts.fixedAmountKobo;
+    out["fixed_amount_kobo"] = typeof k === "string" && /^[1-9][0-9]{0,14}$/.test(k) ? k : null;
+  }
+  if (facts.deadlineAt !== undefined) {
+    const d = facts.deadlineAt;
+    out["deadline_at"] = typeof d === "string" && SAFE_ISO.test(d) ? d : null;
+  }
+  if (action === "collection.announce_update" && facts.changedFields) {
+    const changed = facts.changedFields;
+    out["changed_fields"] = ANNOUNCEABLE_CHANGES.filter((c) => changed.includes(c)).join(",");
+  }
+  // Member announcements v2: organiser message + target. Keys carry
+  // `announcement_body`, `target_audience`, `target_group_ids` — none on the
+  // notification-event payload sanitiser's banned list. The message was
+  // already address-stripped by app.strip_email_addresses in the DB; the
+  // sanitiser redacts a second time if something leaks through.
+  if (action === "collection.announce_update") {
+    if (facts.announcementBody) out["announcement_body"] = text(facts.announcementBody, 1000);
+    if (facts.targetAudience) out["target_audience"] = text(facts.targetAudience, 40);
+    if (facts.targetGroupIds && facts.targetGroupIds.length > 0) {
+      // Comma-joined so the payload stays scalar JSON; worker parses back when needed (none today — the server is authoritative).
+      out["target_group_ids"] = facts.targetGroupIds.filter((g) => typeof g === "string").slice(0, 100).join(",");
+    }
+  }
+  return out;
 }

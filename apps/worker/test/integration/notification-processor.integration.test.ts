@@ -1,0 +1,606 @@
+/**
+ * notification-processor.integration.test.ts — the real database, end to end.
+ *
+ * Drives REAL audited domain functions under REAL roles, takes the queue messages the
+ * REAL trigger produced, runs them through the REAL processor, and asserts on what the
+ * database then holds. Everything happens inside one transaction that is rolled back
+ * (inRollback, test/support/itest-isolation.ts), so it leaves no trace in the database it
+ * runs against.
+ *
+ * M13.2 Phase 4: every id, slug and account email is run-unique (createRunScope), the
+ * file holds the suite mutex and passes the per-file preflight (itest-isolation.ts), and
+ * each test starts only when no pending or sending email row exists anywhere.
+ *
+ * Integration lane only: it runs through `npm run test:integration --workspace apps/worker`
+ * against the dedicated kolekto-itest stack, never through `npm test` and never against
+ * the developer database (see test/integration/README.md). Without a verified test-stack
+ * environment the gate refuses and every test here fails; nothing is skipped. It is NOT
+ * part of the CI "typecheck and unit tests" job, which has no database; the pgTAP suite
+ * covers the database side in CI, and the unit tests cover the processor's decisions.
+ */
+
+import { describe, it, before, after, beforeEach, afterEach } from "node:test";
+import assert from "node:assert/strict";
+
+import type postgres from "postgres";
+
+import { processNotificationMessage } from "../../src/notification-processor.ts";
+
+import { connectVerified, liveGateDeps } from "../support/itest-db.ts";
+import { createIntegrationGate } from "../support/itest-gate.ts";
+import { createFileHarness, inRollback } from "../support/itest-isolation.ts";
+
+// Fail-closed gate (test/support/itest-gate.ts): verify() refuses — and every test in
+// this file fails, none skips — unless the run came through `npm run test:integration`
+// and the live identity of the dedicated kolekto-itest stack checked out. Every
+// connection below is opened with connectVerified(gate.verified(), …).
+const gate = createIntegrationGate(liveGateDeps());
+const harness = createFileHarness(() => gate.verified(), "processor");
+const { scope } = harness;
+
+type Tx = postgres.TransactionSql<Record<string, never>>;
+
+function first<T>(rows: readonly T[]): T {
+  const row = rows[0];
+  if (row === undefined) throw new Error("expected at least one row");
+  return row;
+}
+
+describe("the processor against the real database", () => {
+  before(async () => {
+    await gate.verify();
+    await harness.start();
+  });
+  beforeEach(() => harness.checkpoint());
+  afterEach(() => harness.quarantineOwn());
+  after(async () => {
+    try {
+      await harness.finish();
+    } finally {
+      await gate.postflight();
+    }
+  });
+
+  it("handles the approved events end to end, writes pending email rows only for supplied-address membership confirmations, and is replay-safe", async () => {
+    const sql = connectVerified(gate.verified(), { max: 1 });
+    const evidence: Record<string, unknown> = {};
+    const OWNER = scope.uuid();
+    const ADMIN = scope.uuid();
+    const COMMUNITY = scope.uuid();
+    const OWNER_TERM = scope.uuid();
+    const ADMIN_TERM = scope.uuid();
+    const OWNER_EMAIL = scope.address();
+    const ADMIN_EMAIL = scope.address();
+    try {
+      await inRollback(sql, async (tx: Tx) => {
+          // ── fixtures ──────────────────────────────────────────────────────────
+          // OWNER's Auth email is confirmed; ADMIN's is not. Membership rows are
+          // never linked to accounts (inventory F-1), so member confirmations
+          // go to supplied addresses while the officer notice must skip.
+          await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
+            (${OWNER}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${OWNER_EMAIL}, now()),
+            (${ADMIN}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${ADMIN_EMAIL}, null)`;
+          await tx`insert into public.users (id, full_name, email) values
+            (${OWNER}, 'It Owner', ${OWNER_EMAIL}), (${ADMIN}, 'It Admin', ${ADMIN_EMAIL})
+            on conflict (id) do update set full_name = excluded.full_name`;
+          await tx`insert into public.communities (id, slug, name, type, is_personal, created_by)
+            values (${COMMUNITY}, ${scope.slug()}, 'ITest Worker', 'social_group', false, ${OWNER})`;
+          await tx`insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
+            (${OWNER_TERM}, ${COMMUNITY}, ${OWNER}, 'owner', 'It Owner', 'created'),
+            (${ADMIN_TERM}, ${COMMUNITY}, ${ADMIN}, 'admin', 'It Admin', 'invited')`;
+
+          const asOwner = async <T>(fn: () => Promise<T>): Promise<T> => {
+            await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: OWNER, role: "authenticated" })}, true)`;
+            await tx`set local role authenticated`;
+            try {
+              return await fn();
+            } finally {
+              await tx`reset role`;
+            }
+          };
+          const asAnon = async <T>(fn: () => Promise<T>): Promise<T> => {
+            await tx`set local role anon`;
+            try {
+              return await fn();
+            } finally {
+              await tx`reset role`;
+            }
+          };
+
+          // ── real domain actions ────────────────────────────────────────────────
+          const created = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY}::uuid, 'Manually Added', '+2348095551001', 'added@example.com') as id`,
+            ),
+          ).id;
+
+          // A member who is archived before the event is processed (decision record F-3): nothing to tell anyone.
+          const toArchive = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY}::uuid, 'To Archive', '+2348095551004', 'archive.me@example.com') as id`,
+            ),
+          ).id;
+          await asOwner(() => tx`select app.archive_member(${toArchive}::uuid, 'integration test')`);
+
+          const token = first(
+            await asOwner(
+              () => tx<{ token: string }[]>`select token from app.create_invite_link(${COMMUNITY}::uuid, '{}'::uuid[], false, false, true)`,
+            ),
+          ).token;
+
+          const toReject = first(
+            await asAnon(
+              () => tx<{ member_id: string }[]>`select member_id from app.redeem_invite_link(${token}, 'Reject Me', '+2348095551002', 'reject.me@example.com')`,
+            ),
+          ).member_id;
+          const toApprove = first(
+            await asAnon(
+              () => tx<{ member_id: string }[]>`select member_id from app.redeem_invite_link(${token}, 'Approve Me', '+2348095551003', 'approve.me@example.com')`,
+            ),
+          ).member_id;
+
+          // A joiner still awaiting approval when the event is processed: officers MUST still hear someone applied.
+          const toPending = first(
+            await asAnon(
+              () => tx<{ member_id: string }[]>`select member_id from app.redeem_invite_link(${token}, 'Still Pending', '+2348095551005', 'pending@example.com')`,
+            ),
+          ).member_id;
+
+          await asOwner(() => tx`select app.reject_pending_member(${toReject}::uuid, 'officer free text: looks fake')`);
+          await asOwner(() => tx`select app.approve_pending_member(${toApprove}::uuid)`);
+          await asOwner(() => tx`select app.end_officer_term(${ADMIN_TERM}::uuid, 'integration test')`);
+
+          // A repair run silently by an operator: suppressed, so it must produce no message.
+          await tx`select app.begin_notification_suppression('integration repair')`;
+          const silent = first(
+            await tx<{ id: string }[]>`
+              select app.write_audit_log(${COMMUNITY}::uuid, 'officer', ${OWNER}::uuid, 'member.create', 'member', gen_random_uuid()) as id`,
+          ).id;
+
+          // ── the messages the real trigger produced ─────────────────────────────
+          const messages = await tx<{ message: Record<string, unknown> }[]>`
+            select message from pgmq.q_notification_events
+            where message ->> 'community_id' = ${COMMUNITY} order by msg_id`;
+          const actions = messages.map((m) => String(m.message["action"]));
+          evidence["queued_actions"] = actions;
+
+          assert.deepEqual(
+            [...actions].sort(),
+            ["member.approve_join", "member.create", "member.create", "member.join_via_invite", "member.join_via_invite", "member.join_via_invite", "member.reject_join", "officer_term.end"].sort(),
+            "exactly the approved events were queued for this community",
+          );
+          assert.ok(!messages.some((m) => String(m.message["audit_log_id"]) === silent), "the suppressed repair produced no message");
+
+          // The queued rejection carries the narrow object and nothing else of the member.
+          const rejectMsg = messages.find((m) => m.message["action"] === "member.reject_join")!.message;
+          const rejectText = JSON.stringify(rejectMsg);
+          assert.deepEqual(Object.keys(rejectMsg["before_state"] as object).sort(), ["email", "full_name", "joined_via"]);
+          assert.ok(!rejectText.includes("2348095551002") && !rejectText.includes("looks fake"), "no phone and no officer reason in the queue");
+
+          // ── run the real processor over them ───────────────────────────────────
+          const outcomes = new Map<string, string>();
+          for (const m of messages) {
+            const out = await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
+            outcomes.set(`${String(m.message["action"])}:${String(m.message["object_id"])}`, out.outcome === "skipped" ? `skipped/${out.reason}` : "processed");
+          }
+          evidence["outcomes"] = Object.fromEntries(outcomes);
+
+          // The requester who was rejected also has a queued join_via_invite message. By the time it
+          // is processed their row is gone, so it is correctly skipped (race rule F-3): no officer is
+          // told that someone "joined" who was in fact turned away.
+          const SKIPPED_BY_DESIGN = new Set([`member.join_via_invite:${toReject}`, `member.create:${toArchive}`]);
+          assert.equal(outcomes.get(`member.join_via_invite:${toReject}`), "skipped/member_unavailable");
+          assert.equal(outcomes.get(`member.create:${toArchive}`), "skipped/member_unavailable", "an archived member is skipped (F-3)");
+          assert.equal(outcomes.get(`member.join_via_invite:${toPending}`), "processed", "a still-pending joiner is available: officers are told");
+          for (const [k, v] of outcomes) {
+            if (!SKIPPED_BY_DESIGN.has(k)) assert.equal(v, "processed", k);
+          }
+
+          const events = await tx<{ event_type: string; payload: Record<string, unknown> }[]>`
+            select event_type, payload from public.notification_events where community_id = ${COMMUNITY} order by event_type`;
+          const deliveries = await tx<{ channel: string; status: string; error_code: string | null; assurance: string | null; address: string | null; recipient_user_id: string | null; event_type: string }[]>`
+            select d.channel, d.status, d.error_code, d.recipient_address_assurance as assurance, d.recipient_address as address,
+                   d.recipient_user_id, e.event_type
+            from public.notification_deliveries d join public.notification_events e on e.id = d.notification_event_id
+            where d.community_id = ${COMMUNITY}`;
+          evidence["events"] = events.length;
+          evidence["deliveries"] = deliveries.length;
+
+          assert.equal(events.length, 6, "one event per processed message (the rejected joiner's join notice and the archived member's create were skipped)");
+
+          const emails = deliveries.filter((d) => d.channel === "email");
+          const inApp = deliveries.filter((d) => d.channel === "in_app");
+          assert.ok(inApp.every((d) => d.status === "sent"), "in-app rows keep their M13.1 status");
+
+          // Non-account membership confirmations: pending to the supplied address.
+          for (const type of ["member.create", "member.approve_join"]) {
+            const rows = emails.filter((d) => d.event_type === type);
+            assert.equal(rows.length, 1, `${type}: one email row`);
+            assert.equal(rows[0]!.status, "pending", type);
+            assert.equal(rows[0]!.assurance, "unverified_supplied", type);
+            assert.ok(String(rows[0]!.address).includes("@"), `${type}: the supplied address is stored`);
+            assert.equal(rows[0]!.recipient_user_id, null, `${type}: no account is linked`);
+          }
+          // The officer whose Auth email is unconfirmed: skipped, no address.
+          const officerMail = emails.filter((d) => d.event_type === "officer_term.end");
+          assert.equal(officerMail.length, 1, "the officer notice is evaluated");
+          assert.equal(officerMail[0]!.status, "skipped");
+          assert.equal(officerMail[0]!.error_code, "unverified_account_email");
+          assert.equal(officerMail[0]!.address, null, "skipped rows store no address");
+          assert.equal(officerMail[0]!.assurance, null);
+          // R1 and the rejection policy: no email rows for redemptions or rejections.
+          assert.equal(emails.filter((d) => d.event_type === "member.join_via_invite").length, 0, "R1: no joiner mail");
+          assert.equal(emails.filter((d) => d.event_type === "member.reject_join").length, 0, "no rejection mail to an unverified address");
+          assert.ok(emails.every((d) => d.status === "pending" || d.status === "skipped"), "email rows are pending or skipped only");
+          assert.ok(!deliveries.some((d) => d.channel !== "in_app" && d.channel !== "email"), "only in_app and email channels exist");
+
+          // The admin's term was ended before processing, so only the owner still admits members.
+          const joined = deliveries.filter((d) => d.event_type === "member.join_via_invite");
+          assert.equal(joined.length, 2, "the approved joiner and the still-pending joiner are each told to the one remaining officer who admits members");
+          assert.ok(joined.every((d) => d.recipient_user_id === OWNER), "only an officer is told; never a joiner");
+          assert.deepEqual(
+            deliveries.filter((d) => d.event_type === "officer_term.end" && d.channel === "in_app").map((d) => d.recipient_user_id),
+            [ADMIN],
+            "the ended officer is told in-app",
+          );
+          assert.equal(deliveries.filter((d) => d.event_type === "member.reject_join").length, 0, "a rejected requester gets no in-app notification");
+
+          // No event payload carries an address, a phone, or the officer's text.
+          const all = JSON.stringify(events.map((e) => e.payload));
+          assert.ok(!all.includes("@"), "no '@' anywhere in any event payload");
+          assert.ok(!all.includes("2348095551"), "no phone number in any event payload");
+          assert.ok(!all.includes("looks fake") && !all.includes("integration test"), "no officer free text in any event payload");
+          const rejected = events.find((e) => e.event_type === "member.reject_join")!;
+          assert.equal(rejected.payload["member_name"], "Reject Me", "the rejection event carries the requester's name");
+
+          // ── replay: the same messages again change nothing ─────────────────────
+          for (const m of messages) await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
+          const eventsAfter = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_events where community_id = ${COMMUNITY}`).n;
+          const deliveriesAfter = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_deliveries where community_id = ${COMMUNITY}`).n;
+          assert.equal(eventsAfter, events.length, "replay created no duplicate event");
+          assert.equal(deliveriesAfter, deliveries.length, "replay created no duplicate delivery");
+
+          // created is referenced so the member.create path is demonstrably exercised
+          assert.ok(created);
+      });
+      console.log("integration evidence:", JSON.stringify(evidence));
+    } finally {
+      await sql.end({ timeout: 2 });
+    }
+  });
+
+  it("M13.3 host publish — all three notify targets end-to-end through the real pipeline", async () => {
+    // Covers Priority 5 of the M13.3 brief: the host's choice at publish
+    // reaches the right in-app recipients through the REAL audit trigger +
+    // pgmq + processor, with no seeded delivery rows. The three branches:
+    //
+    //   all    → every audience member with an account gets one in-app
+    //            delivery.
+    //   unpaid → the event is recorded but NOBODY is notified: payment
+    //            status cannot be established (no contributions are
+    //            recorded and no path sets an obligation to paid), so the
+    //            worker no longer treats obligation status as payment status.
+    //   none   → no pgmq message is enqueued; no delivery is created.
+    //
+    // The test runs inside one transaction, rolled back at the end (inRollback),
+    // so no row persists in the test database.
+    const sql = connectVerified(gate.verified(), { max: 1 });
+    const evidence: Record<string, unknown> = {};
+    try {
+      await inRollback(sql, async (tx: Tx) => {
+          // ── Fixtures: two users, two members linked to them, three drafts.
+          const OWING = scope.uuid();
+          const PAID = scope.uuid();
+          const COMMUNITY2 = scope.uuid();
+          const OWNER_TERM2 = scope.uuid();
+          const COL_ALL = scope.uuid();
+          const COL_UNPAID = scope.uuid();
+          const COL_NONE = scope.uuid();
+          const OWING_EMAIL = scope.address();
+          const PAID_EMAIL = scope.address();
+
+          await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
+            (${OWING}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${OWING_EMAIL}, now()),
+            (${PAID},  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${PAID_EMAIL},  now())`;
+          await tx`insert into public.users (id, full_name, email) values
+            (${OWING}, 'M13.3 Owing', ${OWING_EMAIL}),
+            (${PAID},  'M13.3 Paid',  ${PAID_EMAIL})
+            on conflict (id) do update set full_name = excluded.full_name`;
+          await tx`insert into public.communities (id, slug, name, type, is_personal, created_by)
+            values (${COMMUNITY2}, ${scope.slug()}, 'ITest Pub', 'social_group', false, ${OWING})`;
+          await tx`insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
+            (${OWNER_TERM2}, ${COMMUNITY2}, ${OWING}, 'owner', 'M13.3 Owing', 'created')`;
+
+          const asOwner = async <T>(fn: () => Promise<T>): Promise<T> => {
+            await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: OWING, role: "authenticated" })}, true)`;
+            await tx`set local role authenticated`;
+            try {
+              return await fn();
+            } finally {
+              await tx`reset role`;
+            }
+          };
+
+          // Both users become members of the community (via create_member
+          // which is the real audited domain function). Linking a member to
+          // its auth user lives in `members.user_id`.
+          const owingMemberId = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY2}::uuid, 'Owing Member', '+2348095552001', 'owing@m13-3.example.test') as id`,
+            ),
+          ).id;
+          const paidMemberId = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY2}::uuid, 'Paid Member', '+2348095552002', 'paid@m13-3.example.test') as id`,
+            ),
+          ).id;
+          // Linking a member to an auth user requires both user_id and
+          // claimed_at (members_claimed_consistently check). This stands in
+          // for the real claim flow, which does not exist yet (D-LINK).
+          await tx`update public.members set user_id = ${OWING}, claimed_at = now() where id = ${owingMemberId}`;
+          await tx`update public.members set user_id = ${PAID},  claimed_at = now() where id = ${paidMemberId}`;
+
+          // Three identical draft collections, one per branch.
+          for (const id of [COL_ALL, COL_UNPAID, COL_NONE]) {
+            const slug = scope.slug();
+            await tx`insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, created_by, audience_mode)
+              values (${id}, ${COMMUNITY2}, ${slug}, 'ITest Pub', 'dues', 'managed', 'fixed', 500000, 'draft', ${OWING}, 'all_members')`;
+          }
+
+          // For the "unpaid" cohort to be meaningful, give each member an
+          // obligation on COL_UNPAID — one that is still owed (status
+          // 'unpaid' from app.assign_obligations' default) and one that is
+          // exempt (via the real audited domain function). An exempt
+          // obligation does not count as owing, so the unpaid cohort is
+          // exactly {OWING}. The 'paid' status is deliberately not used
+          // here: a paid obligation only comes from a Paystack-verified
+          // contribution (CASH-02) and this test cannot create one.
+          await asOwner(() => tx`select app.assign_obligations(${COL_UNPAID}::uuid, array[${owingMemberId}::uuid, ${paidMemberId}::uuid])`);
+          const paidObligationId = first(
+            await tx<{ id: string }[]>`select id from public.obligations where collection_id = ${COL_UNPAID} and member_id = ${paidMemberId}`,
+          ).id;
+          await asOwner(() => tx`select app.exempt_obligation(${paidObligationId}::uuid, 'integration test: exempt stands in for paid')`);
+
+          // ── Call app.publish_collection three times (all / unpaid / none).
+          const resAll = first(await asOwner(() => tx<{ status: string }[]>`select app.publish_collection(${COL_ALL}::uuid, 'draft'::public.collection_status, null, 'all') as status`));
+          const resUnpaid = first(await asOwner(() => tx<{ status: string }[]>`select app.publish_collection(${COL_UNPAID}::uuid, 'draft'::public.collection_status, null, 'unpaid') as status`));
+          const resNone = first(await asOwner(() => tx<{ status: string }[]>`select app.publish_collection(${COL_NONE}::uuid, 'draft'::public.collection_status, null, 'none') as status`));
+          assert.equal(resAll.status, "active");
+          assert.equal(resUnpaid.status, "active");
+          assert.equal(resNone.status, "active");
+
+          // ── The real trigger produced these messages for this community.
+          const messages = await tx<{ message: Record<string, unknown> }[]>`
+            select message from pgmq.q_notification_events
+            where message ->> 'community_id' = ${COMMUNITY2}
+              and (message ->> 'action') like 'collection.%'
+            order by msg_id`;
+          const actions = messages.map((m) => String(m.message["action"]));
+          evidence["pub_actions"] = actions;
+          assert.deepEqual(
+            [...actions].sort(),
+            ["collection.publish", "collection.publish_remind_unpaid"].sort(),
+            "silent publish produced no pgmq message; the other two did",
+          );
+
+          // ── Run the real processor over those messages.
+          for (const m of messages) {
+            await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
+          }
+
+          // ── Assertions on the delivery rows the processor created.
+          const deliveries = await tx<{ event_type: string; recipient_user_id: string; recipient_member_id: string }[]>`
+            select e.event_type, d.recipient_user_id::text as recipient_user_id, d.recipient_member_id::text as recipient_member_id
+            from public.notification_deliveries d
+            join public.notification_events e on e.id = d.notification_event_id
+            where d.community_id = ${COMMUNITY2}
+              and d.channel = 'in_app'
+            order by e.event_type, d.recipient_user_id`;
+          evidence["deliveries"] = deliveries;
+
+          const forAll = deliveries.filter((d) => d.event_type === "collection.publish");
+          const forUnpaid = deliveries.filter((d) => d.event_type === "collection.publish_remind_unpaid");
+
+          assert.equal(forAll.length, 2, "notify=all reaches both audience members");
+          assert.deepEqual(
+            [...forAll.map((d) => d.recipient_user_id)].sort(),
+            [OWING, PAID].sort(),
+            "notify=all names both members",
+          );
+          assert.equal(forUnpaid.length, 0, "notify=unpaid reaches nobody: payment status cannot be established");
+          const unpaidEvents = await tx<{ c: number }[]>`select count(*)::int as c from public.notification_events where community_id = ${COMMUNITY2} and event_type = 'collection.publish_remind_unpaid'`;
+          assert.equal(unpaidEvents[0]?.c, 1, "the unpaid publish event is still recorded for the audit trail");
+
+          // There is no `collection.publish_silent` event or delivery.
+          const silent = await tx<{ c: number }[]>`select count(*)::int as c from public.notification_events where community_id = ${COMMUNITY2} and event_type = 'collection.publish_silent'`;
+          assert.equal(silent[0]?.c, 0, "silent publish wrote no notification_event");
+      });
+      console.log("M13.3 integration evidence:", JSON.stringify(evidence));
+    } finally {
+      await sql.end({ timeout: 2 });
+    }
+  });
+
+  it("M13.3 post-publish reminder — end-to-end + idempotency, no email, no duplicates", async () => {
+    // Covers the post-publish reminder brief (20261029100000):
+    //   · the real app.send_collection_publish_reminder function fires the
+    //     real audit trigger, enqueues the real pgmq message, and the real
+    //     processor fans it out to the correct cohort for 'all' / 'unpaid';
+    //   · a duplicate submission under the same idempotency_key creates NO
+    //     second audit, NO second pgmq message and NO second delivery;
+    //   · a fresh key fires a second real event through the pipeline;
+    //   · email remains disabled: no delivery row is sent, no email is
+    //     emitted (the processor would have surfaced that otherwise).
+    //
+    // One transaction, rolled back at the end (inRollback).
+    const sql = connectVerified(gate.verified(), { max: 1 });
+    const evidence: Record<string, unknown> = {};
+    try {
+      await inRollback(sql, async (tx: Tx) => {
+          const OWING = scope.uuid();
+          const PAID = scope.uuid();
+          const COMMUNITY3 = scope.uuid();
+          const OWNER_TERM3 = scope.uuid();
+          const COL = scope.uuid();
+          const OWING_EMAIL = scope.address();
+          const PAID_EMAIL = scope.address();
+
+          await tx`insert into auth.users (id, instance_id, aud, role, email, email_confirmed_at) values
+            (${OWING}, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${OWING_EMAIL}, now()),
+            (${PAID},  '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', ${PAID_EMAIL},  now())`;
+          await tx`insert into public.users (id, full_name, email) values
+            (${OWING}, 'Rem Owing', ${OWING_EMAIL}),
+            (${PAID},  'Rem Paid',  ${PAID_EMAIL})
+            on conflict (id) do update set full_name = excluded.full_name`;
+          await tx`insert into public.communities (id, slug, name, type, is_personal, created_by)
+            values (${COMMUNITY3}, ${scope.slug()}, 'ITest Reminders', 'social_group', false, ${OWING})`;
+          await tx`insert into public.officer_terms (id, community_id, user_id, role, actor_name_snapshot, start_reason) values
+            (${OWNER_TERM3}, ${COMMUNITY3}, ${OWING}, 'owner', 'Rem Owing', 'created')`;
+
+          const asOwner = async <T>(fn: () => Promise<T>): Promise<T> => {
+            await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: OWING, role: "authenticated" })}, true)`;
+            await tx`set local role authenticated`;
+            try {
+              return await fn();
+            } finally {
+              await tx`reset role`;
+            }
+          };
+
+          const owingMemberId = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY3}::uuid, 'Owing Member', '+2348095553001', 'rem-owing@itest.example.test') as id`,
+            ),
+          ).id;
+          const paidMemberId = first(
+            await asOwner(
+              () => tx<{ id: string }[]>`select app.create_member(${COMMUNITY3}::uuid, 'Paid Member', '+2348095553002', 'rem-paid@itest.example.test') as id`,
+            ),
+          ).id;
+          await tx`update public.members set user_id = ${OWING}, claimed_at = now() where id = ${owingMemberId}`;
+          await tx`update public.members set user_id = ${PAID},  claimed_at = now() where id = ${paidMemberId}`;
+
+          // One published collection, two obligations: owing stays unpaid,
+          // paid becomes exempt (stands in for 'paid' which only cash can
+          // reach, same as the publish-time integration test above).
+          await tx`insert into public.collections (id, community_id, slug, name, category, participation_mode, amount_model, fixed_amount_kobo, status, created_by, audience_mode, published_at, published_by)
+            values (${COL}, ${COMMUNITY3}, ${scope.slug()}, 'ITest Reminder', 'dues', 'managed', 'fixed', 500000, 'active', ${OWING}, 'all_members', now(), ${OWING})`;
+          await asOwner(() => tx`select app.assign_obligations(${COL}::uuid, array[${owingMemberId}::uuid, ${paidMemberId}::uuid])`);
+          const paidObligationId = first(
+            await tx<{ id: string }[]>`select id from public.obligations where collection_id = ${COL} and member_id = ${paidMemberId}`,
+          ).id;
+          await asOwner(() => tx`select app.exempt_obligation(${paidObligationId}::uuid, 'integration test: exempt stands in for paid')`);
+
+          // ── First reminder (all) ─────────────────────────────────────────────
+          const idempotencyA = "itest-rem-first-one-two-three";
+          const resAll = first(
+            await asOwner(
+              () => tx<{ audit_log_id: string; created: boolean; notify_target: string }[]>`
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'all', ${idempotencyA}, 'first')`,
+            ),
+          );
+          evidence["first_all"] = resAll;
+          assert.equal(resAll.created, true, "first reminder is a fresh request");
+          assert.equal(resAll.notify_target, "all");
+
+          // Idempotent replay — same key, same target: created=false, SAME audit_log_id.
+          const resReplay = first(
+            await asOwner(
+              () => tx<{ audit_log_id: string; created: boolean }[]>`
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'all', ${idempotencyA}, 'replay')`,
+            ),
+          );
+          evidence["replay"] = resReplay;
+          assert.equal(resReplay.created, false, "replay with same key is not a fresh request");
+          assert.equal(resReplay.audit_log_id, resAll.audit_log_id, "replay reuses the original audit_log_id");
+
+          // Second reminder (unpaid) with a fresh key.
+          const idempotencyB = "itest-rem-second-four-five-six";
+          const resUnpaid = first(
+            await asOwner(
+              () => tx<{ audit_log_id: string; created: boolean; notify_target: string }[]>`
+                select * from app.send_collection_publish_reminder(${COL}::uuid, 'unpaid', ${idempotencyB}, 'later unpaid')`,
+            ),
+          );
+          evidence["second_unpaid"] = resUnpaid;
+          assert.equal(resUnpaid.created, true, "a fresh key is a fresh reminder");
+
+          // ── Audit log check: exactly TWO reminder rows for this collection.
+          // Both rows are written in this one transaction, so created_at (now(), the
+          // transaction start) is identical and alone does not order them; `action`
+          // breaks the tie (M13.2 Phase 4: the order flipped on the test stack).
+          const auditRows = await tx<{ action: string }[]>`
+            select action from public.audit_logs
+            where community_id = ${COMMUNITY3}
+              and object_id = ${COL}
+              and action like 'collection.remind%'
+            order by created_at, action`;
+          evidence["audit_actions"] = auditRows.map((r) => r.action);
+          assert.deepEqual(
+            auditRows.map((r) => r.action),
+            ["collection.remind", "collection.remind_unpaid"],
+            "exactly two audit rows: one fresh per unique idempotency key, replay wrote nothing",
+          );
+
+          // ── pgmq had two messages for this collection; the processor runs them.
+          const messages = await tx<{ message: Record<string, unknown> }[]>`
+            select message from pgmq.q_notification_events
+            where message ->> 'community_id' = ${COMMUNITY3}
+              and (message ->> 'action') like 'collection.remind%'
+            order by msg_id`;
+          evidence["pgmq_actions"] = messages.map((m) => String(m.message["action"]));
+          assert.equal(messages.length, 2, "exactly two pgmq messages: the replay enqueued nothing");
+
+          for (const m of messages) {
+            await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
+          }
+
+          // ── Delivery rows: 'all' reaches both; 'unpaid' reaches nobody
+          //    (payment-status targeting is disabled).
+          const deliveries = await tx<{ event_type: string; recipient_user_id: string }[]>`
+            select e.event_type, d.recipient_user_id::text as recipient_user_id
+            from public.notification_deliveries d
+            join public.notification_events e on e.id = d.notification_event_id
+            where d.community_id = ${COMMUNITY3}
+              and d.channel = 'in_app'
+            order by e.event_type, d.recipient_user_id`;
+          evidence["deliveries"] = deliveries;
+
+          const forAll = deliveries.filter((d) => d.event_type === "collection.remind");
+          const forUnpaid = deliveries.filter((d) => d.event_type === "collection.remind_unpaid");
+
+          assert.equal(forAll.length, 2, "remind=all reaches both audience members");
+          assert.deepEqual(
+            [...forAll.map((d) => d.recipient_user_id)].sort(),
+            [OWING, PAID].sort(),
+          );
+          assert.equal(forUnpaid.length, 0, "remind=unpaid reaches nobody: payment status cannot be established");
+
+          // ── Replay the queue messages: no new events, no new deliveries.
+          const eventsBefore = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_events where community_id = ${COMMUNITY3}`).n;
+          const deliveriesBefore = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_deliveries where community_id = ${COMMUNITY3}`).n;
+          for (const m of messages) {
+            await processNotificationMessage(tx as unknown as postgres.TransactionSql, m.message);
+          }
+          const eventsAfter = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_events where community_id = ${COMMUNITY3}`).n;
+          const deliveriesAfter = first(await tx<{ n: number }[]>`select count(*)::int as n from public.notification_deliveries where community_id = ${COMMUNITY3}`).n;
+          assert.equal(eventsAfter, eventsBefore, "replaying the queue created no duplicate event");
+          assert.equal(deliveriesAfter, deliveriesBefore, "replaying the queue created no duplicate delivery");
+
+          // Email stays disabled: no email delivery row is sent in this environment.
+          const emailDeliveries = await tx<{ status: string }[]>`
+            select status::text as status
+            from public.notification_deliveries
+            where community_id = ${COMMUNITY3} and channel = 'email'`;
+          evidence["email_statuses"] = emailDeliveries.map((e) => e.status);
+          assert.ok(
+            emailDeliveries.every((e) => e.status !== "sent"),
+            "no email was sent (email_sending_enabled is off in this environment)",
+          );
+      });
+      console.log("M13.3 reminder integration evidence:", JSON.stringify(evidence));
+    } finally {
+      await sql.end({ timeout: 2 });
+    }
+  });
+});

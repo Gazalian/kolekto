@@ -79,6 +79,14 @@ select is_empty(
       and not exists (
         select 1 from pg_policy p where p.polrelid = c.oid
       )
+      -- The intended set. M13.3 R2 (20261109100000) made these two evidence
+      -- tables policy-less on purpose: RLS forced, every client grant revoked,
+      -- readable only through app.* functions. 49_m13_3_communication_policy.sql
+      -- asserts they stay that way.
+      and c.relname not in (
+        'community_communication_attestations',
+        'member_communication_choices'
+      )
     order by c.relname
   $$,
   'every table in public has at least one policy — a policy-less table is reachable only by the service role, which should be a decision, not an oversight'

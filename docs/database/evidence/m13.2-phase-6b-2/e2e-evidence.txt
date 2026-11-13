@@ -1,0 +1,34 @@
+clock|2026-11-05 16:12:25
+audit|01a1ac7a-8286-7bac-abfa-e941594d1096|865b8658-2d4d-44ff-8531-ec3d8bb79261|member.create|officer|632db48b-4705-409e-9579-80b4460d2493|member|01a1ac7a-81f8-73ae-805b-3dba61f5ecee|2026-11-05 16:11:12.109642+00
+community|865b8658-2d4d-44ff-8531-ec3d8bb79261|itest-a28187cc-2|E2E Integration Test|632db48b-4705-409e-9579-80b4460d2493
+member|01a1ac7a-81f8-73ae-805b-3dba61f5ecee|865b8658-2d4d-44ff-8531-ec3d8bb79261||0001
+archive|113|0|2026-11-05 16:11:12.109642+00|2026-11-05 16:11:12.761942+00|01a1ac7a-8286-7bac-abfa-e941594d1096|865b8658-2d4d-44ff-8531-ec3d8bb79261|member.create|01a1ac7a-81f8-73ae-805b-3dba61f5ecee|632db48b-4705-409e-9579-80b4460d2493
+archive_keys|action,actor_name,actor_type,actor_user_id,after_state,audit_log_id,community_id,created_at,object_id,object_type
+event|01a1ac7a-834d-7520-8532-324d6033eeb4|865b8658-2d4d-44ff-8531-ec3d8bb79261|member.create|member.create:01a1ac7a-81f8-73ae-805b-3dba61f5ecee|632db48b-4705-409e-9579-80b4460d2493|01a1ac7a-81f8-73ae-805b-3dba61f5ecee|{"actor_name": "E2E Owner", "member_code": "0001", "member_name": "E2E Member a28187cc", "community_id": "865b8658-2d4d-44ff-8531-ec3d8bb79261", "community_name": "E2E Integration Test", "community_slug": "itest-a28187cc-2"}
+delivery|01a1ac7a-839d-7c1c-8145-b468c48aded1|01a1ac7a-834d-7520-8532-324d6033eeb4|email|sent||itest+a28187cc-3@e2e-mailpit.example.test|unverified_supplied||membership_confirmation:01a1ac7a-81f8-73ae-805b-3dba61f5ecee|transactional|1|14da42364eb113befa61cc85171da8c0@kolekto.invalid||
+delivery_ledger|1|2026-11-05 16:11:13.03208+00|2026-11-05 16:11:13.03208+00
+q_main|0|0
+a_main|1
+q_held|0
+a_held|0
+email_status|dead|76
+email_status|sent|85
+email_status|skipped|24
+email_quarantined|28
+open_any|0
+leases|0
+sender_state|1|f|null|null|2026-11-04 14:55:10.704471+00
+switch_fn|f
+mutex_held|0
+advisory_any|0
+itest_sessions|0
+l4|85
+ledger_total|153|2026-11-05 16:11:46.644637+00|22
+ledger_since_start|22
+events|185
+events_since_start|26
+audit_count|1
+communities|129|129
+communities_since_start|19
+suppression_log|0
+pgss_ext|1

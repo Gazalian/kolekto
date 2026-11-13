@@ -1,0 +1,78 @@
+server_now | db | declared_host_port | stack_marker_set
+2026-11-06 09:06:40.628162+00 | postgres | 55422 | t
+(1 row)
+--- pause switch and heartbeat
+email_sending_enabled | fn | last_heartbeat_at | last_claim_at | updated_at
+f | f | 2026-11-06 09:05:38.451885+00 | 2026-11-06 09:05:18.623692+00 | 2026-11-06 09:05:38.451885+00
+(1 row)
+--- queue (waiting, read) and archive
+queued | read | archived | held_queued
+0 | 0 | 27 | 0
+(1 row)
+unowned_queue_messages
+0
+(1 row)
+--- deliveries
+channel | status | count
+email | dead | 163
+email | sent | 126
+email | skipped | 27
+in_app | sent | 19
+(4 rows)
+open_email | leases
+0 | 0
+(1 row)
+events
+331
+(1 row)
+communities | itest_communities
+289 | 289
+(1 row)
+--- budget
+l4_used | l4_cap | ledger_total | oldest | newest | older_than_48h
+123 | 180 | 254 | 2026-11-04 15:50:01.131089+00 | 2026-11-06 09:05:22.28117+00 | 0
+(1 row)
+--- locks and sessions
+advisory_locks
+0
+(1 row)
+harness_sessions | worker_sessions | itest_named
+0 | 0 | 0
+(1 row)
+--- worker role
+rolcanlogin | rolsuper | rolbypassrls | rolcreaterole | rolcreatedb | rolreplication | rolinherit | password_set
+t | f | f | f | f | f | f | f
+(1 row)
+memberships
+0
+(1 row)
+tablename | policyname | cmd
+collections | kolekto_itest_worker_collections_select | SELECT
+communities | kolekto_itest_worker_communities_select | SELECT
+members | kolekto_itest_worker_members_select | SELECT
+notification_deliveries | kolekto_itest_worker_notification_deliveries_insert | INSERT
+notification_deliveries | kolekto_itest_worker_notification_deliveries_select | SELECT
+notification_events | kolekto_itest_worker_notification_events_insert | INSERT
+notification_events | kolekto_itest_worker_notification_events_select | SELECT
+obligations | kolekto_itest_worker_obligations_select | SELECT
+officer_terms | kolekto_itest_worker_officer_terms_select | SELECT
+role_permissions | kolekto_itest_worker_role_permissions_select | SELECT
+(10 rows)
+--- statements the worker role actually ran (texts of role changes are excluded)
+calls | rows | query
+162 | 162 | select app.purge_stale_send_attempts()
+1501 | 1501 | select app.record_sender_heartbeat($1)
+346 | 346 | select delivery_id, claimed, lease_token, lease_expires_at, attempt_count, reason from app.claim_next_notifica
+1554 | 261 | select msg_id, read_ct, message from pgmq.read($3, $1, $2)
+6 | 6 | select pgmq.archive($2, $1::bigint)
+182 | 182 | select pgmq.delete($2, $1::bigint)
+80 | 80 | select reservation, retry_at from app.reserve_email_attempt($1::uuid)
+72 | 72 | select settled, reason from app.resolve_notification_claim( $1::uuid, $2, $3, $4, $5, $6::timestamptz )
+(8 rows)
+--- switch writes recorded for any role
+rolname | calls | query
+kolekto_itest | 152 | select app.set_email_sending_enabled($1) as enabled
+(1 row)
+stats_reset
+2026-11-04 15:04:56.639881+00
+(1 row)

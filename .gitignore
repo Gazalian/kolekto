@@ -7,6 +7,7 @@ dist/
 build/
 .next/
 .next-e2e/
+.next-qa/
 out/
 *.tsbuildinfo
 
@@ -28,6 +29,13 @@ apps/web/next-env.d.ts
 # PRODUCTION project. It never happens again.
 supabase/.temp/
 supabase/.branches/
+# Same for the dedicated integration-test stack's work directory (M13.2). The
+# rule above is anchored to the top level and does not cover it.
+supabase-itest/supabase/.temp/
+supabase-itest/supabase/.branches/
+# A hash-checked copy of supabase/migrations/, written by scripts/itest/itest.mjs.
+# supabase/migrations/ is the only tracked migration history.
+supabase-itest/supabase/migrations/
 
 # Logs, OS, editor
 *.log

@@ -204,6 +204,12 @@ function amountOwed(obligation: ContributionObligation): Kobo {
   if (obligation.status === "cancelled") {
     throw new ContributionError("NOTHING_OWED", "This is no longer being asked of you.");
   }
+  // Unreachable while no path can mark an obligation paid (CASH-02), and the
+  // first thing a verified payment makes true. Without it, a paid member would
+  // be offered the full amount again.
+  if (obligation.status === "paid") {
+    throw new ContributionError("NOTHING_OWED", "You have already paid this in full.");
+  }
 
   const owed = (obligation.expectedAmountKobo - obligation.waivedAmountKobo) as Kobo;
   if (owed <= ZERO) {

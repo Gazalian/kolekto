@@ -81,8 +81,17 @@ export function fromNaira(input: string | number): Kobo {
   const raw = String(input).trim().replace(/[₦\s,]/g, "");
   if (raw === "") throw new MoneyError("fromNaira() received an empty value.");
 
-  const shorthand = /^(-?\d+(?:\.\d+)?)k$/i.exec(raw);
-  const normalised = shorthand ? String(Number(shorthand[1]) * 1000) : raw;
+  // "1.005k" is ₦1,005. Multiplied by 1,000 by moving the decimal point three
+  // places in the text, never by floating-point multiplication: 1.005 * 1000 is
+  // 1004.9999999999999 in a double, which the strict match below then refused.
+  const shorthand = /^(-?)(\d+)(?:\.(\d+))?k$/i.exec(raw);
+  let normalised = raw;
+  if (shorthand) {
+    const [, shorthandSign, shorthandWhole, shorthandFraction = ""] = shorthand;
+    const shifted = shorthandWhole! + shorthandFraction.slice(0, 3).padEnd(3, "0");
+    const rest = shorthandFraction.slice(3);
+    normalised = `${shorthandSign}${shifted}${rest ? `.${rest}` : ""}`;
+  }
 
   const match = /^(-?)(\d+)(?:\.(\d{1,2}))?$/.exec(normalised);
   if (!match) {

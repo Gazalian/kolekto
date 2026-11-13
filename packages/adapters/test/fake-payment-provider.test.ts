@@ -457,3 +457,44 @@ describe("the boundary keeps provider payloads out of the domain", () => {
     assert.equal(p.initializeCalls[0]?.currency, "NGN");
   });
 });
+
+describe("completing a checkout on the fake (the local fake checkout page)", () => {
+  it("records the contributor's outcome, which verify then reports", async () => {
+    const p = createFakePaymentProvider({ webhookSecret: SECRET, defaultScenario: "pending" });
+    await p.initialize(fixtureInitializationRequest());
+
+    const before = await p.verify(FIXTURE_REFERENCE);
+    assert.ok(isOk(before));
+    assert.equal(before.value.status, "pending", "nothing decided yet");
+
+    p.completeCheckout(FIXTURE_REFERENCE, "success");
+    const after = await p.verify(FIXTURE_REFERENCE);
+    assert.ok(isOk(after));
+    assert.equal(after.value.status, "succeeded");
+    assert.equal(after.value.amount, FIXTURE_AMOUNT, "the amount it was asked to charge, not a new one");
+  });
+
+  it("reports failure and abandonment as the contributor chose", async () => {
+    for (const [outcome, status] of [["payment_failed", "failed"], ["abandoned", "abandoned"]] as const) {
+      const p = createFakePaymentProvider({ webhookSecret: SECRET, defaultScenario: "pending" });
+      await p.initialize(fixtureInitializationRequest());
+      p.completeCheckout(FIXTURE_REFERENCE, outcome);
+      const verified = await p.verify(FIXTURE_REFERENCE);
+      assert.ok(isOk(verified));
+      assert.equal(verified.value.status, status);
+    }
+  });
+
+  it("refuses a reference it never initialized", () => {
+    const p = provider();
+    assert.throws(() => p.completeCheckout(FIXTURE_REFERENCE_OTHER, "success"), /no checkout/);
+  });
+
+  it("remembers the amount and callback URL it was given", async () => {
+    const p = provider();
+    assert.equal(p.checkoutFor(FIXTURE_REFERENCE), null);
+    const request = fixtureInitializationRequest();
+    await p.initialize(request);
+    assert.deepEqual(p.checkoutFor(FIXTURE_REFERENCE), { amount: request.amount, callbackUrl: request.callbackUrl });
+  });
+});

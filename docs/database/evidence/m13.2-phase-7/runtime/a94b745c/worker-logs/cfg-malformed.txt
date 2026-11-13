@@ -1,0 +1,1 @@
+Worker fatal: {"name":"TypeError","code":"ERR_INVALID_URL","message":"Invalid URL"}

@@ -73,7 +73,7 @@ test("an organiser can send a reminder on an already-published collection, twice
   });
   await expect(page).toHaveURL(/\/collections\/reminder-dues/, { timeout: 45_000 });
 
-  // Assign the member so the unpaid cohort is non-empty.
+  // Assign the member to the collection.
   await page.getByRole("button", { name: "Members" }).click();
   await page.getByRole("button", { name: "Add members" }).click();
   const assignDialog = page.getByRole("dialog");
@@ -102,12 +102,14 @@ test("an organiser can send a reminder on an already-published collection, twice
   // production UI state for this fixture, and the worker-integration test
   // covers the non-zero audience path end-to-end.
   //
-  // Wait for the preview fetch to finish before looking for the submit
-  // button: while the preview is loading, the button text falls back to
-  // "Send to every members" (count is unknown), and the `\d+ member`
-  // locator below would not match until the preview resolves.
-  await expect(reminderDialog.getByText(/\d+ eligible members?/)).toBeVisible();
-  const sendButton = reminderDialog.getByRole("button", { name: /^Send to \d+ member/ });
+  // Wait for the preview fetch to finish (the in-app count line appears)
+  // before submitting.
+  await expect(reminderDialog.getByText(/\d+ members? ha(s|ve) a Kolekto account/)).toBeVisible();
+  // "Only members who have not paid" is shown but disabled, with the reason:
+  // Kolekto does not record payments, so it cannot tell who has paid.
+  await expect(reminderDialog.getByRole("radio", { name: /have not paid/ })).toBeDisabled();
+  await expect(reminderDialog.getByText(/does not record payments yet/)).toBeVisible();
+  const sendButton = reminderDialog.getByRole("button", { name: "Send reminder" });
   await expect(sendButton).toBeVisible();
   await expect(sendButton).toBeEnabled();
   await sendButton.click();
@@ -126,8 +128,8 @@ test("an organiser can send a reminder on an already-published collection, twice
   await reminderButton.click();
   const dialog2 = page.getByRole("dialog");
   await expect(dialog2.getByText(/Send a reminder for Reminder Dues/)).toBeVisible();
-  await expect(dialog2.getByText(/\d+ eligible members?/)).toBeVisible();
-  await dialog2.getByRole("button", { name: /^Send to \d+ member/ }).click();
+  await expect(dialog2.getByText(/\d+ members? ha(s|ve) a Kolekto account/)).toBeVisible();
+  await dialog2.getByRole("button", { name: "Send reminder" }).click();
   await expect(dialog2.getByText(/Reminder queued for \d+ recipients?\./)).toBeVisible();
   await dialog2.getByRole("button", { name: "Done" }).click();
 

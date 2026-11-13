@@ -22,23 +22,17 @@
 import { z } from "zod";
 import { nairaAmountSchema, type CollectionFieldType } from "./collection.ts";
 
-export const contributorContactSchema = z
-  .object({
-    fullName: z.string().trim().min(1, "Enter your name").max(120),
-    email: z.union([z.string().trim().email("Enter a valid email address"), z.literal("")]).optional(),
-    phone: z
-      .union([z.string().trim().min(7, "Enter a valid phone number").max(20), z.literal("")])
-      .optional(),
-  })
-  .superRefine((value, ctx) => {
-    if (!value.email && !value.phone) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["email"],
-        message: "Enter an email address or a phone number, so you can be sent a receipt",
-      });
-    }
-  });
+/**
+ * All three are required (owner decision, 2026-11-11). The email address is
+ * where the receipt goes and is required by the payment provider to start a
+ * checkout; the phone number lets the organiser reach the contributor about
+ * the payment.
+ */
+export const contributorContactSchema = z.object({
+  fullName: z.string().trim().min(1, "Enter your name").max(120),
+  email: z.string().trim().min(1, "Enter your email address").max(254).email("Enter a valid email address"),
+  phone: z.string().trim().min(1, "Enter your phone number").min(7, "Enter a valid phone number").max(20),
+});
 
 export type ContributorContact = z.infer<typeof contributorContactSchema>;
 

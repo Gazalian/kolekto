@@ -20,7 +20,9 @@ const eslintConfig = [
   // webServer writes (next.config.ts `distDir`, playwright.config.ts), kept
   // out of `.next/**` so it doesn't collide with a running `next dev`
   // server. It needs the same lint ignore `.next/**` already gets.
-  { ignores: [".next/**", ".next-e2e/**", "next-env.d.ts"] },
+  // `.next-qa/**` is the same thing for the `kolekto-web-qa` dev server in
+  // .claude/launch.json (`NEXT_DIST_DIR=.next-qa`).
+  { ignores: [".next/**", ".next-e2e/**", ".next-qa/**", "next-env.d.ts"] },
 ];
 
 export default eslintConfig;

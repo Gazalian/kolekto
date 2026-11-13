@@ -262,20 +262,26 @@ reset role;
 --
 -- The distinction that makes this a narrowing rather than a removal: the ledger
 -- exists and is empty, and nothing in the database can write to it.
+--
+-- NARROWED AGAIN BY M8.3/M8.4 (20261111100000, 20261111100100). Money IN now
+-- has a record and a writer: payment attempts, provider transactions,
+-- contributions, and app.complete_payment_capture posting capture/fee journals
+-- through app.post_payment_journal. 52_payments.sql decides their behaviour.
+-- Money OUT — wallets, withdrawals, payouts, settlement releases, refunds,
+-- disputes — still has no table and no function, and is still asserted here.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 select is(
   (select count(*)::integer from information_schema.tables
    where table_schema = 'public'
      and table_name in (
-       'payment_attempts', 'payments', 'contributions', 'contribution_intents',
-       'contribution_lines', 'provider_transactions', 'tickets',
+       'payments', 'tickets',
        'wallets', 'withdrawals', 'withdrawal_accounts', 'payouts',
        'settlements', 'provider_settlements', 'balance_releases',
        'refunds', 'disputes', 'holds', 'webhook_events'
      )),
   0,
-  'no payment, contribution, wallet, withdrawal, payout, settlement or refund table exists — M8.1 built the ledger, not the money movement'
+  'no wallet, withdrawal, payout, settlement, refund or dispute table exists — M8.3/M8.4 built money in, not money out'
 );
 
 -- D-02/ADR 0015: there is no community wallet, under any name, ever.
@@ -286,26 +292,28 @@ select is(
   (select count(*)::integer from pg_proc p
    join pg_namespace n on n.oid = p.pronamespace
    where n.nspname = 'app'
-     and (p.proname like '%payment%' or p.proname like '%payout%'
+     and (p.proname like '%payout%'
           or p.proname like '%withdraw%' or p.proname like '%settle%'
-          or p.proname like '%refund%'   or p.proname like '%contribution%')),
+          or p.proname like '%refund%')),
   0,
-  'and no app.* function initiates a payment, settles, withdraws, pays out or refunds'
+  'and no app.* function settles, withdraws, pays out or refunds'
 );
 
--- The ledger exists. Nothing writes to it. Every future writer is an app.*
--- SECURITY DEFINER function in a reviewed migration, and none has been written,
--- so the guard functions that REFUSE writes are the only ledger code there is.
-select is_empty(
+-- The ledger's writers, named. Every writer is an app.* SECURITY DEFINER
+-- function in a reviewed migration, and a new one is a failure here until it is
+-- added on purpose. Today: the capture path's journal poster and the account
+-- provisioner it uses (20261111100100). Release, withdrawal and payout writers
+-- are later milestones.
+select set_eq(
   $$
     select n.nspname || '.' || p.proname
     from pg_proc p
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('public', 'app', 'private')
       and p.prosrc ~* 'insert\s+into\s+public\.ledger_'
-    order by 1
   $$,
-  'no database function posts a journal — M8.1 built the record and its invariants, not a writer (the capture, fee, release, withdrawal and payout writers are later milestones)'
+  $$ values ('app.post_payment_journal'), ('app.ensure_ledger_account') $$,
+  'only the payment capture path writes the ledger — app.post_payment_journal and app.ensure_ledger_account, nothing else'
 );
 
 select is(

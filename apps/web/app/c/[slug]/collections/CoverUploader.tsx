@@ -27,14 +27,28 @@ export function CoverUploader({
   coverImageUrl,
   disabled = false,
   onChanged,
+  ensureCollection,
+  unavailableReason,
+  noun = "flyer",
 }: {
   slug: string;
-  collectionSlug: string;
-  collectionId: string;
+  /** Absent while the creation wizard has not saved a draft yet — `ensureCollection` then creates one. */
+  collectionSlug?: string | null | undefined;
+  collectionId?: string | null | undefined;
   coverImageUrl: string | null;
   disabled?: boolean;
   /** Optional: told the new URL (or null, on remove) whenever it changes — for a caller with no server round trip of its own to learn from, like the creation wizard. */
   onChanged?: (url: string | null) => void;
+  /**
+   * The creation wizard's way of putting the image beside the name: an upload
+   * has to be scoped to a real collection, so choosing a file before the
+   * draft exists creates the draft first, then uploads against it.
+   */
+  ensureCollection?: () => Promise<{ id: string; slug: string } | null>;
+  /** Why the image cannot be added yet — shown instead of an enabled button. */
+  unavailableReason?: string | null | undefined;
+  /** "flyer" for an event, "image" elsewhere. */
+  noun?: string;
 }) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -66,7 +80,18 @@ export function CoverUploader({
     formData.append("cover", file);
 
     startTransition(async () => {
-      const result = await uploadCoverAction(slug, collectionSlug, collectionId, formData);
+      const target =
+        collectionId && collectionSlug
+          ? { id: collectionId, slug: collectionSlug }
+          : ((await ensureCollection?.()) ?? null);
+      if (!target) {
+        URL.revokeObjectURL(localUrl);
+        setPreview(coverImageUrl);
+        setError(`The ${noun} could not be saved yet — check the name, then try again.`);
+        return;
+      }
+
+      const result = await uploadCoverAction(slug, target.slug, target.id, formData);
       URL.revokeObjectURL(localUrl);
 
       if (result.error || !result.url) {
@@ -84,7 +109,7 @@ export function CoverUploader({
   }
 
   function remove(): void {
-    if (!coverImageUrl) return;
+    if (!coverImageUrl || !collectionSlug || !collectionId) return;
     setError(null);
     startTransition(async () => {
       const result = await removeCoverAction(slug, collectionSlug, collectionId, coverImageUrl);
@@ -107,12 +132,12 @@ export function CoverUploader({
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={preview}
-          alt="Collection flyer"
+          alt={`Collection ${noun}`}
           className="max-h-64 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] object-cover"
         />
       ) : (
         <div className="flex h-32 items-center justify-center rounded-[var(--radius-md)] border border-dashed border-[var(--color-border)] text-sm text-[var(--color-text-muted)]">
-          No flyer yet
+          No {noun} yet
         </div>
       )}
 
@@ -121,7 +146,8 @@ export function CoverUploader({
         type="file"
         accept={ACCEPT}
         className="sr-only"
-        aria-label="Collection flyer"
+        aria-label={`Collection ${noun}`}
+        disabled={disabled || isPending || Boolean(unavailableReason)}
         onChange={(event) => {
           choose(event.target.files?.[0]);
           // Clearing the input means picking the same file twice still fires.
@@ -129,17 +155,18 @@ export function CoverUploader({
         }}
       />
 
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Button
           type="button"
           variant="secondary"
           size="sm"
-          disabled={disabled || isPending}
+          disabled={disabled || isPending || Boolean(unavailableReason)}
           onClick={() => inputRef.current?.click()}
         >
           <ImagePlus className="h-4 w-4" aria-hidden="true" />
-          {coverImageUrl ? "Replace flyer" : "Upload a flyer"}
+          {coverImageUrl ? `Replace ${noun}` : `Upload ${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`}
         </Button>
+        {unavailableReason && <span className="text-xs text-[var(--color-text-muted)]">{unavailableReason}</span>}
         {coverImageUrl && (
           <Button type="button" variant="ghost" size="sm" disabled={disabled || isPending} onClick={remove}>
             <Trash2 className="h-4 w-4" aria-hidden="true" /> Remove

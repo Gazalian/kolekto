@@ -1,0 +1,424 @@
+(node:24368) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+(node:21296) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+TAP version 13
+# (node:6020) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: M13.2 Phase 6A — end-to-end notification pipeline to Mailpit
+    # Subtest: member.create: audit → trigger → queue → processor → delivery → sender → Mailpit, once, and replay-safe
+    ok 1 - member.create: audit → trigger → queue → processor → delivery → sender → Mailpit, once, and replay-safe
+      ---
+      duration_ms: 997.614
+      ...
+    1..1
+ok 1 - M13.2 Phase 6A — end-to-end notification pipeline to Mailpit
+  ---
+  duration_ms: 1449.2069
+  type: 'suite'
+  ...
+# (node:25552) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# integration evidence: {"queued_actions":["member.create","member.create","member.join_via_invite","member.join_via_invite","member.join_via_invite","member.reject_join","member.approve_join","officer_term.end"],"outcomes":{"member.create:01a1acf2-8e98-7cdc-8906-d569eb28d6ef":"processed","member.create:01a1acf2-8edf-7c84-9341-3a48284b2650":"skipped/member_unavailable","member.join_via_invite:01a1acf2-8f4d-79dd-95db-72dc2ac0f796":"skipped/member_unavailable","member.join_via_invite:01a1acf2-8f8e-7378-a0bc-c8a188efb3da":"processed","member.join_via_invite:01a1acf2-8fca-7bb4-8c38-4ee97f4f2917":"processed","member.reject_join:01a1acf2-8f4d-79dd-95db-72dc2ac0f796":"processed","member.approve_join:01a1acf2-8f8e-7378-a0bc-c8a188efb3da":"processed","officer_term.end:80c04138-c30f-416c-bb71-46016171a170":"processed"},"events":6,"deliveries":6}
+# Subtest: the processor against the real database
+    # Subtest: handles the approved events end to end, writes pending email rows only for supplied-address membership confirmations, and is replay-safe
+    ok 1 - handles the approved events end to end, writes pending email rows only for supplied-address membership confirmations, and is replay-safe
+      ---
+      duration_ms: 1529.9571
+      ...
+# M13.3 integration evidence: {"pub_actions":["collection.publish","collection.publish_remind_unpaid"],"deliveries":[{"event_type":"collection.publish","recipient_user_id":"9a467945-f725-4943-91ac-989c2deb27c5","recipient_member_id":"01a1acf2-9452-768c-a884-6e94dceff242"},{"event_type":"collection.publish","recipient_user_id":"e2fb948f-9b83-45c1-889f-e65058498593","recipient_member_id":"01a1acf2-9493-78df-a621-13b6c8efd7a0"},{"event_type":"collection.publish_remind_unpaid","recipient_user_id":"9a467945-f725-4943-91ac-989c2deb27c5","recipient_member_id":"01a1acf2-9452-768c-a884-6e94dceff242"}]}
+    # Subtest: M13.3 host publish — all three notify targets end-to-end through the real pipeline
+    ok 2 - M13.3 host publish — all three notify targets end-to-end through the real pipeline
+      ---
+      duration_ms: 958.8079
+      ...
+# M13.3 reminder integration evidence: {"first_all":{"audit_log_id":"01a1acf2-99e7-7cfe-bc11-6f94d6148610","created":true,"notify_target":"all"},"replay":{"audit_log_id":"01a1acf2-99e7-7cfe-bc11-6f94d6148610","created":false,"notify_target":"all"},"second_unpaid":{"audit_log_id":"01a1acf2-9a0d-78db-bbed-671c3bc2d670","created":true,"notify_target":"unpaid"},"audit_actions":["collection.remind","collection.remind_unpaid"],"pgmq_actions":["collection.remind","collection.remind_unpaid"],"deliveries":[{"event_type":"collection.remind","recipient_user_id":"260ef5d7-dfbb-439f-8c2b-1550005c719d"},{"event_type":"collection.remind","recipient_user_id":"aa30f6d1-6b62-4e50-b7ad-8a2eb2bce905"},{"event_type":"collection.remind_unpaid","recipient_user_id":"aa30f6d1-6b62-4e50-b7ad-8a2eb2bce905"}],"email_statuses":[]}
+    # Subtest: M13.3 post-publish reminder — end-to-end + idempotency, no email, no duplicates
+    ok 3 - M13.3 post-publish reminder — end-to-end + idempotency, no email, no duplicates
+      ---
+      duration_ms: 860.5309
+      ...
+    1..3
+ok 2 - the processor against the real database
+  ---
+  duration_ms: 3761.7169
+  type: 'suite'
+  ...
+# (node:33692) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: rate limits against the real database
+    # Subtest: claim+reserve in a transaction grants, then skips at L1
+    ok 1 - claim+reserve in a transaction grants, then skips at L1
+      ---
+      duration_ms: 234.8373
+      ...
+    # Subtest: two concurrent workers serialize on the advisory lock
+    ok 2 - two concurrent workers serialize on the advisory lock
+      ---
+      duration_ms: 2406.9387
+      ...
+    # Subtest: a rolled-back reservation leaves no ledger row
+    ok 3 - a rolled-back reservation leaves no ledger row
+      ---
+      duration_ms: 1058.3798
+      ...
+    1..3
+ok 3 - rate limits against the real database
+  ---
+  duration_ms: 4160.2967
+  type: 'suite'
+  ...
+# (node:28292) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: send claims against the real database
+    # Subtest: races two workers: exactly one owns the delivery
+    ok 1 - races two workers: exactly one owns the delivery
+      ---
+      duration_ms: 444.5129
+      ...
+    # Subtest: gates settle and recover on the live token, caps attempts, refuses terminal rows
+    ok 2 - gates settle and recover on the live token, caps attempts, refuses terminal rows
+      ---
+      duration_ms: 203.3163
+      ...
+    # Subtest: rolls a claim and its attempt reservation back together
+    ok 3 - rolls a claim and its attempt reservation back together
+      ---
+      duration_ms: 423.2683
+      ...
+    1..3
+ok 4 - send claims against the real database
+  ---
+  duration_ms: 1702.4937
+  type: 'suite'
+  ...
+# (node:31772) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: M13.2 P8 — sender-to-Mailpit integration
+    # Subtest: claim → reserve → render → SMTP → settle (rows inserted directly)
+        # Subtest: D1: sends a member.create email and settles the row as sent, once
+        ok 1 - D1: sends a member.create email and settles the row as sent, once
+          ---
+          duration_ms: 706.0583
+          ...
+        # Subtest: D2: renders and sends an officer_invitation.accept email
+        ok 2 - D2: renders and sends an officer_invitation.accept email
+          ---
+          duration_ms: 915.0154
+          ...
+        # Subtest: E4: a sent row is terminal — a second sender call claims nothing and does not call the provider
+        ok 3 - E4: a sent row is terminal — a second sender call claims nothing and does not call the provider
+          ---
+          duration_ms: 1023.7162
+          ...
+        # Subtest: E9: an SMTP-unreachable adapter schedules a transient retry (provider_unreachable) and nothing is settled as sent
+        ok 4 - E9: an SMTP-unreachable adapter schedules a transient retry (provider_unreachable) and nothing is settled as sent
+          ---
+          duration_ms: 947.9964
+          ...
+        1..4
+    ok 1 - claim → reserve → render → SMTP → settle (rows inserted directly)
+      ---
+      duration_ms: 3597.1835
+      type: 'suite'
+      ...
+    1..1
+ok 5 - M13.2 P8 — sender-to-Mailpit integration
+  ---
+  duration_ms: 4296.7812
+  type: 'suite'
+  ...
+# (node:21852) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: email sender runtime against the real database
+    # Subtest: sends a pending delivery and records it as sent
+    ok 1 - sends a pending delivery and records it as sent
+      ---
+      duration_ms: 164.3776
+      ...
+    # Subtest: does not re-send a sent row on replay (no duplicate send)
+    ok 2 - does not re-send a sent row on replay (no duplicate send)
+      ---
+      duration_ms: 1056.6699
+      ...
+    # Subtest: permanent failure → dead with that code, one call only
+    ok 3 - permanent failure → dead with that code, one call only
+      ---
+      duration_ms: 1071.8018
+      ...
+    # Subtest: transient failure retries with a ~5-minute next_retry_at, then succeeds
+    ok 4 - transient failure retries with a ~5-minute next_retry_at, then succeeds
+      ---
+      duration_ms: 2105.1551
+      ...
+    # Subtest: retry exhaustion → dead/retries_exhausted after exactly 3 calls, never a 4th
+    ok 5 - retry exhaustion → dead/retries_exhausted after exactly 3 calls, never a 4th
+      ---
+      duration_ms: 3130.5847
+      ...
+    # Subtest: ambiguous outcome with provider idempotency retries with the same key (one message)
+    ok 6 - ambiguous outcome with provider idempotency retries with the same key (one message)
+      ---
+      duration_ms: 2119.7309
+      ...
+    # Subtest: ambiguous outcome WITHOUT idempotency → dead/outcome_unknown, never retried
+    ok 7 - ambiguous outcome WITHOUT idempotency → dead/outcome_unknown, never retried
+      ---
+      duration_ms: 1035.207
+      ...
+    # Subtest: rate-limit deferral: a community over L2 defers at reservation, consuming no attempt
+    ok 8 - rate-limit deferral: a community over L2 defers at reservation, consuming no attempt
+      ---
+      duration_ms: 128.8922
+      ...
+    # Subtest: L5 defers a per-second-cap breach with a short retry, consuming no attempt (P9-3)
+    ok 9 - L5 defers a per-second-cap breach with a short retry, consuming no attempt (P9-3)
+      ---
+      duration_ms: 115.1441
+      ...
+    # Subtest: L4 defers a per-class daily-cap breach to the oldest counted attempt + 24 h, keeping the address (P9-3)
+    ok 10 - L4 defers a per-class daily-cap breach to the oldest counted attempt + 24 h, keeping the address (P9-3)
+      ---
+      duration_ms: 191.5227
+      ...
+    # Subtest: recovers a crashed worker's expired lease back to pending
+    ok 11 - recovers a crashed worker's expired lease back to pending
+      ---
+      duration_ms: 666.0845
+      ...
+    # Subtest: P9-4: non-idempotent provider sends an expired lease to dead/outcome_unknown instead of pending
+    ok 12 - P9-4: non-idempotent provider sends an expired lease to dead/outcome_unknown instead of pending
+      ---
+      duration_ms: 197.0157
+      ...
+    # Subtest: paused: runSenderTick claims nothing and preserves the queued row
+    ok 13 - paused: runSenderTick claims nothing and preserves the queued row
+      ---
+      duration_ms: 103.7049
+      ...
+    # Subtest: 72-hour expiry turns a stale pending row into dead/event_too_old; a sending row is untouched
+    ok 14 - 72-hour expiry turns a stale pending row into dead/event_too_old; a sending row is untouched
+      ---
+      duration_ms: 114.4421
+      ...
+    # Subtest: maintenance (lease recovery, expiry) runs even while paused
+    ok 15 - maintenance (lease recovery, expiry) runs even while paused
+      ---
+      duration_ms: 121.3915
+      ...
+    # Subtest: health output reflects outcomes and leaks no recipient address
+    ok 16 - health output reflects outcomes and leaks no recipient address
+      ---
+      duration_ms: 1495.0065
+      ...
+    # Subtest: claim eligibility (no provider call)
+        # Subtest: D3: loadSendContext returns event type and payload for a row in the sending state (lease simulated)
+        ok 1 - D3: loadSendContext returns event type and payload for a row in the sending state (lease simulated)
+          ---
+          duration_ms: 134.2186
+          ...
+        # Subtest: E6: a skipped row is never claimed and the provider is never called
+        ok 2 - E6: a skipped row is never claimed and the provider is never called
+          ---
+          duration_ms: 406.7077
+          ...
+        # Subtest: E7: a dead row is never claimed
+        ok 3 - E7: a dead row is never claimed
+          ---
+          duration_ms: 3259.56
+          ...
+        1..3
+    ok 17 - claim eligibility (no provider call)
+      ---
+      duration_ms: 3801.8189
+      type: 'suite'
+      ...
+    1..17
+ok 6 - email sender runtime against the real database
+  ---
+  duration_ms: 18312.5043
+  type: 'suite'
+  ...
+# (node:31448) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: recipient suppression against the real database
+    # Subtest: a claimed delivery whose address is permanently suppressed reserves address_suppressed
+    ok 1 - a claimed delivery whose address is permanently suppressed reserves address_suppressed
+      ---
+      duration_ms: 215.9992
+      ...
+    # Subtest: a claimed delivery whose address is transiently suppressed (future expiry) reserves address_suppressed
+    ok 2 - a claimed delivery whose address is transiently suppressed (future expiry) reserves address_suppressed
+      ---
+      duration_ms: 329.4595
+      ...
+    # Subtest: a claimed delivery whose address is NOT suppressed reserves granted
+    ok 3 - a claimed delivery whose address is NOT suppressed reserves granted
+      ---
+      duration_ms: 216.6346
+      ...
+    # Subtest: the suppression check is case-folded and whitespace-trimmed
+    ok 4 - the suppression check is case-folded and whitespace-trimmed
+      ---
+      duration_ms: 128.3131
+      ...
+    # Subtest: set_email_suppression under a client role is refused with 42501
+    ok 5 - set_email_suppression under a client role is refused with 42501
+      ---
+      duration_ms: 174.376
+      ...
+    # Subtest: clear_email_suppression under a client role is refused with 42501
+    ok 6 - clear_email_suppression under a client role is refused with 42501
+      ---
+      duration_ms: 151.8444
+      ...
+    # Subtest: list_email_suppressions_masked never leaks the raw address
+    ok 7 - list_email_suppressions_masked never leaks the raw address
+      ---
+      duration_ms: 128.6519
+      ...
+    # Subtest: after clearing the suppression, the same address reserves granted
+    ok 8 - after clearing the suppression, the same address reserves granted
+      ---
+      duration_ms: 219.949
+      ...
+    1..8
+ok 7 - recipient suppression against the real database
+  ---
+  duration_ms: 2101.9358
+  type: 'suite'
+  ...
+# (node:27752) ExperimentalWarning: Type Stripping is an experimental feature and might change at any time
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: M13.2 Phase 7 — the real worker process
+    # Subtest: RT-1: starts as the worker role on the verified stack, heartbeats while paused, and stops cleanly
+    ok 1 - RT-1: starts as the worker role on the verified stack, heartbeats while paused, and stops cleanly
+      ---
+      duration_ms: 7233.546
+      ...
+    # Subtest: EV-1: member.create — queue → real worker → pending while OFF → sent once when ON, no restart → replay safe → OFF stops the next one
+    ok 2 - EV-1: member.create — queue → real worker → pending while OFF → sent once when ON, no restart → replay safe → OFF stops the next one
+      ---
+      duration_ms: 23849.9143
+      ...
+    # Subtest: EV-2: officer_term.end — real RPC → real worker → verified_account email to the term holder, once, replay safe
+    ok 3 - EV-2: officer_term.end — real RPC → real worker → verified_account email to the term holder, once, replay safe
+      ---
+      duration_ms: 11407.739
+      ...
+    # Subtest: EV-3: officer_invitation.accept — real invitation and acceptance → real worker → email to the new officer, once, replay safe
+    ok 4 - EV-3: officer_invitation.accept — real invitation and acceptance → real worker → email to the new officer, once, replay safe
+      ---
+      duration_ms: 9029.0205
+      ...
+    # Subtest: RT-4: messages the processor refuses are acknowledged, create nothing, and leave a log line with a stable reason
+    ok 5 - RT-4: messages the processor refuses are acknowledged, create nothing, and leave a log line with a stable reason
+      ---
+      duration_ms: 2787.5017
+      ...
+    # Subtest: RT-3: in-app-only events go through the role's remaining grants, create no email row and send nothing
+    ok 6 - RT-3: in-app-only events go through the role's remaining grants, create no email row and send nothing
+      ---
+      duration_ms: 4290.5004
+      ...
+    # Subtest: PS-RESTORE: the switch is restored and read back false when the code inside the window throws
+    ok 7 - PS-RESTORE: the switch is restored and read back false when the code inside the window throws
+      ---
+      duration_ms: 356.7129
+      ...
+    # Subtest: RC-LOCK: a held database lock stalls the worker, the heartbeat stops showing it, and it recovers when the lock goes, with no restart
+    ok 8 - RC-LOCK: a held database lock stalls the worker, the heartbeat stops showing it, and it recovers when the lock goes, with no restart
+      ---
+      duration_ms: 11977.137
+      ...
+    # Subtest: RT-6: a stop request during blocked processing lets the in-flight message finish, then exits 0
+    ok 9 - RT-6: a stop request during blocked processing lets the in-flight message finish, then exits 0
+      ---
+      duration_ms: 11094.2029
+      ...
+    # Subtest: RC-1: a worker killed during processing loses nothing; the message reappears only after the visibility timeout, with read_ct 2, and completes once
+    ok 10 - RC-1: a worker killed during processing loses nothing; the message reappears only after the visibility timeout, with read_ct 2, and completes once
+      ---
+      duration_ms: 37235.0543
+      ...
+    # Subtest: RC-2: if the acknowledgement fails after processing committed, the worker survives and the replay creates nothing new
+    ok 11 - RC-2: if the acknowledgement fails after processing committed, the worker survives and the replay creates nothing new
+      ---
+      duration_ms: 39615.5022
+      ...
+    # Subtest: RC-5: a poison message is tried exactly 5 times, archived at read_ct 6 with no sensitive text logged, and a healthy message is unaffected
+    ok 12 - RC-5: a poison message is tried exactly 5 times, archived at read_ct 6 with no sensitive text logged, and a healthy message is unaffected
+      ---
+      duration_ms: 187175.3007
+      ...
+    # Subtest: SM-RETRY: a temporary rejection schedules a retry about 5 minutes out, then a retry succeeds with the same Message-ID, once
+    ok 13 - SM-RETRY: a temporary rejection schedules a retry about 5 minutes out, then a retry succeeds with the same Message-ID, once
+      ---
+      duration_ms: 7613.8504
+      ...
+    # Subtest: SM-EXHAUST: an unreachable provider backs off about 5 then about 30 minutes, then ends dead/retries_exhausted after 3 attempts
+    ok 14 - SM-EXHAUST: an unreachable provider backs off about 5 then about 30 minutes, then ends dead/retries_exhausted after 3 attempts
+      ---
+      duration_ms: 7560.6415
+      ...
+    # Subtest: SM-PERM: a permanent rejection is dead on the first attempt and never retried
+    ok 15 - SM-PERM: a permanent rejection is dead on the first attempt and never retried
+      ---
+      duration_ms: 6974.4295
+      ...
+    # Subtest: SM-AMBIG: delivered but the client never hears: dead/outcome_unknown, never retried, and Mailpit holds exactly one copy
+    ok 16 - SM-AMBIG: delivered but the client never hears: dead/outcome_unknown, never retried, and Mailpit holds exactly one copy
+      ---
+      duration_ms: 7378.3092
+      ...
+    # Subtest: SM-TIMEOUT: no reply after the body ends dead/outcome_unknown, and nothing reached Mailpit
+    ok 17 - SM-TIMEOUT: no reply after the body ends dead/outcome_unknown, and nothing reached Mailpit
+      ---
+      duration_ms: 13948.4231
+      ...
+    # Subtest: RC-SEND: a worker killed in the middle of a send never re-sends: the next worker's maintenance records dead/outcome_unknown
+    ok 18 - RC-SEND: a worker killed in the middle of a send never re-sends: the next worker's maintenance records dead/outcome_unknown
+      ---
+      duration_ms: 4993.7268
+      ...
+    # Subtest: CFG: every invalid database configuration exits non-zero, quickly, without printing the credential
+    ok 19 - CFG: every invalid database configuration exits non-zero, quickly, without printing the credential
+      ---
+      duration_ms: 13764.6639
+      ...
+    # Subtest: CFG-REVOKED: a credential revoked while running ends the process instead of polling forever
+    ok 20 - CFG-REVOKED: a credential revoked while running ends the process instead of polling forever
+      ---
+      duration_ms: 8556.4385
+      ...
+    # Subtest: CFG-SENDER: a refused sender configuration keeps the event stage working and sends nothing (finding F-4 recorded)
+    ok 21 - CFG-SENDER: a refused sender configuration keeps the event stage working and sends nothing (finding F-4 recorded)
+      ---
+      duration_ms: 7041.0272
+      ...
+    # Subtest: LP-3: the worker role is refused everything outside its grants, and holds only the listed tables
+    ok 22 - LP-3: the worker role is refused everything outside its grants, and holds only the listed tables
+      ---
+      duration_ms: 528.7611
+      ...
+    # Subtest: F-2: a real constraint failure's raw error carries a recipient address; the log summary does not
+    ok 23 - F-2: a real constraint failure's raw error carries a recipient address; the log summary does not
+      ---
+      duration_ms: 187.5463
+      ...
+    1..23
+ok 8 - M13.2 Phase 7 — the real worker process
+  ---
+  duration_ms: 426000.3606
+  type: 'suite'
+  ...
+1..8
+# tests 64
+# suites 10
+# pass 64
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 515446.2557
+Integration lane passed: 64/64 test(s) in 8 file(s), none skipped.

@@ -137,7 +137,15 @@ select bag_eq(
       -- M13.1: notification tables. Readable by the authenticated role under RLS;
       -- officers see their community's events and deliveries, members see their
       -- own inbox, and preferences are per-member.
-      ('notification_events'), ('notification_deliveries'), ('notification_preferences')
+      ('notification_events'), ('notification_deliveries'), ('notification_preferences'),
+      -- M8.3: payment records. Readable by officers holding transaction.view on
+      -- the collection (RLS decides the rows); written only by the app.*
+      -- payment functions over the server's own connection. payment_limits is
+      -- reference data like fee_schedules. `provider_transactions` is
+      -- deliberately NOT here: its raw payloads carry contributor PII.
+      ('payment_limits'), ('contribution_intents'), ('payment_attempts'),
+      ('payment_attempt_lines'), ('stock_reservations'),
+      ('contributions'), ('contribution_lines')
   $$,
   'authenticated can SELECT exactly the allowlisted tables and no others'
 );

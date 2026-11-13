@@ -1,0 +1,3 @@
+[allowlist]
+  description = "Test constants that look like API keys but are not"
+  commits = ["a1639483a6d064698c1996c1074e35c833606605"]

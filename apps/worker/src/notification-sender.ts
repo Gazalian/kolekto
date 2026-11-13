@@ -47,16 +47,21 @@ import {
   settleDelivery,
   MAX_DELIVERY_ATTEMPTS,
   SEND_LEASE_SECONDS,
+  type SettleOptions,
+  type SettleOutcomeKind,
 } from "./notification-send-claim.ts";
-import { buildPlaceholderMessage } from "./notification-send-message.ts";
+import { eventPolicy } from "./communication-policy.ts";
+import { canSend } from "./notification-email-templates.ts";
+import { buildEmailMessage } from "./notification-send-message.ts";
 import {
   expireStaleDeliveries,
   isEmailSendingEnabled,
-  loadSendAddress,
+  loadSendContext,
   readSendHealth,
   recordSenderHeartbeat,
   type SendHealth,
 } from "./notification-sender-state.ts";
+import { isTransientDatabaseError, safeErrorSummary } from "./worker-safety.ts";
 
 type BaseSql = postgres.Sql<Record<string, never>>;
 
@@ -83,11 +88,36 @@ export interface SenderOptions {
   readonly now: () => number;
   /** Jitter source for backoff, injectable for tests. */
   readonly rng: Rng;
+  /** Origin for links in messages (APP_BASE_URL). Collection announcements cannot be sent without it. */
+  readonly appBaseUrl?: string;
 }
 
 /** True once a step means the worker actually claimed a row this tick. */
 function stepClaimed(step: SendStep): boolean {
   return step.outcome !== "empty";
+}
+
+/** With the 5 s lock_timeout this waits about 17 s at most, far inside the 300 s lease. */
+export const SETTLE_ATTEMPTS = 3;
+const SETTLE_RETRY_MS = 1_000;
+
+/**
+ * Record a provider's outcome, retrying a transient failure (F-14). The provider has already been
+ * called, so losing this write has a real cost: the row stays `sending` until its lease expires and
+ * then becomes dead/outcome_unknown, although the outcome was known. Safe to repeat: the database
+ * function is gated on the lease token, so a repeat after a commit whose reply was lost changes nothing.
+ */
+async function settleWithRetry(sql: BaseSql, deliveryId: string, leaseToken: string, outcome: SettleOutcomeKind, options: SettleOptions): Promise<void> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await settleDelivery(sql, deliveryId, leaseToken, outcome, options);
+      return;
+    } catch (error) {
+      if (attempt >= SETTLE_ATTEMPTS || !isTransientDatabaseError(error)) throw error;
+      console.error(JSON.stringify({ msg: "notification_delivery_settle_retry", delivery_id: deliveryId, attempt, of: SETTLE_ATTEMPTS, error: safeErrorSummary(error) }));
+      await new Promise((resolve) => setTimeout(resolve, SETTLE_RETRY_MS));
+    }
+  }
 }
 
 /**
@@ -129,15 +159,16 @@ export async function sendOneClaimed(sql: BaseSql, opts: SenderOptions): Promise
     ) {
       return { outcome: "deferred", deliveryId, reservation, retryAt };
     }
-    // address_suppressed (P9-1) / address_limited / backlog_full: row is
+    // ineligible (M13.3 R3 send-time recheck) / address_suppressed (P9-1) /
+    // address_limited / backlog_full: row is
     // skipped with a stable code. The caller surfaces `reservation` so the
     // health snapshot can count each cause separately via skipped_by_code.
     return { outcome: "skipped", deliveryId, reservation };
   }
 
   // ── Granted: the row is `sending` with our lease. Send, then resolve. ──────
-  const address = await loadSendAddress(sql, deliveryId);
-  if (address === null) {
+  const sendCtx = await loadSendContext(sql, deliveryId);
+  if (sendCtx === null) {
     // A sendable email row carries an address (constraint), so this is a
     // defensive branch: resolve dead rather than call the provider with no
     // recipient. invalid_recipient_address is an existing stable code.
@@ -145,12 +176,34 @@ export async function sendOneClaimed(sql: BaseSql, opts: SenderOptions): Promise
     return { outcome: "no_address", deliveryId };
   }
 
+  // M13.3 R3 fail-closed guard. Only essential (transactional) messages may be
+  // sent without the database's send-time recheck; any other category — or an
+  // event the policy does not know — needs it. Without it, eligibility at send
+  // time cannot be verified, so the row is settled dead with a stable code and
+  // the provider is never called.
+  if (!sendCtx.sendTimeRecheck && eventPolicy(sendCtx.eventType)?.category !== "essential") {
+    await settleDelivery(sql, deliveryId, leaseToken, "dead", { errorCode: "eligibility_unverifiable" });
+    return { outcome: "dead", deliveryId, errorCode: "eligibility_unverifiable" };
+  }
+
+  const eventCtx = {
+    eventType: sendCtx.eventType,
+    payload: sendCtx.payload,
+    ...(opts.appBaseUrl !== undefined ? { appBaseUrl: opts.appBaseUrl } : {}),
+  };
+  if (!canSend(eventCtx)) {
+    // A collection announcement whose link cannot be built: never fall back
+    // to the "sign in to Kolekto" placeholder for a member who has no account.
+    await settleDelivery(sql, deliveryId, leaseToken, "dead", { errorCode: "collection_link_unavailable" });
+    return { outcome: "dead", deliveryId, errorCode: "collection_link_unavailable" };
+  }
+
   try {
     const result = await opts.provider.send({
       idempotencyKey: deliveryId,
-      message: buildPlaceholderMessage(address),
+      message: buildEmailMessage(sendCtx.address, eventCtx),
     });
-    await settleDelivery(sql, deliveryId, leaseToken, "sent", { providerMessageId: result.providerMessageId });
+    await settleWithRetry(sql, deliveryId, leaseToken, "sent", { providerMessageId: result.providerMessageId });
     return { outcome: "sent", deliveryId, providerMessageId: result.providerMessageId };
   } catch (err) {
     if (!(err instanceof EmailProviderError)) {
@@ -165,10 +218,10 @@ export async function sendOneClaimed(sql: BaseSql, opts: SenderOptions): Promise
       return { outcome: "halt", deliveryId, errorCode: action.errorCode };
     }
     if (action.kind === "retry") {
-      await settleDelivery(sql, deliveryId, leaseToken, "retry", { errorCode: action.errorCode, nextRetryAt: action.nextRetryAt });
+      await settleWithRetry(sql, deliveryId, leaseToken, "retry", { errorCode: action.errorCode, nextRetryAt: action.nextRetryAt });
       return { outcome: "retry", deliveryId, errorCode: action.errorCode, nextRetryAt: action.nextRetryAt };
     }
-    await settleDelivery(sql, deliveryId, leaseToken, "dead", { errorCode: action.errorCode });
+    await settleWithRetry(sql, deliveryId, leaseToken, "dead", { errorCode: action.errorCode });
     return { outcome: "dead", deliveryId, errorCode: action.errorCode };
   }
 }
