@@ -90,7 +90,7 @@ export async function recordSesNotification(
           ${input.providerEventId},
           ${input.providerEventType},
           ${input.normalizedEventType},
-          ${payloadJson}::jsonb,
+          ${payloadJson}::text::jsonb,
           ${input.signatureVerified},
           ${input.recipientAddressKey},
           ${input.sesFeedbackId},
