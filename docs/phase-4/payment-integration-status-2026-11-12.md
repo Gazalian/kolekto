@@ -3,12 +3,13 @@
 **Date:** 2026-11-12  
 **Branch:** `feat/payments-foundation`  
 **Last commits:**
+- `30fb66f` feat(contribute): gate the pre-payment banner on whether checkout is available
+- `b075e86` fix(e2e): wizard aria-label collision and payment-flow assertion drift
+- `4ea3805` fix(db): store SES payload as JSON object, not double-encoded string
+- `e8b4e10` docs(payments): update M8.5 status report (session 7)
 - `925888c` fix(worker): use esbuild JS API in guard test for cross-platform compat
 - `28e7469` ci: fix invariants and gitleaks false positive
 - `f8710db` docs(payments): update M8.5 status report (sessions 5–6)
-- `1dce47b` test(e2e): payment E2E spec and updated review assertions
-- `370ce3c` fix(worker): scope M13.3 notification assertions to member rows
-- `5c42527` feat(payments): fee review, local fake checkout, sweep, 7-flow itest
 
 **Authoritative docs** (read these before changing anything):
 - [`docs/phase-4/paystack-integration-audit-and-plan-2026-11-10.md`](paystack-integration-audit-and-plan-2026-11-10.md) — full architecture, blueprints, security report, roadmap
@@ -21,60 +22,62 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-13, session 7 (committed, pushed, opened draft PR, fixing CI)
+**Last updated:** 2026-11-13, session 9 (CI run 6 green, PR #31 ready, banner shipped)
 
 ### What was done this session
 
 | Area | Change | Where |
 |---|---|---|
-| Commits | Three commits for sessions 5–6 work: `370ce3c` M13.3 integration test fix, `1dce47b` payment E2E spec + updated assertions, `f8710db` status doc. | `feat/payments-foundation` |
-| Draft PR | [#31](https://github.com/Gazalian/kolekto/pull/31) opened to `main`. | GitHub |
-| CI fix: invariants | `packages/payments/src/orchestrator.ts` added to the `one-fee-implementation` CALLERS allowlist — the orchestrator legitimately calls `calculateFees` to freeze the breakdown before storing the payment attempt. | `scripts/invariants/run-all.mjs` |
-| CI fix: gitleaks | `.gitleaks.toml` created to suppress the `generic-api-key` false positive on a test UUID constant (`8d6f1c2e-…`) in `packages/validation/test/collection.test.ts`. | `.gitleaks.toml` |
-| CI fix: esbuild | The `worker-guards.test.ts` "real bundle" `before()` hook was running `node esbuild/bin/esbuild`, but on Linux CI that file is the native ELF binary, not a JS wrapper. Switched to the esbuild JS API (`buildSync`) which works on all platforms. 65/65 locally. | `apps/worker/test/worker-guards.test.ts` |
-| Banner copy proposal | Proposed below. Not implemented. | `ContributeForm.tsx:758` |
-| SES payload | **Not touched.** The prompt left "fix it / leave it" unanswered again, so nothing was changed. | `packages/db/src/webhook-events.ts:93` |
+| SES payload fix | `${payloadJson}::jsonb` → `${payloadJson}::text::jsonb` so postgres.js with `prepare:false` stores a proper JSON object instead of a double-encoded JSON string. pgTAP 43 adds `jsonb_typeof(payload) = 'object'` (plan 39→40). | `packages/db/src/webhook-events.ts:93`, `supabase/tests/43_…_processing_state.sql` |
+| E2E fix: progress bar | Removed `aria-label={entry.label}` from wizard progress `<li>` elements. The labels ("Items", "Fees"…) collided with form field labels, so `getByLabel("Item")` hit the progress indicator. `aria-current` already conveys step progress. | `NewCollectionForm.tsx:697` |
+| E2E fix: fee schedule version | Estimate banner assertion bumped `2026-09-founder` → `2026-11-founder`. | `collection-creation.spec.ts:162` |
+| E2E fix: fee labels + numbers | FeeEstimate was reskinned when SCHEDULE_2026_11_FOUNDER landed: labels are "Processing fee" + "Kolekto fee" (not the old "Estimated …" phrasings) and the rates are 1.5% + 0.5% (not 1.5% + 1.5%). On ₦20,000 that is ₦300 + ₦100 = ₦400; absorbing nets ₦19,600, passing on charges ₦20,400; the compounding counter-example moves to ₦20,408 (20,000 / 0.98). | `collection-creation.spec.ts:168-184` |
+| E2E fix: validation msg | `"email address or a phone number"` → `"email address and phone number"` to match the updated `CONTACT_REQUIRED` message. | `collections.spec.ts:156` (first attempt) |
+| E2E fix: client-side contact guard | The three contact fields carry HTML5 `required`, so Continue with empty fields triggers the browser's own form validation and nothing reaches the server. The assertion now checks that the browser focused the first invalid field (Full name) instead of expecting the server's `CONTACT_REQUIRED` copy, which can only fire on a bypass. The server-side message in `actions.ts` stays as defense-in-depth. | `collections.spec.ts:154-161` |
+| E2E fix: payment heading | `"Ready to continue to payment"` → `getByRole("heading", { name: "Review and pay, Ada Obi" })`. The fake provider is available in CI (`KOLEKTO_ENV=local`), so the contributor reaches the payment review step. | `contributor.spec.ts:467` |
+| Contributor banner shipped | Added `isPaymentEnabled()` to `provider-factory.ts` (thin wrapper over `getPaymentProvider`). Threaded a `paymentEnabled` boolean from the public page through `CollectionView` into `ContributeForm`. The banner now reads:<br>· on: "Fill in your details and you'll be able to review your total and pay securely online."<br>· off: "Online payment isn't available for this collection yet. You can fill in your details now — {organiser} will let you know how to pay."<br>Default is `false`, so preview mode and any caller that cannot promise online payment renders the safer copy. | `apps/web/lib/payments/provider-factory.ts`, `apps/web/app/[communitySlug]/[collectionSlug]/page.tsx`, `CollectionView.tsx`, `ContributeForm.tsx:758-768` |
+| PR #31 | Marked **ready for review**. | https://github.com/Gazalian/kolekto/pull/31 |
 
-**CI runs:**
+**CI runs (cumulative):**
 
-- **Run 1:** invariants and gitleaks failed; typecheck failed (esbuild); E2E pending.
-- **Run 2:** invariants and gitleaks fixed; typecheck still failed (esbuild); E2E/migrations pending then run cancelled by push.
-- **Run 3 (cancelled):** diagnostic commit showed the esbuild error (native ELF binary passed to Node).
-- **Run 4 (current):** esbuild fix applied (JS API). All six jobs pending at time of writing.
-
-**Banner copy proposal** (for `ContributeForm.tsx:758`):
-
-The form today does not know whether online payment is available — the `payment` state is set only after the server action responds. A new boolean prop `paymentEnabled` on `ContributeForm` (threaded from `CollectionView.tsx`) would gate the banner:
-
-- **Payment on:** "You'll pay securely online after reviewing your details."
-- **Payment off:** "Online payment is not available for this collection. You can check your details now; {organiser} will let you know how to pay."
+- **Runs 1–3:** invariants, gitleaks, esbuild failures — fixed in session 7.
+- **Run 4:** invariants ✓, secrets ✓, typecheck+unit ✓, migrations+pgTAP ✓, E2E ✗ (progress bar / fee schedule / validation wording / payment heading).
+- **Run 5:** session 8 fixes pushed; shard 2 green (6m39s), shard 1 ✗ on two more drifted assertions — `Estimated payment processing fee` label (old 1.5%/1.5% schedule) and server-side `email address and phone number` (blocked by client-side `required`).
+- **Run 6: all seven checks green.** invariants (6s), secrets (35s), typecheck+unit (43s), migrations+pgTAP (3m20s), browser e2e shard 1 (13m8s), shard 2 (5m49s), browser e2e aggregate (4s).
 
 ### Why this update
 
-M8.5's acceptance is "all seven collection flows work against the fake provider; E2E passes in CI". Sessions 5–6 built the E2E spec and the integration tests. This session committed the work, pushed it to CI and fixed the two CI-config failures (invariants allowlist and gitleaks false positive). A third failure — the worker-guards esbuild bundle — is a pre-existing issue (not caused by sessions 5–7) that needs its CI stderr to diagnose.
+Session 8 pushed what we thought were the four E2E fixes; run 5 then surfaced two more that had drifted when SCHEDULE_2026_11_FOUNDER landed and when `required` was added to the contact fields. The fee-estimate test still asserted the 2026-09 numbers (1.5% × 1.5%, ₦600 total, ₦19,400 / ₦20,600) under the old label names ("Estimated payment processing fee" / "Estimated Kolekto service fee"); the contact-required test still expected a server-side error message that the browser now short-circuits. Both are assertion drift, not behaviour drift, and the new assertions keep the same intent (two fees shown separately on the organiser's screen; a contributor with no contact details cannot submit).
+
+The banner implementation follows the session 8 proposal. The gate is a server-side boolean because the form cannot derive it — `payment` state only exists after the server action responds, by which point the contributor has already filled in their details. `isPaymentEnabled()` is a thin convenience over `getPaymentProvider()` so render paths don't have to build the full `PaymentContext` just to decide what to say up front.
 
 ### Still open
 
-- **CI run 4:** all six jobs pending. If all pass, M8.5's CI evidence is complete.
-- **Stale contributor banner:** copy proposed above, not implemented. Needs your approval or alternative copy.
-- **SES payload stored as a JSON string** (`webhook-events.ts:93`) — still needs your "fix it" or "leave it" decision.
-- Carried over: the fake checkout is in memory; the sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; the callback action needs rate limiting before the real Paystack adapter (M8.9).
+- **M8.5 acceptance complete:** PR #31 is ready, CI is green on every job, and the seven-flow fake-checkout E2E (`payments.spec.ts`) passes under `KOLEKTO_ENV=local` in CI.
+- Carried over (no change): the fake checkout is in memory; the sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; the callback action needs rate limiting before the real Paystack adapter (M8.9).
 
 ### Next thing to do
 
-1. Wait for CI run 4 results. If anything fails, diagnose from logs/artifacts and fix.
-2. Once all six CI jobs are green, mark PR #31 as ready for review.
-3. Decide on the SES payload fix, the contributor banner copy, and start M8.9 (Paystack adapter).
+1. Review and merge PR #31, or wait for the owner review.
+2. Start **M8.9 — Paystack adapter + sandbox**: `packages/adapters/src/paystack-payment-provider.ts` (initialize, verify), `apps/web/app/api/webhooks/paystack/route.ts` with dual-header signature verification, sandbox test matrix (card success, failed card, abandoned, bank transfer, webhook-before-redirect, resend from dashboard, reversed, `fees` field present, subaccount split). Paystack test keys go in `.env.local` only.
+3. Alongside M8.9 (or before), decide whether to run M8.3b (resolver hardening) and whether to add the sweep-idx hint on `listDuePaymentAttempts`.
 
 ### Prompt for the next session (copy and paste)
 
 ```
-Continue M8.5 on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
+Continue payments on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
-1. Check CI for PR #31 (run 4 or later). If anything fails, find the cause from the logs and artifacts and fix it. Do not raise timeouts or weaken assertions.
-2. SES payload: [say "fix it" or "leave it"]. If fixing, change packages/db/src/webhook-events.ts:93 to `::text::jsonb` and add a test that asserts jsonb_typeof(payload) = 'object'.
-3. Once CI is green, mark PR #31 as ready for review.
-4. Replace the "Latest report" section of the status doc: what was done, why, what is still open, the next thing to do, and the next prompt.
+M8.5 is done and PR #31 is ready for review with CI green. Start M8.9 — the Paystack adapter and sandbox test matrix. Steps:
+
+1. Confirm PR #31 is still green and not yet merged; if merged, rebase feat/payments-foundation onto main.
+2. Build `packages/adapters/src/paystack-payment-provider.ts`: implement `initialize()` and `verify()` against the Paystack REST API, matching the `PaymentProvider` interface used by the fake adapter. Keep the shape of `ProviderResult` the orchestrator already handles.
+3. Build `apps/web/app/api/webhooks/paystack/route.ts`: dual-header signature verification (`Paystack-Signature` HMAC + `whsec_`), raw body read, idempotent `recordProviderTransaction` + `completePaymentCapture` flow matching the fake path.
+4. Update `provider-factory.ts` to pick Paystack when `KOLEKTO_ENV` is staging/production and the env has valid keys; keep the fake as the local provider.
+5. Add a Paystack sandbox E2E (or a dedicated integration test) covering the test matrix: card success, failed card, abandoned, bank transfer, webhook-before-redirect, resend from dashboard, reversed, `fees` field present, subaccount split.
+6. No Paystack keys are committed. Document the env layout in `.env.example`.
+7. At stop, replace this doc's "Latest report" section with what you built, why, what is still open, the next thing to do, and the next prompt.
+
+Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 `COLLECTION_IMPORTED` guard. Read the two migration files and `apps/web/lib/payments/orchestrator.ts` before writing the adapter.
 ```
 
 ---
