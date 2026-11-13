@@ -1,15 +1,19 @@
 /**
  * provider-factory.ts — resolves which PaymentProvider to use.
  *
- * M8.5: only FakePaymentProvider, and only when KOLEKTO_ENV is local. M8.9
- * adds the Paystack adapter, selected by environment. The orchestrator
- * receives the provider as a value, never constructs it, so the factory is
- * the single place where selection lives.
+ * The orchestrator receives the provider as a value, never constructs it,
+ * so this factory is the single place where selection lives. Two providers
+ * are wired:
  *
- * The fake keeps its checkouts in memory, so the checkout action, the local
- * fake checkout page and the callback must all see ONE instance. Next may
- * load this module once per route bundle, so the instance lives on
- * globalThis rather than in a module variable.
+ *   · Local: `FakePaymentProvider` keeps its checkouts in memory, so the
+ *     checkout action, the local fake checkout page and the callback all
+ *     have to see ONE instance. Next may load this module once per route
+ *     bundle, so the instance lives on `globalThis` rather than in a
+ *     module variable.
+ *   · Staging / production: `PaystackPaymentProvider`, selected by
+ *     environment and returned only once both `PAYSTACK_SECRET_KEY` and
+ *     `PAYSTACK_WEBHOOK_SECRET` are present. The orchestrator already
+ *     refuses the fake in production; this factory never offers one there.
  *
  * SERVER ONLY.
  */
@@ -18,6 +22,8 @@ import { createFakePaymentProvider, type FakePaymentProvider, type PaymentProvid
 import { loadConfig } from "@kolekto/config";
 import { ownerPaymentDb } from "@kolekto/db";
 import { type PaymentContext, resolveAppOrigin } from "@kolekto/payments";
+
+import { getPaystackPaymentProvider } from "./paystack.ts";
 
 /** A dummy signing secret for the local fake. Not a Paystack key; the fake signs nothing real. */
 const FAKE_WEBHOOK_SECRET = "test-webhook-secret-m8.5";
@@ -36,9 +42,17 @@ export function getFakePaymentProvider(): FakePaymentProvider | null {
   return store[GLOBAL_KEY];
 }
 
-/** The provider for this environment, or null when none is configured (no real provider until M8.9). */
+/**
+ * The provider for this environment, or null when none is configured.
+ *
+ *   · local       → the in-memory fake (never the real Paystack; the orchestrator refuses that pairing too)
+ *   · staging     → the Paystack adapter when its env is complete, else null (the banner then reads "not available yet")
+ *   · production  → the Paystack adapter when its env is complete, else null
+ */
 export function getPaymentProvider(): PaymentProvider | null {
-  return getFakePaymentProvider();
+  const { environment } = loadConfig();
+  if (environment === "local") return getFakePaymentProvider();
+  return getPaystackPaymentProvider();
 }
 
 /**
