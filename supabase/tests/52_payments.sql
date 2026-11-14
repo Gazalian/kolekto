@@ -550,10 +550,12 @@ select throws_like(
 
 -- ── A released hold frees stock; a late capture that finds it gone is parked ─
 
+-- A declined payment, not an abandoned one: inside the hold `abandoned` is
+-- evidence only and keeps the stock (20261114110000; covered in 54).
 select is(
-  pg_temp.provider_says(15, 'abandoned', 1020000, 'NGN', null),
+  pg_temp.provider_says(15, 'failed', 1020000, 'NGN', null),
   'failed'::public.payment_attempt_status,
-  'an abandoned checkout fails the attempt'
+  'a declined payment fails the attempt'
 );
 
 select is(

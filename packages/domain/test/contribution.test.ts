@@ -487,3 +487,287 @@ describe("a fixed collection with an identified member", () => {
     assert.equal(resolved.amountKobo, 300_000n);
   });
 });
+
+// ── M8.3b resolver hardening ──────────────────────────────────────────────
+
+describe("single-tier stock check (M8.3b)", () => {
+  // The basket path already refuses a quantity above `quantityLimit`. The
+  // single-tier path (quantity always 1) must still refuse `quantityLimit = 0`
+  // — a sold-out tier is sold out whichever UI shape chose it.
+  it("refuses a single-tier pick on a tier whose stock is exhausted", () => {
+    const soldOut = config({
+      amountModel: "tiers",
+      tiers: [
+        { id: TIER_STANDARD, name: "Standard", priceKobo: kobo(500_000), quantityLimit: 0, perOrderLimit: null },
+      ],
+    });
+    assert.throws(
+      () => resolveContributionAmount(soldOut, { tierId: TIER_STANDARD }),
+      (error: unknown) =>
+        error instanceof ContributionError &&
+        error.code === "TIER_QUANTITY_ABOVE_LIMIT" &&
+        /sold out/i.test(error.message),
+    );
+  });
+
+  it("still allows a single-tier pick when stock remains (one unit for the one pick)", () => {
+    const limitedButAvailable = config({
+      amountModel: "tiers",
+      tiers: [
+        { id: TIER_STANDARD, name: "Standard", priceKobo: kobo(500_000), quantityLimit: 1, perOrderLimit: null },
+      ],
+    });
+    const resolved = resolveContributionAmount(limitedButAvailable, { tierId: TIER_STANDARD });
+    assert.equal(resolved.amountKobo, 500_000n);
+  });
+
+  it("leaves unlimited-stock tiers unchanged", () => {
+    const unlimited = config({
+      amountModel: "tiers",
+      tiers: [
+        { id: TIER_STANDARD, name: "Standard", priceKobo: kobo(500_000), quantityLimit: null, perOrderLimit: null },
+      ],
+    });
+    const resolved = resolveContributionAmount(unlimited, { tierId: TIER_STANDARD });
+    assert.equal(resolved.amountKobo, 500_000n);
+  });
+});
+
+describe("amountOwed = expected − waived − applied (M8.3b)", () => {
+  const obligationId = "01930000-0000-7000-8000-000000000031";
+
+  it("subtracts already-applied contributions from what remains to pay", () => {
+    // Expected ₦10,000, no waiver, ₦4,000 already paid → ₦6,000 left.
+    const resolved = resolveContributionAmount(
+      config({
+        amountModel: "fixed",
+        fixedAmountKobo: kobo(1_000_000),
+        obligation: {
+          id: obligationId,
+          expectedAmountKobo: kobo(1_000_000),
+          waivedAmountKobo: kobo(0),
+          appliedKobo: kobo(400_000),
+          status: "unpaid",
+        },
+      }),
+      {},
+    );
+    assert.equal(resolved.amountKobo, 600_000n);
+  });
+
+  it("treats a missing `appliedKobo` as zero (backwards compatible)", () => {
+    const resolved = resolveContributionAmount(
+      config({
+        amountModel: "fixed",
+        fixedAmountKobo: kobo(1_000_000),
+        obligation: {
+          id: obligationId,
+          expectedAmountKobo: kobo(1_000_000),
+          waivedAmountKobo: kobo(0),
+          status: "unpaid",
+        },
+      }),
+      {},
+    );
+    assert.equal(resolved.amountKobo, 1_000_000n);
+  });
+
+  it("refuses NOTHING_OWED when applied has met the balance", () => {
+    // The capture function should have flipped the obligation to `paid`, but
+    // if it has not (audit §4.6 reconciliation gap) the resolver still
+    // refuses rather than offering the full amount again.
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({
+            amountModel: "fixed",
+            obligation: {
+              id: obligationId,
+              expectedAmountKobo: kobo(500_000),
+              waivedAmountKobo: kobo(0),
+              appliedKobo: kobo(500_000),
+              status: "unpaid",
+            },
+          }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "NOTHING_OWED",
+    );
+  });
+
+  it("refuses MISCONFIGURED on a negative applied amount rather than inflating owed", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({
+            amountModel: "fixed",
+            obligation: {
+              id: obligationId,
+              expectedAmountKobo: kobo(500_000),
+              waivedAmountKobo: kobo(0),
+              appliedKobo: kobo(-100) as unknown as ReturnType<typeof kobo>,
+              status: "unpaid",
+            },
+          }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "MISCONFIGURED",
+    );
+  });
+});
+
+describe("obligation status mapping (M8.3b)", () => {
+  const obligationId = "01930000-0000-7000-8000-000000000041";
+  const base = {
+    id: obligationId,
+    expectedAmountKobo: kobo(500_000),
+    waivedAmountKobo: kobo(0),
+  } as const;
+
+  it("accepts `unpaid`", () => {
+    const resolved = resolveContributionAmount(
+      config({ amountModel: "fixed", obligation: { ...base, status: "unpaid" } }),
+      {},
+    );
+    assert.equal(resolved.amountKobo, 500_000n);
+  });
+
+  it("accepts `overdue` — a late payment is still accepted, the window check is separate", () => {
+    const resolved = resolveContributionAmount(
+      config({ amountModel: "fixed", obligation: { ...base, status: "overdue" } }),
+      {},
+    );
+    assert.equal(resolved.amountKobo, 500_000n);
+  });
+
+  it("refuses `in_installments` with the specific code — partial payments are deferred (D-19)", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({ amountModel: "fixed", obligation: { ...base, status: "in_installments" } }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "INSTALLMENTS_NOT_SUPPORTED",
+    );
+  });
+
+  it("refuses `exempt` with OBLIGATION_EXEMPT", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({ amountModel: "fixed", obligation: { ...base, status: "exempt" } }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "OBLIGATION_EXEMPT",
+    );
+  });
+
+  it("refuses `cancelled` with NOTHING_OWED", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({ amountModel: "fixed", obligation: { ...base, status: "cancelled" } }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "NOTHING_OWED",
+    );
+  });
+
+  it("refuses `paid` with NOTHING_OWED", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({ amountModel: "fixed", obligation: { ...base, status: "paid" } }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "NOTHING_OWED",
+    );
+  });
+});
+
+describe("the single-payment ceiling (M8.3b, §14.5)", () => {
+  // MAX_PAYMENT_KOBO = 500_000_000 kobo = ₦5,000,000. The resolver refuses
+  // anything above it regardless of which model produced the figure.
+
+  it("accepts a payment exactly at the ceiling", () => {
+    const resolved = resolveContributionAmount(
+      config({ amountModel: "fixed", fixedAmountKobo: kobo(500_000_000) }),
+      {},
+    );
+    assert.equal(resolved.amountKobo, 500_000_000n);
+  });
+
+  it("refuses a fixed collection whose headline exceeds the ceiling", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({ amountModel: "fixed", fixedAmountKobo: kobo(500_000_001) }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "PAYMENT_ABOVE_CEILING",
+    );
+  });
+
+  it("refuses an open-amount submission above the ceiling", () => {
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({ amountModel: "open_amount", minAmountKobo: null, maxAmountKobo: null }),
+          { amountKobo: kobo(600_000_000) },
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "PAYMENT_ABOVE_CEILING",
+    );
+  });
+
+  it("refuses a tiered basket whose SUM exceeds the ceiling, even when each line is under it", () => {
+    // Two tiers at ₦3,000,000 each, one line of each — ₦6,000,000 total.
+    const expensive = config({
+      amountModel: "tiers",
+      tiers: [
+        { id: TIER_STANDARD, name: "A", priceKobo: kobo(300_000_000), quantityLimit: null, perOrderLimit: null },
+        { id: TIER_VIP, name: "B", priceKobo: kobo(300_000_000), quantityLimit: null, perOrderLimit: null },
+      ],
+    });
+    const lines: TierSelectionLine[] = [
+      { tierId: TIER_STANDARD, quantity: 1 },
+      { tierId: TIER_VIP, quantity: 1 },
+    ];
+    assert.throws(
+      () => resolveContributionAmount(expensive, { tierSelections: lines }),
+      (error: unknown) => error instanceof ContributionError && error.code === "PAYMENT_ABOVE_CEILING",
+    );
+  });
+
+  it("refuses an items order whose SUM exceeds the ceiling", () => {
+    const ITEM = "01930000-0000-7000-8000-000000000051";
+    const items = config({
+      amountModel: "items",
+      items: [{ id: ITEM, name: "Bulk order", priceKobo: kobo(100_000_000), quantityAvailable: null, maxPerOrder: null }],
+    });
+    const lines: ItemSelectionLine[] = [{ itemId: ITEM, quantity: 6 }];
+    assert.throws(
+      () => resolveContributionAmount(items, { itemSelections: lines }),
+      (error: unknown) => error instanceof ContributionError && error.code === "PAYMENT_ABOVE_CEILING",
+    );
+  });
+
+  it("refuses an obligation whose remaining balance exceeds the ceiling", () => {
+    // A ₦6,000,000 obligation is not payable in one shot, by design.
+    assert.throws(
+      () =>
+        resolveContributionAmount(
+          config({
+            amountModel: "fixed",
+            obligation: {
+              id: "01930000-0000-7000-8000-000000000061",
+              expectedAmountKobo: kobo(600_000_000),
+              waivedAmountKobo: kobo(0),
+              status: "unpaid",
+            },
+          }),
+          {},
+        ),
+      (error: unknown) => error instanceof ContributionError && error.code === "PAYMENT_ABOVE_CEILING",
+    );
+  });
+});

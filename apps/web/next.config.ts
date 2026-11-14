@@ -4,7 +4,12 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   // The workspace packages ship TypeScript sources directly (no build step),
   // so Next.js must transpile them itself rather than expecting compiled JS.
-  transpilePackages: ["@kolekto/ui", "@kolekto/validation", "@kolekto/domain"],
+  // Adapters is here too: without it, an edit to a payment-path source file
+  // did not reach the running dev server, and the running server kept the
+  // old module in its require cache until a cold restart (the gap caught in
+  // 2026-11-14 session 17: a webhook fix in `paystack-payment-provider.ts`
+  // was only picked up after a restart).
+  transpilePackages: ["@kolekto/ui", "@kolekto/validation", "@kolekto/domain", "@kolekto/adapters"],
   // `next build` and `next dev` otherwise share `.next`, so a production
   // build taken while a dev server is running corrupts that dev server's
   // manifests (BUILD_ID, prerender-manifest.json, routes-manifest.json),

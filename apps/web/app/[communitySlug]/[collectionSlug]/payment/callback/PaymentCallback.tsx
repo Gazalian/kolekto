@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { verifyPaymentAction } from "./actions.ts";
 
 export function PaymentCallback({ reference }: { reference: string | null }) {
-  const [status, setStatus] = useState<"verifying" | "completed" | "failed" | "review" | "error">(
+  const [status, setStatus] = useState<"verifying" | "completed" | "pending" | "failed" | "abandoned" | "review" | "error">(
     reference ? "verifying" : "error",
   );
   const [message, setMessage] = useState(reference ? "" : "No payment reference found.");
@@ -23,10 +23,19 @@ export function PaymentCallback({ reference }: { reference: string | null }) {
           setMessage("Your payment is being reviewed. You will be notified once it is confirmed.");
           break;
         case "pending":
-          setStatus("review");
-          setMessage("Your payment is still being processed. Please check back shortly.");
+          // Not paid yet, or paid and still being confirmed. An unfinished checkout
+          // stays pending for 30 minutes before it is marked abandoned.
+          setStatus("pending");
+          setMessage(
+            "We have not received your payment yet. If you are still paying, finish on the payment page and it will be confirmed automatically. A payment that is not completed within 30 minutes is marked as abandoned.",
+          );
           break;
         case "failed":
+          if (result.failureCode === "abandoned") {
+            setStatus("abandoned");
+            setMessage("This payment was not completed within 30 minutes, so it was cancelled. No payment was received. You can start a new payment.");
+            break;
+          }
           setStatus("failed");
           setMessage("Your payment was not successful. Please try again.");
           break;
@@ -55,6 +64,18 @@ export function PaymentCallback({ reference }: { reference: string | null }) {
       {status === "completed" && (
         <div>
           <h2>Payment Successful</h2>
+          <p>{message}</p>
+        </div>
+      )}
+      {status === "pending" && (
+        <div>
+          <h2>Payment Pending</h2>
+          <p>{message}</p>
+        </div>
+      )}
+      {status === "abandoned" && (
+        <div>
+          <h2>Payment Abandoned</h2>
           <p>{message}</p>
         </div>
       )}

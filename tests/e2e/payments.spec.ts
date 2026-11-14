@@ -179,17 +179,19 @@ test("a declined card records no contribution and gives the stock back", async (
   await close();
 });
 
-test("a cancelled payment records no contribution and gives the stock back", async ({ browser }) => {
+test("a cancelled payment records no contribution and stays pending during its hold", async ({ browser }) => {
   const { page, reference, close } = await orderAndOpenCheckout(browser, "items");
 
   await page.getByRole("button", { name: "Cancel payment" }).click();
   await expect(page).toHaveURL(new RegExp(`/payment/callback\\?reference=${reference}$`));
-  await expect(page.getByRole("heading", { name: "Payment Failed" })).toBeVisible();
+  // Abandoned inside the 30-minute hold is pending, not failed (20261114110000):
+  // the payer may still finish. The sweep marks it abandoned after the hold.
+  await expect(page.getByRole("heading", { name: "Payment Pending" })).toBeVisible();
 
   const state = await attemptState(reference);
-  expect(state.status).toBe("failed");
+  expect(state.status).toBe("initialized");
   expect(state.contributions).toHaveLength(0);
-  expect(state.stock).toEqual({ released: 2 });
+  expect(state.stock).toEqual({ reserved: 2 });
 
   await close();
 });
