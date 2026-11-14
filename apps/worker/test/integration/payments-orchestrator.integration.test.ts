@@ -218,8 +218,11 @@ describe("M8.5 payment orchestrator against the real database", () => {
 
         const abandoned = expectOk(await checkout(ctx, community, flow, scope.uuid()));
         ctx.provider.completeCheckout(abandoned.reference, "abandoned");
-        assert.deepEqual(await confirmPayment(ctx, abandoned.reference), { outcome: "failed", failureCode: "abandoned" });
-        assert.equal((await attemptRow(tx, abandoned.attemptId)).status, "failed");
+        // Inside the 30-minute hold an abandoned checkout is still pending (20261114110000):
+        // the payer may come back and pay. The sweep fails it once the hold has ended.
+        assert.deepEqual(await confirmPayment(ctx, abandoned.reference), { outcome: "pending" });
+        assert.equal((await attemptRow(tx, abandoned.attemptId)).status, "initialized");
+        assert.deepEqual(await stockByStatus(tx, abandoned.attemptId), { reserved: 2 }, "an abandoned checkout keeps its stock during the hold");
 
         const mismatchKey = scope.uuid();
         const mismatch = expectOk(await checkout(ctx, community, flow, mismatchKey));
