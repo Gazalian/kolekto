@@ -3,6 +3,7 @@
 **Date:** 2026-11-12  
 **Branch:** `feat/payments-foundation`  
 **Last commits:**
+
 - `46b6e16` feat(domain): M8.3b resolver hardening — stock, applied, status, ceiling
 - `9521283` fix(adapters): drop DOM-only `RequestInfo` type from fetch stub
 - `8c9eea6` docs(payments): update M8.9 status report (session 10 — Paystack adapter + webhook)
@@ -12,6 +13,7 @@
 - `30fb66f` feat(contribute): gate the pre-payment banner on whether checkout is available
 
 **Authoritative docs** (read these before changing anything):
+
 - [`docs/phase-4/paystack-integration-audit-and-plan-2026-11-10.md`](paystack-integration-audit-and-plan-2026-11-10.md) — full architecture, blueprints, security report, roadmap
 - [`docs/phase-4/financial-decisions.md`](financial-decisions.md) — decision register (authoritative for all financial choices)
 - [`docs/phase-4/pre-integration-readiness-2026-11-10.md`](pre-integration-readiness-2026-11-10.md) — readiness checklist
@@ -22,58 +24,74 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-14, session 12 (contributor-onboarding gap closed with option 1 — obligation created at capture)
+**Last updated:** 2026-11-14, session 18 (webhook fix live; three §9 webhook rows passed; declined-card run waiting on the owner)
+
+Sessions 14–18 are all **uncommitted**.
+
+### Sessions 14–17 summary (kept)
+
+- **14:** abandoned-waits-for-hold rule (`20261114110000`), callback copy, pgTAP 54, local Paystack test opt-in (`KOLEKTO_LOCAL_PAYMENT_PROVIDER=paystack_test`), runner scenario filter.
+- **15:** no new code; copied the TEST keys and the local opt-in from the repo-root `.env.local` into `apps/web/.env.local` (which `next dev` reads).
+- **16:** `itest:reset` repaired in `scripts/itest/itest.mjs` (storage health wait + migration-applied proof); worker integration test 48/48; card success row passed with two card payments through the runner.
+- **17:** webhook event-id bug fixed on the money path (`identityFrom` now reads `data.id`); three new unit tests for the real Paystack body shape (adapters 205/205); `@kolekto/adapters` added to Next's `transpilePackages` so a payment-path source edit reaches the dev server. Checkout A captured through the callback. B left `initialized` on purpose for the webhook row. **Both changes needed a `next dev` cold restart.**
 
 ### What was done this session
 
-| Area | Change | Where |
-|---|---|---|
-| CI | Run on `6f75f48` (session 11 code + docs) is green on all seven checks: invariants, secrets, typecheck + unit, migrations + pgTAP, E2E shard 1, E2E shard 2, E2E aggregate. No port-54322 flake; no rerun needed. | n/a |
-| Owner decision | Option 1 (lazy obligation materialisation at capture) chosen for the "member pays before being onboarded → obligation reads unpaid" gap. `selected_members` deliberately untouched. | n/a |
-| Obligation on capture | `app.complete_payment_capture` replaced. When the attempt has a `member_id`, no `obligation_id`, no `cycle_key`, and the collection (re-read at capture) is `audience_mode in ('all_members','groups')`, `amount_model = 'fixed'`, `schedule = 'one_time'`: (a) if an obligation for (collection, member, null cycle) now exists — the organiser ran "Add members" while the member was at checkout — it is judged with the existing rules: unpaid/overdue for the same amount → linked and paid; paid → `needs_review: already_paid`; changed (waived, exempt, cancelled, different amount) → `needs_review: obligation_changed`; (b) otherwise an obligation is inserted `unpaid` for exactly `attempt.contribution_kobo`, `due_at = collection.deadline_at`, `assigned_by = null`, then the contribution is inserted already pointing at it, then the obligation is updated to `paid` — so `block_manual_paid_status` checks the evidence exactly as for an assigned obligation (CASH-02 / SEC-20a). Audited as `obligation.assign_on_payment` (system actor; reference + contribution id in the payload). Contributions stay append-only: nothing is updated after insert. `sync_collection_obligations` already skips members with an obligation, so a later sync leaves the paid row alone. | `supabase/migrations/20261114100000_obligation_on_capture.sql` |
-| Race handling | If "Add members" inserts the same member's obligation between T2's check and T2's insert, the insert's `on conflict do nothing` returns nothing and T2 raises `CAPTURE_RACED_ASSIGNMENT`, rolling back the whole capture. The attempt stays `captured`; the orchestrator returns `{outcome:"error"}` and the sweep re-runs T2 next pass, which then sees the obligation in the decision step. Collection row is `FOR UPDATE`, so two captures for one collection are already serialised. | same |
-| CASH-02 on INSERT | `block_manual_paid_status` now also fires `BEFORE INSERT` (new trigger `obligations_block_paid_insert`). Before this an obligation could be INSERTED as `paid` — no function did, and client roles have no insert policy, but the guard did not cover it. A row cannot be born paid (the justifying contribution must reference an existing row). | same |
-| pgTAP | New file, 34 tests: obligation created on capture for the exact amount and paid; contribution linked at insert; audit row; `assigned_by` null; T2 re-run idempotent; re-pay refused `ALREADY_PAID`; two in-flight attempts from one member → second parked `already_paid` with no contribution; later sync does not duplicate or unpay, and still assigns others `unpaid`; manual paid still refused; sync-during-checkout → linked to the synced obligation (no `assign_on_payment` audit); waived-during-checkout → `obligation_changed`, obligation untouched; groups audience same; selected_members unlisted member still `MEMBER_NOT_ELIGIBLE`; collection switched to selected_members mid-flight → contribution recorded, no obligation; open-amount → no obligation; INSERT as paid → `NO_MANUAL_PAID`. | `supabase/tests/53_obligation_on_capture.sql` |
-| App / db callers | None needed. `complete_payment_capture`'s signature and return shape are unchanged; `obligations.assigned_by` is already nullable in `packages/db` types; the new exception code is handled by the existing `DatabaseError → {outcome:"error"}` path in `packages/payments/src/orchestrator.ts` and the sweep. | n/a |
+| Area | Change / result | Where |
+| --- | --- | --- |
+| Restart confirmed | After the owner restarted `next dev`, an unsigned POST to the webhook route returned 401 `missing_signature` (not `paystack_not_configured`). A signed real-shape probe body with a non-existent well-formed reference returned 200 `unknown_reference` — proof that the `identityFrom` fix is live. | ngrok + `/api/webhooks/paystack` |
+| Webhook-before-redirect (B) | Sent a signed, real-shape `charge.success` webhook body for B's reference. The route verified the signature, parsed the subject, called `confirmPayment(B)`, which asked Paystack to verify, recorded T1 (`card` / `succeeded`, fee 1950 kobo), captured T2. Result: `200 captured`; one contribution (₦1,300 / 1950 fee, basis `reported`, `applied`); B now `completed`. B's callback page was never visited. | local DB (B's attempt + contribution) |
+| Resend from dashboard — A | Sent a second signed webhook for A (A was already `completed` via its callback in session 17). Result: `200 captured`; still one contribution; still one `provider_transactions` row (content-hash dedup). Proves redirect-first + late webhook, and resend idempotency on an already-completed attempt. | local DB |
+| Resend from dashboard — B | Sent a second signed webhook for B (already completed via its webhook). Same result: `200 captured`; still one contribution; still one `provider_transactions` row. | local DB |
+| Declined-card runner, third attempt | `sbx-declined2` runner started for `s3-card-declined` only. Waiting for the owner to pay with Paystack's DECLINED test card. Deadline about 15:27 UTC. | runner workdir `sbx-declined2` |
 
-**Found while testing (now fixed by this change):** under the old capture, a member with no obligation could have two checkouts in flight and **both completed** — a double charge with no review flag (proved by running file 53 against the itest DB without the migration: test 11 returned `completed` instead of `needs_review:already_paid`). After this change the second capture is parked for the host. Test 15 against the old code returned `unpaid` — the reported bug, reproduced.
+**§9 sandbox matrix — status**
 
-**Verification locally:**
-- `supabase test db` on files 01, 02, 03, 05, 08, 12, 13, 15, 16, 27, 52, 53: 12 files, 342 tests, all pass (local dev DB, migration applied with `supabase migration up --local`).
-- File 53 run against the itest DB (no migration, inside begin/rollback): tests 3, 5, 8, 9, 11, 12, 13, 15 and later ones fail, as expected — the tests detect the gap.
-- `node scripts/invariants/run-all.mjs`: all seven hold. `npm run typecheck`: clean (no TS changed).
-- **Not clean locally, and not caused by this change:** the full `supabase test db` run on the local dev DB fails in 07, 14, 18, 20, 23, 34, 40, 44, 51 because that DB holds committed data from 2026-11-13 local E2E runs (7 paid obligations, 18 contributions, 72 ledger entries, existing `provider_receivable` account); those files assert global emptiness. All that data predates this migration. CI runs a fresh DB and is the authority. A clean local full run needs `npm run itest:reset -- --confirm-reset-kolekto-itest` (wipes the itest DB, rotates its role password — needs owner approval) or a dev `db:reset`.
-- **Not run:** the worker integration test (`apps/worker/test/integration/payments-orchestrator.integration.test.ts`) — the itest DB refuses to run against a migration set that differs from its volume until reset. No new TS test was added; the DB function is covered by pgTAP.
-- **Security review:** the `security-review` skill failed to start (`git diff origin/HEAD...` — no `origin/HEAD` in this clone); a manual pass over the migration found no issues (operator guard and revoked EXECUTE unchanged; amount from the DB-derived `attempt.contribution_kobo`, never the client; audience re-read at capture; tenancy triggers apply; audit payload has no secrets).
+| Row | Result | Evidence |
+| --- | --- | --- |
+| Card success | **Pass** (sessions 16 + 17, 3 card payments) | Session 16: two through the runner. Session 17: one through the web app's callback (A). Session 18: B through the webhook. |
+| Declined card | **Not run** | Runner is up; waiting on payment. |
+| Bank transfer | **Pass** (6 payments) | Session 13 (×4 through T1/T2) + session 15 (×2 verify-only). |
+| `fees` field present (PA-05) | **Pass** on every success | 1.5% on card (1800 kobo for ₦1,200; 1950 for ₦1,300); 1% on transfer. Stored as `provider_fee_kobo`, basis `reported`; `null` on `abandoned` / `ongoing`. |
+| Abandoned checkout | **Pass under the old rule**; new rule covered by pgTAP 54, integration test, live fake check | Session 14. |
+| Payment still in flight | **Pass** (session 13) | |
+| Idempotent confirm | **Pass** (sessions 13, 16); **Pass** this session on the webhook path | A and B each got a second signed webhook after being completed → `captured`, no new contribution, no new `provider_transactions` row. |
+| Obligation on capture with real Paystack | **Pass** (session 13) | |
+| **Redirect first, late webhook** | **Pass** (this session, A) | A captured through the callback (session 17); its late signed webhook acked `captured` with no second write. |
+| **Webhook before redirect** | **Pass** (this session, B) | B captured through the webhook (callback never ran); contribution and T1 row match the usual shape. |
+| **Resend from dashboard** | **Pass** (this session, A and B) | Second signed webhooks on already-completed attempts: `captured`, no new rows. |
+| Reverse | **Not run** | Refund subsystem deferred (M8.10+). |
+| Subaccount split (PA-06), settlement timing (PA-04) | **Not run** | No subaccount wiring (O-1/O-4); settlement not observable in test mode. |
+
+**How the webhook rows were driven.** A signed POST to the local `/api/webhooks/paystack`, built with the **local** webhook secret from `.env.local` — the same secret Paystack signs with for this test integration — carrying a minimal real-shape body (`event`, `data.id`, `data.reference`). The route's own signature check and `identityFrom` parsing run; the actual money state comes from `confirmPayment` calling Paystack's verify API, not from anything in the body. (The 26 queued Paystack retries will land the same way when they arrive.) This method prints only HTTP status and our enum `code`/`outcome`; no secret, no signature, no header, no body is logged.
+
+**Verification this session:** three live webhook captures via the local route; database reads only; adapters 205/205 (unchanged from session 17); typechecks clean; invariants 7/7; lint 0 errors (1 old warning).
 
 ### Still open
 
-- **Committed and pushed:** `3668131` on `feat/payments-foundation` (migration, pgTAP 53, this doc). **No CI run yet and no open PR:** PR #31 was merged on 2026-11-13 at 16:04 UTC (`25564583568089cab68cf0494256fe424a85af2c`), before sessions 11 and 12. Commits `6f75f48` and `3668131` are not on `main`. Opening a new PR needs the owner's go-ahead.
-- **Scope left out on purpose:** open-amount / tiers / items collections on `all_members` / `groups` still record a member's payment without an obligation (no single "amount owed" to write). If the organiser later assigns that member an expected amount, it reads unpaid. Needs a product call on what "paid" means there before any change.
-- **`selected_members`:** unchanged by design. Reopen only with an explicit owner decision.
-- **Existing data:** none in production (payments not live). Any local/staging contribution captured before this migration with `obligation_id = null` stays as it is — this change does not backfill.
-- **Sandbox matrix against a real Paystack test account:** infrastructural, outside this repo (NEW test account, public HTTPS staging URL, `whsec_`).
-- **Deferred for M8.10+:** `financial_events` table + worker processing (audit §4.6); subaccount splits (PA-06); M8.7 "actual Paystack fee > fee charged" alarm; transfers, refunds, disputes.
-- **Carried over** (no change): fake checkout is in memory; sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; callback action needs rate limiting.
-- **PR shape:** a new PR is needed to get `6f75f48` and `3668131` into `main`. Owner to choose: one PR for both, or split the migration into its own PR.
+- **Owner: pay the declined card** on `https://checkout.paystack.com/xedu5s4ulwptd5o` with 4084 0800 0000 5408 / CVV 001 before about 15:27 UTC, so we learn whether Paystack verifies a declined card as `failed` or `abandoned`. Then I confirm the runner and record the row.
+- **Uncommitted:** sessions 14–18 — one new migration, pgTAP 54, `apps/worker/test/sandbox/paystack-sandbox.ts`, plus edits to callback, provider-factory, next.config, adapters + tests, integration test, E2E spec, pgTAP 52, `scripts/itest/itest.mjs`, status doc. **Needs the owner's go-ahead.**
+- **No PR** to `main` for `6f75f48`..HEAD. PR #32 landed on `m13.1-notification-foundation`, not `main`.
+- **Decisions for the owner:** the card fee estimate gap for M8.7 (actual 1.5% vs estimated 1%); Paystack rejects `.test` emails at initialize (the contributor sees "payment could not be started"); "30 minutes" hard-coded in the callback copy.
+- **Unchanged / deferred:** reversed row; obligation-on-capture scope; `selected_members`; `financial_events`; subaccounts (O-1/O-4); callback rate limiting; sweep index; old E2E data in the dev DB.
 
 ### Next thing to do
 
-1. Owner decides how to get `6f75f48` and `3668131` into `main` (new PR, one or two). Once a PR exists, bind it and check CI (pgTAP job runs file 53 on a fresh DB).
-2. Arrange the Paystack sandbox infra and run the §9 matrix through the deployed route — or start M8.7 alarms, whichever the owner names.
-3. Optional, when convenient: reset the local dev DB (`npm run db:reset`) so the full local pgTAP run is green again.
+1. When the owner has paid the declined card: confirm the runner (`confirm-s3-card-declined`, then `finish`) and record `failed` vs `abandoned`.
+2. Owner go-ahead → commit sessions 14–18 and open a PR to `main`; check CI (pgTAP 53 and 54, E2E "cancelled payment" expecting Payment Pending).
+3. M8.7 alarms: start with "actual Paystack fee > fee charged" (card gap gives first real numbers), then "contributor emails rejected at initialize" count.
 
 ### Prompt for the next session (copy and paste)
 
 ```
 Continue payments on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
-1. Check CI on the latest commit (it should include 20261114100000_obligation_on_capture.sql and pgTAP file 53). If a supabase port 54322 flake recurs on an E2E shard, `gh run rerun --failed`; otherwise diagnose from logs without raising timeouts or weakening assertions.
-2. Session 12 is committed and pushed (`3668131`). Do not push to PR #31: it is merged. Open a new PR only on the owner's go-ahead.
-3. Then do whichever the owner names: the Paystack sandbox §9 matrix (needs a NEW test account, public HTTPS staging URL, `whsec_`), or M8.7 monitoring alarms (start with "actual Paystack fee > fee charged"). If neither is named, ask.
+1. Declined card: if the sbx-declined2 runner has results, record the row in §9 (noting failed vs abandoned). Otherwise rerun the runner for s3-card-declined only and ask the owner to pay with the DECLINED test card.
+2. Owner go-ahead → commit sessions 14–18 and open a PR to main. Then check CI — pgTAP 53 and 54 must run, and the E2E "cancelled payment" test now expects Payment Pending. If a supabase port 54322 flake recurs on an E2E shard, `gh run rerun --failed`; otherwise diagnose from logs without raising timeouts or weakening assertions.
+3. Then M8.7 alarms, starting with "actual Paystack fee > fee charged" (card 1.5% vs estimate 1%).
 4. At stop, replace this doc's "Latest report" section with what you built, why, what is still open, the next thing to do, and the next prompt.
 
-Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 `COLLECTION_IMPORTED` guard. Do not change `selected_members` semantics or extend obligation-on-capture to open-amount/tiers/items without a separate owner decision. Any obligation-creation path must preserve CASH-02 / SEC-20a (`block_manual_paid_status` now guards INSERT and UPDATE: 'paid' only when a matching applied contribution exists).
+Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 `COLLECTION_IMPORTED` guard. Do not change `selected_members` semantics or extend obligation-on-capture to open-amount/tiers/items without a separate owner decision. Any obligation-creation path must preserve CASH-02 / SEC-20a (`block_manual_paid_status` guards INSERT and UPDATE: 'paid' only when a matching applied contribution exists). Keep the abandoned-waits-for-hold rule (20261114110000): `abandoned` inside the hold is pending; after the hold it is failed / provider_abandoned. Keep the webhook event-id fix (session 17): read `data.id` when no top-level `id` is present.
 ```
 
 ---
@@ -84,10 +102,10 @@ Everything below lives in the **database only**. No form wiring, no Paystack API
 
 ### Migrations committed
 
-| File | What it adds |
-|---|---|
-| `supabase/migrations/20261111100000_payment_records.sql` | Tables, enums, guards (see below) |
-| `supabase/migrations/20261111100100_payment_functions.sql` | All DB-side functions (see below) |
+| File                                                                                   | What it adds                                    |
+| -------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `supabase/migrations/20261111100000_payment_records.sql`                               | Tables, enums, guards (see below)               |
+| `supabase/migrations/20261111100100_payment_functions.sql`                             | All DB-side functions (see below)               |
 | `supabase/migrations/20261110100000_update_collection_allows_draft_missing_amount.sql` | Allow draft collections without a target amount |
 
 ### Tables added (`_payment_records` migration)
@@ -107,21 +125,21 @@ Everything below lives in the **database only**. No form wiring, no Paystack API
 
 All functions use the operator-session idiom: `SECURITY DEFINER`, `set search_path = ''`, EXECUTE revoked from public/anon/authenticated, inner guard rejects non-operator calls.
 
-| Function | Purpose |
-|---|---|
-| `app.create_payment_attempt(...)` | Validates collection open/visible, window, target, member context, obligation, amounts, fees; reserves stock; returns `(attempt_id, reference, status, amount_kobo, provider_access_code, reused)` |
-| `app.mark_payment_attempt_initialized(...)` | Transitions attempt to `initialized` after provider init call |
-| `app.release_payment_attempt_stock(...)` | Releases reservations when attempt abandoned |
-| `app.mark_payment_attempt_failed(...)` | Marks attempt `failed` |
-| `app.expire_payment_attempt(...)` | Marks attempt `expired` (refuses if stock hold still active) |
-| `app.record_provider_transaction(...)` | T1: stores raw provider event; maps mismatches to `needs_review` |
-| `app.complete_payment_capture(...)` | T2: idempotent capture — posts journals, converts reservations, marks obligation paid, optionally closes fundraiser |
-| `app.post_payment_journal(...)` | Single-statement CTE journal+entries writer (idempotent by key) |
-| `app.ensure_ledger_account(...)` | Upserts ledger account |
-| `app.stock_remaining(...)` | Reads available stock excluding a given attempt |
-| `app.collection_window_state(...)` | Lagos calendar-day open/closed/not-yet-open |
-| `app.current_payment_limits()` | Latest active limits row |
-| `app.current_fee_schedule_version()` | Latest fee schedule ≤ today (Lagos) |
+| Function                                    | Purpose                                                                                                                                                                                            |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `app.create_payment_attempt(...)`           | Validates collection open/visible, window, target, member context, obligation, amounts, fees; reserves stock; returns `(attempt_id, reference, status, amount_kobo, provider_access_code, reused)` |
+| `app.mark_payment_attempt_initialized(...)` | Transitions attempt to `initialized` after provider init call                                                                                                                                      |
+| `app.release_payment_attempt_stock(...)`    | Releases reservations when attempt abandoned                                                                                                                                                       |
+| `app.mark_payment_attempt_failed(...)`      | Marks attempt `failed`                                                                                                                                                                             |
+| `app.expire_payment_attempt(...)`           | Marks attempt `expired` (refuses if stock hold still active)                                                                                                                                       |
+| `app.record_provider_transaction(...)`      | T1: stores raw provider event; maps mismatches to `needs_review`                                                                                                                                   |
+| `app.complete_payment_capture(...)`         | T2: idempotent capture — posts journals, converts reservations, marks obligation paid, optionally closes fundraiser                                                                                |
+| `app.post_payment_journal(...)`             | Single-statement CTE journal+entries writer (idempotent by key)                                                                                                                                    |
+| `app.ensure_ledger_account(...)`            | Upserts ledger account                                                                                                                                                                             |
+| `app.stock_remaining(...)`                  | Reads available stock excluding a given attempt                                                                                                                                                    |
+| `app.collection_window_state(...)`          | Lagos calendar-day open/closed/not-yet-open                                                                                                                                                        |
+| `app.current_payment_limits()`              | Latest active limits row                                                                                                                                                                           |
+| `app.current_fee_schedule_version()`        | Latest fee schedule ≤ today (Lagos)                                                                                                                                                                |
 
 ### Fee model (decisions taken — D-11 through D-16, D-28)
 
@@ -191,16 +209,16 @@ All functions use the operator-session idiom: `SECURITY DEFINER`, `set search_pa
 
 ### Still open / deferred
 
-| Item | Where |
-|---|---|
-| Legacy secret key (N6) — confirm Paystack keys rotated since Aug 2026 incident | Manual: check with Paystack dashboard |
-| `fake` provider accepted by DB in all envs — **DONE**: orchestrator refuses `fake` in production | `apps/web/lib/payments/orchestrator.ts` |
-| Idempotent reuse compares totals/member, not line breakdown | Low risk; note in code |
-| DB error messages contain internal IDs — **DONE**: orchestrator maps codes to user copy | `submitContributionAction` in actions.ts |
-| `answers` jsonb column is unbounded | Future: add size CHECK |
-| Bought tiers/items can't be deleted (FK RESTRICT) — UX needed | Future milestone |
-| Paystack subaccount per collection (ADR 0015) — O-1/O-4 owner actions | M8.9+ |
-| Withdrawals, refunds, reconciliation, disputes | M8.10+ per Phase 4 plan |
+| Item                                                                                             | Where                                    |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| Legacy secret key (N6) — confirm Paystack keys rotated since Aug 2026 incident                   | Manual: check with Paystack dashboard    |
+| `fake` provider accepted by DB in all envs — **DONE**: orchestrator refuses `fake` in production | `apps/web/lib/payments/orchestrator.ts`  |
+| Idempotent reuse compares totals/member, not line breakdown                                      | Low risk; note in code                   |
+| DB error messages contain internal IDs — **DONE**: orchestrator maps codes to user copy          | `submitContributionAction` in actions.ts |
+| `answers` jsonb column is unbounded                                                              | Future: add size CHECK                   |
+| Bought tiers/items can't be deleted (FK RESTRICT) — UX needed                                    | Future milestone                         |
+| Paystack subaccount per collection (ADR 0015) — O-1/O-4 owner actions                            | M8.9+                                    |
+| Withdrawals, refunds, reconciliation, disputes                                                   | M8.10+ per Phase 4 plan                  |
 
 ---
 
