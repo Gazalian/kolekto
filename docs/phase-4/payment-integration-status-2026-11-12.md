@@ -48,18 +48,18 @@
 
 ### Still open
 
-- **Commit + push:** session 12 files are uncommitted (`supabase/migrations/20261114100000_obligation_on_capture.sql`, `supabase/tests/53_obligation_on_capture.sql`, this doc). Push to PR #31 and watch CI — pgTAP job is the one that exercises the new file.
+- **Committed and pushed:** `3668131` on `feat/payments-foundation` (migration, pgTAP 53, this doc). **No CI run yet and no open PR:** PR #31 was merged on 2026-11-13 at 16:04 UTC (`25564583568089cab68cf0494256fe424a85af2c`), before sessions 11 and 12. Commits `6f75f48` and `3668131` are not on `main`. Opening a new PR needs the owner's go-ahead.
 - **Scope left out on purpose:** open-amount / tiers / items collections on `all_members` / `groups` still record a member's payment without an obligation (no single "amount owed" to write). If the organiser later assigns that member an expected amount, it reads unpaid. Needs a product call on what "paid" means there before any change.
 - **`selected_members`:** unchanged by design. Reopen only with an explicit owner decision.
 - **Existing data:** none in production (payments not live). Any local/staging contribution captured before this migration with `obligation_id = null` stays as it is — this change does not backfill.
 - **Sandbox matrix against a real Paystack test account:** infrastructural, outside this repo (NEW test account, public HTTPS staging URL, `whsec_`).
 - **Deferred for M8.10+:** `financial_events` table + worker processing (audit §4.6); subaccount splits (PA-06); M8.7 "actual Paystack fee > fee charged" alarm; transfers, refunds, disputes.
 - **Carried over** (no change): fake checkout is in memory; sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; callback action needs rate limiting.
-- **PR shape:** still PR #31. If the owner prefers a split, this migration can move to its own PR off a short-lived branch.
+- **PR shape:** a new PR is needed to get `6f75f48` and `3668131` into `main`. Owner to choose: one PR for both, or split the migration into its own PR.
 
 ### Next thing to do
 
-1. Commit session 12 and push; check CI (pgTAP job runs file 53 on a fresh DB).
+1. Owner decides how to get `6f75f48` and `3668131` into `main` (new PR, one or two). Once a PR exists, bind it and check CI (pgTAP job runs file 53 on a fresh DB).
 2. Arrange the Paystack sandbox infra and run the §9 matrix through the deployed route — or start M8.7 alarms, whichever the owner names.
 3. Optional, when convenient: reset the local dev DB (`npm run db:reset`) so the full local pgTAP run is green again.
 
@@ -69,7 +69,7 @@
 Continue payments on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
 1. Check CI on the latest commit (it should include 20261114100000_obligation_on_capture.sql and pgTAP file 53). If a supabase port 54322 flake recurs on an E2E shard, `gh run rerun --failed`; otherwise diagnose from logs without raising timeouts or weakening assertions.
-2. If session 12 is not yet committed/pushed, commit it (migration, pgTAP 53, status doc) and push to PR #31 first.
+2. Session 12 is committed and pushed (`3668131`). Do not push to PR #31: it is merged. Open a new PR only on the owner's go-ahead.
 3. Then do whichever the owner names: the Paystack sandbox §9 matrix (needs a NEW test account, public HTTPS staging URL, `whsec_`), or M8.7 monitoring alarms (start with "actual Paystack fee > fee charged"). If neither is named, ask.
 4. At stop, replace this doc's "Latest report" section with what you built, why, what is still open, the next thing to do, and the next prompt.
 
