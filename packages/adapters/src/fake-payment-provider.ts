@@ -167,6 +167,9 @@ export class FakePaymentProvider implements PaymentProvider {
   readonly verifyCalls: string[] = [];
 
   #amountsByReference = new Map<string, Kobo>();
+  #callbacksByReference = new Map<string, string>();
+  /** Outcomes chosen on the local fake checkout page. Take priority over the configured scenarios. */
+  #completed = new Map<string, FakeScenario>();
 
   // Declared explicitly rather than as a constructor parameter property: Node's
   // strip-only TypeScript mode, which is how this package's tests run, does not
@@ -181,7 +184,30 @@ export class FakePaymentProvider implements PaymentProvider {
   }
 
   scenarioFor(reference: string): FakeScenario {
-    return this.options.scenarios?.[reference] ?? this.options.defaultScenario ?? "success";
+    return this.#completed.get(reference) ?? this.options.scenarios?.[reference] ?? this.options.defaultScenario ?? "success";
+  }
+
+  /**
+   * What this instance was asked to charge for a reference, and where it would
+   * send the contributor afterwards. Null when this instance never initialized
+   * it: the fake keeps its checkouts in memory, so a restarted process has none.
+   */
+  checkoutFor(reference: string): { readonly amount: Kobo; readonly callbackUrl: string } | null {
+    const amount = this.#amountsByReference.get(reference);
+    const callbackUrl = this.#callbacksByReference.get(reference);
+    return amount === undefined || callbackUrl === undefined ? null : { amount, callbackUrl };
+  }
+
+  /**
+   * Play the contributor on the provider's checkout page: decide how this
+   * payment ends. Only for a checkout this instance initialized, and only to an
+   * outcome a contributor can actually produce there.
+   */
+  completeCheckout(reference: string, outcome: "success" | "payment_failed" | "abandoned"): void {
+    if (!this.#amountsByReference.has(reference)) {
+      throw new Error("FakePaymentProvider has no checkout for that reference (never initialized here, or the process restarted).");
+    }
+    this.#completed.set(reference, outcome);
   }
 
   async initialize(request: PaymentInitializationRequest): Promise<ProviderResult<PaymentInitialization>> {
@@ -211,6 +237,7 @@ export class FakePaymentProvider implements PaymentProvider {
     // Remember what we were asked to charge, so `verify` can report the same
     // figure — or, for the mismatch scenario, deliberately a different one.
     this.#amountsByReference.set(request.reference, request.amount);
+    this.#callbacksByReference.set(request.reference, request.callbackUrl);
 
     return {
       outcome: "ok",

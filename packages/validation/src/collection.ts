@@ -277,6 +277,110 @@ export const transitionCollectionStatusSchema = z.object({
 
 export type TransitionCollectionStatusInput = z.infer<typeof transitionCollectionStatusSchema>;
 
+/**
+ * Host-facing publish schema (M13.3). `notifyTarget` picks the audit action
+ * the DB function writes, which drives the audit trigger and the worker's
+ * recipient plan:
+ *
+ *   'all'    → audit collection.publish              (whole audience).
+ *   'none'   → audit collection.publish_silent        (not watched; no fan-out).
+ *
+ * 'unpaid' is NOT accepted: Kolekto records no contributions and nothing ever
+ * moves an obligation to paid, so "members who have not paid" cannot be
+ * established and would include people who have paid (cash, transfer). The
+ * database function still knows the value; this boundary refuses it, and the
+ * worker sends nothing for it either. Re-enable only once payment
+ * attribution exists (docs/product/MEMBER-NOTIFICATIONS-GAP-ANALYSIS.md G3).
+ *
+ * The database only accepts draft → active/scheduled through this path;
+ * other transitions use `transitionCollectionStatusSchema`.
+ */
+export const PUBLISH_NOTIFY_TARGETS = ["all", "none"] as const;
+export type PublishNotifyTarget = (typeof PUBLISH_NOTIFY_TARGETS)[number];
+
+export const publishCollectionSchema = z.object({
+  collectionId: z.string().uuid(),
+  /** The status the caller believes the collection is in. Must be 'draft'. */
+  expected: z.literal("draft"),
+  notifyTarget: z.enum(PUBLISH_NOTIFY_TARGETS),
+  reason: z.string().trim().max(500).optional(),
+});
+
+export type PublishCollectionInput = z.infer<typeof publishCollectionSchema>;
+
+/**
+ * Post-publish reminder schema (M13.3). Sends a reminder for an already-
+ * published collection. `notifyTarget` is `all` only: `unpaid` is refused
+ * for the reason given on PUBLISH_NOTIFY_TARGETS, and a `none` choice is a
+ * cancel on the client and never reaches the server. The idempotency key is
+ * minted once per dialog open: a double-click reuses it (server dedupes); a
+ * fresh dialog session mints a new one (fresh event).
+ */
+export const REMINDER_NOTIFY_TARGETS = ["all"] as const;
+export type ReminderNotifyTarget = (typeof REMINDER_NOTIFY_TARGETS)[number];
+
+export const sendCollectionPublishReminderSchema = z.object({
+  collectionId: z.string().uuid(),
+  notifyTarget: z.enum(REMINDER_NOTIFY_TARGETS),
+  /** 8–128 characters of A-Z a-z 0-9 _ -. Mint once per dialog open with crypto.randomUUID(). */
+  idempotencyKey: z
+    .string()
+    .regex(/^[A-Za-z0-9_-]{8,128}$/, "Invalid idempotency key"),
+  reason: z.string().trim().max(500).optional(),
+});
+
+export type SendCollectionPublishReminderInput = z.infer<typeof sendCollectionPublishReminderSchema>;
+
+/**
+ * Member announcements: explicitly announce changes to a live collection.
+ * Never sent by an edit itself — the organiser chooses to send it and names
+ * what changed from a fixed list (no free text reaches members or the
+ * notification payload). Mirrors app.announce_collection_update.
+ */
+export const ANNOUNCEABLE_CHANGES = ["name", "description", "deadline", "start_date", "story", "other"] as const;
+export type AnnounceableChange = (typeof ANNOUNCEABLE_CHANGES)[number];
+
+/**
+ * Member announcements v2: per-send audience override. Deliberately omits
+ * "unpaid" — payment status is not tracked (gap-analysis G3), so targeting
+ * "unpaid members" would tell people who have paid that they still owe.
+ */
+export const ANNOUNCE_TARGET_AUDIENCES = ["all_members", "groups", "selected_members"] as const;
+export type AnnounceTargetAudience = (typeof ANNOUNCE_TARGET_AUDIENCES)[number];
+
+export const announceCollectionUpdateSchema = z
+  .object({
+    collectionId: z.string().uuid(),
+    changedFields: z
+      .array(z.enum(ANNOUNCEABLE_CHANGES))
+      .min(1, "Choose at least one change to announce")
+      .max(ANNOUNCEABLE_CHANGES.length),
+    idempotencyKey: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{8,128}$/, "Invalid idempotency key"),
+    /** Organiser-authored body. Trimmed; <=1000 chars after trim. Omit for none. */
+    customMessage: z
+      .string()
+      .trim()
+      .max(1000, "Message is too long (max 1000 characters)")
+      .optional(),
+    /** Null / undefined = send to the collection's own audience. */
+    targetAudience: z.enum(ANNOUNCE_TARGET_AUDIENCES).optional(),
+    /** Required when targetAudience = "groups"; ignored otherwise. */
+    targetGroupIds: z.array(z.string().uuid()).max(100).default([]),
+  })
+  .superRefine((value, ctx) => {
+    if (value.targetAudience === "groups" && value.targetGroupIds.length === 0) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Choose at least one group",
+        path: ["targetGroupIds"],
+      });
+    }
+  });
+
+export type AnnounceCollectionUpdateInput = z.infer<typeof announceCollectionUpdateSchema>;
+
 // ── Obligations ─────────────────────────────────────────────────────────────
 
 export const assignObligationsSchema = z.object({

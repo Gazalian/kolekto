@@ -6,8 +6,9 @@ import Link from "next/link";
 import { useTransition } from "react";
 import { markReadAction } from "../app/notifications/actions.ts";
 import { formatDistanceToNow } from "../lib/format.ts";
+import { getNotificationDeepLink, getNotificationDescription, getNotificationLabel } from "../lib/notification-display.ts";
 
-interface NotificationRow {
+export interface NotificationRow {
   id: string;
   notification_event_id: string;
   community_id: string;
@@ -22,46 +23,12 @@ interface NotificationRow {
   } | null;
 }
 
-const EVENT_CONFIG: Record<string, { icon: typeof Gift; label: string }> = {
-  "collection.publish": { icon: Gift, label: "Collection published" },
-  "member.approve_join": { icon: UserCheck, label: "Membership approved" },
-  "member.join_via_invite": { icon: UserPlus, label: "New member joined" },
+/** Event-type → icon. Labels and descriptions live in lib/notification-display.ts (unit-tested, JSX-free). */
+const EVENT_ICONS: Record<string, typeof Gift> = {
+  "collection.publish": Gift,
+  "member.approve_join": UserCheck,
+  "member.join_via_invite": UserPlus,
 };
-
-function getDeepLink(eventType: string, payload: Record<string, unknown>): string | null {
-  const slug = payload.community_slug as string | undefined;
-  if (!slug) return null;
-
-  switch (eventType) {
-    case "collection.publish": {
-      const colSlug = payload.collection_slug as string | undefined;
-      return colSlug ? `/c/${slug}/collections/${colSlug}` : `/c/${slug}/collections`;
-    }
-    case "member.approve_join":
-      return `/c/${slug}/members`;
-    case "member.join_via_invite":
-      return `/c/${slug}/members`;
-    default:
-      return null;
-  }
-}
-
-function getDescription(eventType: string, payload: Record<string, unknown>): string {
-  switch (eventType) {
-    case "collection.publish": {
-      const name = payload.collection_name as string | undefined;
-      return name ? `${name} is now live` : "A collection is now live";
-    }
-    case "member.approve_join":
-      return "Your membership has been approved";
-    case "member.join_via_invite": {
-      const name = payload.member_name as string | undefined;
-      return name ? `${name} joined the community` : "Someone joined the community";
-    }
-    default:
-      return "New notification";
-  }
-}
 
 export function NotificationItem({
   notification,
@@ -69,18 +36,18 @@ export function NotificationItem({
   onClose,
 }: {
   notification: NotificationRow;
-  onRefresh: () => void;
+  onRefresh: () => void | Promise<void>;
   onClose: () => void;
 }) {
   const [isPending, startTransition] = useTransition();
   const event = notification.notification_events;
   const eventType = event?.event_type ?? "unknown";
   const payload = (event?.payload ?? {}) as Record<string, unknown>;
-  const config = EVENT_CONFIG[eventType] ?? { icon: Gift, label: "Notification" };
-  const Icon = config.icon;
+  const Icon = EVENT_ICONS[eventType] ?? Gift;
+  const label = getNotificationLabel(eventType);
   const isUnread = !notification.read_at;
-  const deepLink = getDeepLink(eventType, payload);
-  const description = getDescription(eventType, payload);
+  const deepLink = getNotificationDeepLink(eventType, payload);
+  const description = getNotificationDescription(eventType, payload);
 
   function handleClick() {
     if (isUnread) {
@@ -110,25 +77,45 @@ export function NotificationItem({
       </div>
       <div className="min-w-0 flex-1">
         <p className={cn("text-sm", isUnread ? "font-medium text-[var(--color-text)]" : "text-[var(--color-text-muted)]")}>
-          {config.label}
+          {label}
         </p>
-        <p className="mt-0.5 text-xs text-[var(--color-text-faint)] line-clamp-2">{description}</p>
-        <p className="mt-1 text-xs text-[var(--color-text-faint)]">{formatDistanceToNow(notification.created_at)}</p>
+        <p className="mt-0.5 text-xs text-[var(--color-text-faint)] line-clamp-2 break-words">{description}</p>
+        <time
+          dateTime={notification.created_at}
+          title={new Date(notification.created_at).toLocaleString()}
+          className="mt-1 block text-xs text-[var(--color-text-faint)]"
+        >
+          {formatDistanceToNow(notification.created_at)}
+        </time>
       </div>
       {isUnread && <span className="mt-2 h-2 w-2 shrink-0 rounded-full bg-[var(--color-primary)]" />}
     </div>
   );
 
+  const ariaLabel = `${label}. ${description}. ${formatDistanceToNow(notification.created_at)}.${isUnread ? " Unread." : ""}`;
+
   if (deepLink) {
     return (
-      <Link href={deepLink} onClick={handleClick} className="block border-b border-[var(--color-border)] last:border-b-0">
+      <Link
+        href={deepLink}
+        onClick={handleClick}
+        data-notification-item=""
+        aria-label={ariaLabel}
+        className="block border-b border-[var(--color-border)] last:border-b-0 focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none focus-visible:-outline-offset-2"
+      >
         {content}
       </Link>
     );
   }
 
   return (
-    <button type="button" onClick={handleClick} className="block w-full border-b border-[var(--color-border)] text-left last:border-b-0">
+    <button
+      type="button"
+      onClick={handleClick}
+      data-notification-item=""
+      aria-label={ariaLabel}
+      className="block w-full border-b border-[var(--color-border)] text-left last:border-b-0 focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none focus-visible:-outline-offset-2"
+    >
       {content}
     </button>
   );

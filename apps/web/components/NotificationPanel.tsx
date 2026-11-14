@@ -2,7 +2,8 @@
 
 import { cn } from "@kolekto/ui";
 import { Bell, Check } from "lucide-react";
-import { useTransition } from "react";
+import Link from "next/link";
+import { type CSSProperties, type RefObject, useState, useTransition } from "react";
 import { markAllReadAction } from "../app/notifications/actions.ts";
 import { NotificationItem } from "./NotificationItem.tsx";
 
@@ -22,32 +23,66 @@ interface NotificationRow {
 }
 
 export function NotificationPanel({
+  id,
+  panelRef,
   notifications,
   loading,
+  error,
   onRefresh,
   onClose,
+  style,
 }: {
+  id?: string;
+  /**
+   * Set by `NotificationBell` so outside-click detection can tell a click
+   * inside the fixed-positioned panel apart from a click outside the bell.
+   * Without this, a click on the panel's own buttons would close the panel
+   * before the handler ran, because the panel sits outside the bell's
+   * `.relative` wrapper when it is `position: fixed`.
+   */
+  panelRef?: RefObject<HTMLDivElement | null>;
   notifications: NotificationRow[];
   loading: boolean;
-  onRefresh: () => void;
+  error: boolean;
+  onRefresh: () => void | Promise<void>;
   onClose: () => void;
+  /** Inline position/size the bell computes to keep the panel on screen. */
+  style?: CSSProperties;
 }) {
   const [isPending, startTransition] = useTransition();
+  const [markAllError, setMarkAllError] = useState<string | null>(null);
   const hasUnread = notifications.some((n) => !n.read_at);
+  const hasAny = notifications.length > 0;
 
   function handleMarkAllRead() {
+    setMarkAllError(null);
     startTransition(async () => {
-      await markAllReadAction();
-      onRefresh();
+      const result = await markAllReadAction();
+      if (result.error) {
+        // Never report a read that did not happen. Keep the items unread and
+        // surface the failure so the officer can retry.
+        setMarkAllError(result.error);
+        return;
+      }
+      await onRefresh();
     });
   }
 
   return (
     <div
+      ref={panelRef}
+      id={id}
+      role="region"
+      aria-label="Notifications"
+      // When a `style` is supplied (the bell's computed `position: fixed`
+      // coordinates), rely on it for layout and only keep the visual classes.
+      // Otherwise fall back to the original anchor-below-right positioning so
+      // this component is still usable standalone.
       className={cn(
-        "absolute right-0 top-full z-50 mt-1 w-80 overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)]",
-        "sm:w-96",
+        "z-50 flex flex-col overflow-hidden rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] shadow-[var(--shadow-md)]",
+        !style && "absolute right-0 top-full mt-1 w-80 sm:w-96",
       )}
+      style={style}
     >
       <div className="flex items-center justify-between border-b border-[var(--color-border)] px-4 py-3">
         <h2 className="text-sm font-semibold text-[var(--color-text)]">Notifications</h2>
@@ -56,18 +91,48 @@ export function NotificationPanel({
             type="button"
             onClick={handleMarkAllRead}
             disabled={isPending}
-            className="flex items-center gap-1 text-xs font-medium text-[var(--color-primary)] hover:underline disabled:opacity-50"
+            className="flex items-center gap-1 rounded-[var(--radius-sm)] text-xs font-medium text-[var(--color-primary)] hover:underline focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none disabled:opacity-50"
           >
             <Check className="h-3 w-3" aria-hidden="true" />
-            Mark all read
+            {isPending ? "Marking…" : "Mark all read"}
           </button>
         )}
       </div>
 
-      <div className="max-h-96 overflow-y-auto">
-        {loading ? (
-          <div className="px-4 py-8 text-center text-sm text-[var(--color-text-faint)]">Loading…</div>
-        ) : notifications.length === 0 ? (
+      {markAllError && (
+        <div role="alert" className="border-b border-[var(--color-border)] bg-[var(--color-danger-bg)] px-4 py-2 text-xs text-[var(--color-danger)]">
+          Couldn&apos;t mark all as read. Please try again.
+        </div>
+      )}
+
+      {/* A failed refresh keeps the cached list but admits it is stale. */}
+      {error && hasAny && (
+        <div className="flex items-center justify-between gap-2 border-b border-[var(--color-border)] bg-[var(--color-warning-bg)] px-4 py-2 text-xs text-[var(--color-warning)]">
+          <span>Couldn&apos;t refresh just now.</span>
+          <button type="button" onClick={() => void onRefresh()} className="font-semibold hover:underline focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none">
+            Retry
+          </button>
+        </div>
+      )}
+
+      <div className="max-h-96 min-h-0 flex-1 overflow-y-auto">
+        {loading && !hasAny ? (
+          <div className="px-4 py-8 text-center text-sm text-[var(--color-text-faint)]" role="status">
+            Loading…
+          </div>
+        ) : error && !hasAny ? (
+          <div role="alert" className="flex flex-col items-center gap-2 px-6 py-10 text-center">
+            <p className="text-sm font-medium text-[var(--color-text)]">We couldn&apos;t load your notifications</p>
+            <p className="text-xs text-[var(--color-text-faint)]">Check your connection and try again.</p>
+            <button
+              type="button"
+              onClick={() => void onRefresh()}
+              className="mt-1 rounded-[var(--radius-sm)] border border-[var(--color-border-strong)] px-3 py-1 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
+            >
+              Try again
+            </button>
+          </div>
+        ) : !hasAny ? (
           <div className="flex flex-col items-center gap-2 px-6 py-10 text-center">
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-[var(--color-bg)] text-[var(--color-text-muted)]">
               <Bell className="h-5 w-5" aria-hidden="true" />
@@ -82,6 +147,16 @@ export function NotificationPanel({
             <NotificationItem key={n.id} notification={n} onRefresh={onRefresh} onClose={onClose} />
           ))
         )}
+      </div>
+
+      <div className="border-t border-[var(--color-border)] px-4 py-2 text-center">
+        <Link
+          href="/notifications"
+          onClick={onClose}
+          className="text-xs font-medium text-[var(--color-primary)] hover:underline focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
+        >
+          View all notifications
+        </Link>
       </div>
     </div>
   );

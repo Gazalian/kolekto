@@ -1,0 +1,37 @@
+Gate rehearsal results, 2026-11-06 about 15:00 UTC. Target: the kolekto-itest stack only.
+Every session was forced read-only by the server (default_transaction_read_only=on, plus a READ ONLY transaction).
+File under test: gated-purge.proposed.sql. Copies were mutated with sed in a scratch folder. No copy could reach the real purge call.
+Not exercised anywhere: LOCK TABLE, pg_try_advisory_xact_lock, the real purge call, COMMIT.
+
+Real file, unchanged
+  no mode                 REFUSED: no mode given. Nothing was done.
+  bogus mode              GATE REFUSED: unknown mode
+  rehearse-projected      GATE PASSED, rehearsal only: 131 rows, nothing locked or deleted
+  rehearse-now            GATE REFUSED: outside the valid time window   (correct at 15:00 UTC, before the window opens)
+
+Expected values tampered: must refuse
+  count 130               GATE REFUSED: eligible count is 131, expected 130
+  fingerprint             GATE REFUSED: eligible fingerprint differs from the inventory
+  one id changed          GATE REFUSED: eligible ids differ from the inventory
+  window closed           GATE REFUSED: outside the valid time window
+
+Relation missing, so NULL on every row: must refuse, not pass
+  community join          GATE REFUSED: 131 eligible row(s) are not demonstrably test-only
+  delivery join           GATE REFUSED: 131 eligible row(s) are not demonstrably test-only
+  event join              GATE REFUSED: 131 eligible row(s) are not demonstrably test-only
+  actor join              GATE REFUSED: 131 eligible row(s) are not demonstrably test-only
+  creator join            GATE REFUSED: 131 eligible row(s) are not demonstrably test-only
+
+A rule made to reject the data: must refuse
+  address pattern         GATE REFUSED: 131 eligible row(s) are not demonstrably test-only
+  tags forced to differ   GATE REFUSED: 131 eligible row(s) are not demonstrably test-only
+  exactly one row bad     GATE REFUSED: 1 eligible row(s) are not demonstrably test-only
+  definition drift        GATE REFUSED: a function definition changed since review
+
+Execute branch with the purge replaced by a constant, read-only, no lock taken
+  purge returns 130       VERIFY FAILED: purge deleted 130, expected 131
+  returns 131, rows kept  VERIFY FAILED: rows older than 48 hours remain
+  that check removed      VERIFY FAILED: a verified row was not deleted
+  that check removed      VERIFY FAILED: ledger total is 272, expected 141
+  that check removed      VERIFY FAILED: rows outside the verified set changed
+  all those checks removed VERIFIED path reached, deleted nothing: NOTICE: PURGE VERIFIED: 131 rows deleted, 272 remain. Committing. 

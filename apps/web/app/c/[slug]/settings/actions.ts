@@ -1,9 +1,11 @@
 "use server";
 
 import {
+  attestCommunityNotice,
   createOfficerInvitation,
   DatabaseError,
   endOfficerTerm,
+  revokeCommunityNotice,
   revokeOfficerInvitation,
   updateCommunityProfile,
 } from "@kolekto/db";
@@ -86,6 +88,30 @@ export async function endOfficerTermAction(slug: string, officerTermId: string, 
     await endOfficerTerm(caller, officerTermId, reason);
   } catch (error) {
     return { error: messageFrom(error, "Could not end this officer's term") };
+  }
+  revalidatePath(`/c/${slug}/settings`);
+  return { ok: true };
+}
+
+/** Owner/admin confirms the community communication notice. Re-checked by the database (communication.attest_notice). */
+export async function attestCommunityNoticeAction(slug: string, communityId: string): Promise<ActionResult> {
+  const caller = await requireCallerContext();
+  try {
+    await attestCommunityNotice(caller, communityId);
+  } catch (error) {
+    return { error: messageFrom(error, "Could not confirm the member notice") };
+  }
+  revalidatePath(`/c/${slug}/settings`);
+  return { ok: true };
+}
+
+/** Withdraw the confirmation: community emails stop being queued until it is confirmed again. */
+export async function revokeCommunityNoticeAction(slug: string, communityId: string): Promise<ActionResult> {
+  const caller = await requireCallerContext();
+  try {
+    await revokeCommunityNotice(caller, communityId, "other");
+  } catch (error) {
+    return { error: messageFrom(error, "Could not withdraw the member notice") };
   }
   revalidatePath(`/c/${slug}/settings`);
   return { ok: true };

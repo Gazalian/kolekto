@@ -26,6 +26,23 @@ import { type Kobo, ZERO } from "./money.ts";
 export type AmountModel = "fixed" | "open_amount" | "tiers" | "per_member" | "items";
 
 /**
+ * The ceiling on a single payment, in kobo.
+ *
+ * Mirrors `payment_limits.max_payment_kobo` seeded in the 2026-11-launch
+ * row (₦5,000,000, audit §14.5). The database remains authoritative —
+ * this constant only exists so the pure resolver can refuse an impossible
+ * amount before the server action calls the DB and the DB has to raise.
+ * Updating this constant without updating the corresponding `payment_limits`
+ * row would mean the UI accepts what the DB then rejects, and that gap is
+ * visible in the one pgTAP test that pins the value.
+ *
+ * The window check (`isOpenForContributions`) lives in
+ * `contribution-window.ts` and is already called from the server-action
+ * path; the resolver does not duplicate it.
+ */
+export const MAX_PAYMENT_KOBO: Kobo = 500_000_000n as Kobo; // ₦5,000,000
+
+/**
  * A tier as the public page sees it. `id` is the identity; `name` is a label
  * (ADR 0010).
  *
@@ -87,11 +104,27 @@ export interface ContributionConfig {
  * what the community forgave (OBL-08) — a waiver reduces what is owed without
  * anybody paying it, and is never counted as money collected. What remains to
  * pay is the difference, computed here rather than anywhere a browser can see.
+ *
+ * `appliedKobo` is the sum of completed contributions already recorded
+ * against this obligation. It is zero (or omitted) today, because partial
+ * payments are deferred (D-19) and a `paid` status already captures the
+ * "fully paid" case. It is carried here so the resolver's "what is left
+ * to pay" arithmetic subtracts applied amounts rather than offering the
+ * full owed value again — which matters the moment installments land
+ * (O-7, O-13) and would matter sooner if `complete_payment_capture` ever
+ * failed to flip the obligation status after a successful contribution
+ * (the audit flags this reconciliation gap, §4.6).
  */
 export interface ContributionObligation {
   readonly id: string;
   readonly expectedAmountKobo: Kobo;
   readonly waivedAmountKobo: Kobo;
+  /**
+   * Sum of this obligation's completed contributions, in kobo. Optional
+   * for callers that cannot yet load it; absent is treated as zero. Must
+   * never be negative.
+   */
+  readonly appliedKobo?: Kobo | undefined;
   readonly status: "unpaid" | "in_installments" | "overdue" | "paid" | "exempt" | "cancelled";
 }
 
@@ -174,6 +207,8 @@ export type ContributionErrorCode =
   | "MEMBER_REQUIRED"
   | "NOTHING_OWED"
   | "OBLIGATION_EXEMPT"
+  | "INSTALLMENTS_NOT_SUPPORTED"
+  | "PAYMENT_ABOVE_CEILING"
   | "NOT_OPEN_TO_CONTRIBUTORS"
   | "MISCONFIGURED";
 
@@ -188,11 +223,13 @@ export class ContributionError extends Error {
 }
 
 /**
- * What is left to pay on an obligation.
+ * What is left to pay on an obligation: `expected − waived − applied`, with
+ * every status that forbids paying raised as a specific error.
  *
- * Nothing is subtracted for money received, because no money has been received
- * anywhere in this phase (ADR 0006). A waiver is the one reduction that exists,
- * and it is a decision an officer recorded, not a payment.
+ * A waiver is a reduction an officer recorded (OBL-08); `applied` is the
+ * sum of completed contributions already recorded against this obligation
+ * (zero today, since partial payments are deferred — see
+ * `ContributionObligation.appliedKobo`).
  */
 function amountOwed(obligation: ContributionObligation): Kobo {
   if (obligation.status === "exempt") {
@@ -204,12 +241,61 @@ function amountOwed(obligation: ContributionObligation): Kobo {
   if (obligation.status === "cancelled") {
     throw new ContributionError("NOTHING_OWED", "This is no longer being asked of you.");
   }
+  // Paid is the first thing a verified payment makes true. Without this
+  // branch a paid member would be offered the full amount again.
+  if (obligation.status === "paid") {
+    throw new ContributionError("NOTHING_OWED", "You have already paid this in full.");
+  }
+  // `in_installments` is the shape partial payments will take (O-7, O-13).
+  // Deferred (D-19): nothing in the resolver supports a partial amount yet,
+  // and the capture function raises `INSTALLMENTS_NOT_SUPPORTED` either way.
+  // Refusing here rather than downstream gives the contributor a clear
+  // message and keeps the SQL error out of the UI.
+  if (obligation.status === "in_installments") {
+    throw new ContributionError(
+      "INSTALLMENTS_NOT_SUPPORTED",
+      "Part payments are not available yet. Pay the full balance when you are ready.",
+    );
+  }
+  // `unpaid` and `overdue` both proceed to compute what is left. `overdue`
+  // is a scheduling state, not a prohibition — a late payment is still
+  // accepted; the collection's window check decides whether contributions
+  // are open at all.
 
-  const owed = (obligation.expectedAmountKobo - obligation.waivedAmountKobo) as Kobo;
-  if (owed <= ZERO) {
+  const remainingAgainstWaiver = (obligation.expectedAmountKobo - obligation.waivedAmountKobo) as Kobo;
+  if (remainingAgainstWaiver <= ZERO) {
     throw new ContributionError("NOTHING_OWED", "Your balance on this collection has been fully waived.");
   }
+
+  const applied = obligation.appliedKobo ?? ZERO;
+  if (applied < ZERO) {
+    // A negative applied amount would silently inflate `owed`. Refuse at
+    // the boundary rather than trust an upstream reader.
+    throw new ContributionError("MISCONFIGURED", "This obligation has an invalid applied amount.");
+  }
+  const owed = (remainingAgainstWaiver - applied) as Kobo;
+  if (owed <= ZERO) {
+    // `applied` has met or exceeded `expected − waived`. In practice the
+    // obligation should already read `paid` — getting here means the
+    // capture function has not yet flipped the status (the audit §4.6
+    // reconciliation gap). Either way: nothing to pay.
+    throw new ContributionError("NOTHING_OWED", "You have already paid this in full.");
+  }
   return owed;
+}
+
+/**
+ * Refuse any single payment above the platform ceiling. Called by the
+ * resolver at the very end so the ceiling is compared against the final
+ * resolved amount, regardless of which model produced it.
+ */
+function assertWithinCeiling(amountKobo: Kobo): void {
+  if (amountKobo > MAX_PAYMENT_KOBO) {
+    throw new ContributionError(
+      "PAYMENT_ABOVE_CEILING",
+      "This amount is above the limit for a single payment. Break it into smaller contributions.",
+    );
+  }
 }
 
 /**
@@ -341,6 +427,18 @@ export function resolveContributionAmount(
   config: ContributionConfig,
   selection: ContributionSelection,
 ): ResolvedContribution {
+  const resolved = resolveContributionAmountInner(config, selection);
+  // Ceiling check runs last, after the model-specific resolver has
+  // computed the final amount, so it applies to every path (fixed,
+  // open, tiered, basketed, items, per-member) identically.
+  assertWithinCeiling(resolved.amountKobo);
+  return resolved;
+}
+
+function resolveContributionAmountInner(
+  config: ContributionConfig,
+  selection: ContributionSelection,
+): ResolvedContribution {
   switch (config.amountModel) {
     case "fixed": {
       // An identified member's own obligation wins over the collection's
@@ -377,6 +475,17 @@ export function resolveContributionAmount(
       }
       if (tier.priceKobo <= ZERO) {
         throw new ContributionError("MISCONFIGURED", "That option has no price set.");
+      }
+      // The single-tier path (quantity = 1 by construction) still has to
+      // honour the tier's stock: `quantityLimit = 0` means sold out. The
+      // basket path already applies both this and `perOrderLimit`; mirror
+      // the sold-out branch here so "choose one" collections do not quietly
+      // sell past the limit from the public page.
+      if (tier.quantityLimit !== null && tier.quantityLimit <= 0) {
+        throw new ContributionError(
+          "TIER_QUANTITY_ABOVE_LIMIT",
+          `"${tier.name}" is sold out.`,
+        );
       }
       return { amountKobo: tier.priceKobo, tierId: tier.id };
     }

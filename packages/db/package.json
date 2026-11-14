@@ -10,6 +10,7 @@
   "engines": { "node": ">=22.6.0" },
   "scripts": {
     "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test \"test/*.test.ts\"",
     "gen-types": "supabase gen types typescript --local > src/generated-types.ts"
   },
   "dependencies": {

@@ -1,0 +1,35 @@
+BEGIN
+read_at
+2026-11-06 11:05:10.596039+00
+(1 row)
+utc_hour | send_class | rows | first | last
+2026-11-04 15:00:00+00 | transactional | 68 | 2026-11-04 15:50:01.131089+00 | 2026-11-04 15:53:41.666291+00
+2026-11-04 16:00:00+00 | transactional | 63 | 2026-11-04 16:20:47.779003+00 | 2026-11-04 16:23:51.317389+00
+2026-11-05 16:00:00+00 | transactional | 22 | 2026-11-05 16:11:13.03208+00 | 2026-11-05 16:11:46.644637+00
+2026-11-05 17:00:00+00 | transactional | 22 | 2026-11-05 17:37:04.448291+00 | 2026-11-05 17:58:43.947335+00
+2026-11-05 18:00:00+00 | transactional | 67 | 2026-11-05 18:03:32.589768+00 | 2026-11-05 18:29:32.552886+00
+2026-11-06 08:00:00+00 | transactional | 3 | 2026-11-06 08:59:08.846733+00 | 2026-11-06 08:59:37.08993+00
+2026-11-06 09:00:00+00 | transactional | 9 | 2026-11-06 09:04:29.487981+00 | 2026-11-06 09:05:22.28117+00
+2026-11-06 10:00:00+00 | transactional | 18 | 2026-11-06 10:17:15.359072+00 | 2026-11-06 10:53:25.619507+00
+(8 rows)
+older_than_48h
+0
+(1 row)
+archive_rows_with_parked_reason | archive_rows_with_processed_mark | archive_total
+3 | 0 | 31
+(1 row)
+queue_parked | queue_total
+0 | 0
+(1 row)
+calls | mean_ms | max_ms | query
+173 | 0.05 | 2.39 | select count(*)::int as depth, coalesce(max(read_ct), $1)::int as max_read_ct, c
+77 | 0.58 | 18.73 | select count(*)::int as depth, coalesce(max(read_ct), $2)::int as max_read_ct, c
+48 | 0.02 | 0.27 | select current_setting($1) as lock_timeout, current_setting($2) as statement_tim
+8 | 0.04 | 0.06 | select current_user::text as who, (select rolbypassrls from pg_roles where rolna
+6 | 0.69 | 1.11 | select msg_id from pgmq.set_vt($3, $1::bigint, $2::integer)
+10 | 104.29 | 979.44 | select pgmq.archive($2, $1::bigint)
+227 | 0.58 | 4.29 | select pgmq.delete($2, $1::bigint)
+4 | 35.58 | 142.12 | update pgmq.q_notification_events set headers = coalesce(headers, $3::jsonb) || 
+6 | 2.49 | 6.42 | update pgmq.q_notification_events set vt = clock_timestamp() + $1::interval, hea
+(9 rows)
+ROLLBACK

@@ -1,0 +1,6 @@
+{"at":"2026-11-05T17:26:48.389Z","label":"bundle","value":{"sha256":"074f4492daa6ca76ea1cb000d1ac645c7e45c9322ccf52a9c05dd630b6dd00c5"}}
+{"at":"2026-11-05T17:26:55.532Z","label":"RT-1","value":{"sessions":1,"exit":{"code":0,"signal":null}}}
+{"at":"2026-11-05T17:32:39.559Z","label":"CFG","value":{"unset":{"code":1,"signal":null},"malformed":{"code":1,"signal":null},"closed":{"code":1,"signal":null},"wrong":{"code":1,"signal":null}}}
+{"at":"2026-11-05T17:32:42.424Z","label":"CFG-REVOKED","value":{"exit":{"code":1,"signal":null}}}
+{"at":"2026-11-05T17:32:49.662Z","label":"LP-3 reachable relations","value":["cron.job","cron.job_run_details","net._http_response","net.http_request_queue","pgmq.a_notification_events","pgmq.q_notification_events","public.collections","public.communities","public.members","public.notification_deliveries","public.notification_events","public.obligations","public.officer_terms","public.role_permissions"]}
+{"at":"2026-11-05T17:32:49.744Z","label":"F-2","value":{"summary":{"name":"PostgresError","code":"23514","severity":"ERROR","constraint":"notification_deliveries_email_has_valid_address","table":"notification_deliveries"}}}

@@ -1,0 +1,2 @@
+Kolekto worker: connected. Polling notification_events queue.
+Email sender configured: provider=mailpit, idempotency=none. Sending stays off until the email_sending_enabled pause switch is on.

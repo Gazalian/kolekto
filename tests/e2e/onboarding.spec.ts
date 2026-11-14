@@ -168,6 +168,61 @@ test.describe("onboarding edge cases", () => {
     await expect(page).toHaveURL(/\/welcome/);
   });
 
+  test("invalid OTP code shows an error and does not grant access", async ({ page }) => {
+    // Reach /verify with a real signup, then submit a wrong code. The
+    // security-relevant invariant is that a bad code grants no session: the
+    // user stays on /verify and is never taken to the onboarding flow.
+    //
+    // The signup step carries the same retry the shared helper uses, because
+    // the local stack occasionally does not accept the first signup under load
+    // (see signUpNewUser) — that flakiness is in the fixture, not the gate.
+    let reachedVerify = false;
+    for (let attempt = 1; attempt <= 2 && !reachedVerify; attempt += 1) {
+      const email = `bad-otp-${Date.now()}-${attempt}@example.test`;
+      const phone = `+23480${String(Date.now()).slice(-8)}`;
+
+      await page.goto("/signup");
+      await page.waitForLoadState("domcontentloaded");
+      await page.getByLabel("Full name").fill("Invalid OTP Test");
+      await page.getByLabel("Email address").fill(email);
+      await page.getByLabel("Phone number").fill(phone);
+      const passwordInputs = page.locator('input[type="password"]');
+      await passwordInputs.first().fill("Test1234!");
+      await passwordInputs.last().fill("Test1234!");
+      await page.getByRole("button", { name: "Create account" }).click();
+
+      try {
+        await page.waitForURL(/\/verify/, { timeout: 30_000 });
+        reachedVerify = true;
+      } catch {
+        if (attempt === 2) throw new Error("Local stack did not accept signup after two attempts");
+      }
+    }
+
+    await page.getByLabel("Verification code").fill("000000");
+    await page.getByRole("button", { name: "Verify" }).click();
+
+    // A danger banner is shown (the mapped auth error), the code field is still
+    // present, and navigation to the onboarding flow never happens.
+    await expect(
+      page.getByText(/code has expired|Something went wrong/i),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByLabel("Verification code")).toBeVisible();
+    await expect(page).toHaveURL(/\/verify/);
+  });
+
+  test("unauthenticated visit to a protected path is redirected to /login", async ({ page }) => {
+    // /welcome and /communities are not public; a signed-out visitor must be
+    // bounced to /login, never served the page.
+    await page.goto("/welcome");
+    await page.waitForLoadState("networkidle");
+    await expect(page).toHaveURL(/\/login/);
+
+    await page.goto("/communities");
+    await page.waitForLoadState("networkidle");
+    await expect(page).toHaveURL(/\/login/);
+  });
+
   test("logout and re-login works after onboarding", async ({ page }) => {
     const email = await signUpNewUser(page, "relogin");
     await page.getByRole("button", { name: "Do this later" }).click();

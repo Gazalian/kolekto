@@ -45,6 +45,19 @@ describe("fromNaira()", () => {
     assert.equal(fromNaira("0.01"), 1n);
   });
 
+  it("reads the k shorthand exactly, without floating-point multiplication", () => {
+    // 1.005 * 1000 is 1004.9999999999999 as a double; these were refused.
+    assert.equal(fromNaira("1.005k"), 100_500n);
+    assert.equal(fromNaira("1.001k"), 100_100n);
+    assert.equal(fromNaira("2.5k"), 250_000n);
+    assert.equal(fromNaira("₦1.5K"), 150_000n);
+    assert.equal(fromNaira("1.23456k"), 123_456n);
+    assert.equal(fromNaira("-1.5k"), -150_000n);
+    assert.throws(() => fromNaira("1.234567k"), MoneyError);
+    assert.throws(() => fromNaira("k"), MoneyError);
+    assert.throws(() => fromNaira("1.k"), MoneyError);
+  });
+
   it("rejects a third decimal place instead of guessing", () => {
     assert.throws(() => fromNaira("20.005"), MoneyError);
   });

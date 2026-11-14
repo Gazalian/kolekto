@@ -1,0 +1,6 @@
+Kolekto worker: connected. Polling notification_events queue.
+{"msg":"worker_database_timeouts","lock_timeout":"5s","statement_timeout":"15s","idle_in_transaction_session_timeout":"30s"}
+Email sender NOT started (configuration refused): {"name":"ConfigError","message":"EMAIL_PROVIDER is not a supported provider. Supported: fake, mailpit, ses."}
+{"msg":"notification_event_skipped","msg_id":"395","read_ct":1,"action":null,"reason":"invalid_message"}
+{"msg":"notification_event_health","queue_depth":0,"queue_max_read_ct":0,"queue_oldest_age_s":0,"queue_parked":0,"processed_total":0,"skipped_total":1,"failed_total":0,"dead_lettered_total":0,"poll_failures_total":0,"ack_failures_total":0,"ack_recovered_total":0,"archive_failures_total":0,"parked_total":0,"park_failures_total":0}
+Kolekto worker: shutting down.

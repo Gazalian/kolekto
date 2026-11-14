@@ -106,10 +106,14 @@ select is_empty(
     join pg_namespace n on n.oid = p.pronamespace
     where n.nspname in ('public', 'app')
       and p.prosrc ~* 'status\s*(:?=|,)\s*''paid'''
-      and p.proname <> 'block_manual_paid_status'
+      -- The guard itself; the capture path (M8.4), the one writer, which does
+      -- it only after inserting the contribution that block_manual_paid_status
+      -- requires; and create_payment_attempt, which only READS the status to
+      -- refuse paying twice. Behaviour is decided in 52_payments.sql.
+      and p.proname not in ('block_manual_paid_status', 'complete_payment_capture', 'create_payment_attempt')
     order by 1
   $$,
-  'no function sets an obligation to paid — money is the only route (CASH-02, SEC-20a)'
+  'no function other than the payment capture path sets an obligation to paid — money is the only route (CASH-02, SEC-20a)'
 );
 
 -- The kobo domain exists and is bigint-backed, so `app.kobo` cannot silently

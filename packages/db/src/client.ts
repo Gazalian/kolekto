@@ -23,6 +23,7 @@
 
 import { loadDatabaseUrl } from "@kolekto/config";
 import postgres from "postgres";
+import { retryIfNotStarted } from "./retry.ts";
 
 let client: postgres.Sql | undefined;
 
@@ -34,6 +35,13 @@ function getClient(): postgres.Sql {
     // through it (ids, counts), so keep them as strings rather than lossy
     // JS numbers.
     transform: { undefined: null },
+    // Close a connection that has sat idle for 20 seconds, and recycle every
+    // connection after 30 minutes. Without these the pool kept sockets open
+    // indefinitely, and one cut while idle — Docker restarting, the machine
+    // sleeping, a NAT dropping it — was only discovered by the next request,
+    // which failed with ECONNRESET. See retry.ts for the other half.
+    idle_timeout: 20,
+    max_lifetime: 60 * 30,
   });
   return client;
 }
@@ -61,15 +69,23 @@ export async function withCallerContext<T>(
   // TS cannot prove equals `T` for an arbitrary generic here. Every caller in
   // write.ts returns a plain object or void, never an array, so the shapes
   // are identical at every actual call site.
-  return getClient().begin(async (tx) => {
-    if (caller.userId) {
-      await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: caller.userId, role: "authenticated" })}, true)`;
-      await tx`set local role authenticated`;
-    } else {
-      await tx`set local role anon`;
-    }
-    return fn(tx);
-  }) as Promise<T>;
+  //
+  // A pooled connection that died while idle fails on BEGIN or the role
+  // switch, before `fn` runs; that one case is retried on a fresh connection
+  // (retry.ts explains why it is the only safe one).
+  return retryIfNotStarted(
+    (markStarted) =>
+      getClient().begin(async (tx) => {
+        if (caller.userId) {
+          await tx`select set_config('request.jwt.claims', ${JSON.stringify({ sub: caller.userId, role: "authenticated" })}, true)`;
+          await tx`set local role authenticated`;
+        } else {
+          await tx`set local role anon`;
+        }
+        markStarted();
+        return fn(tx);
+      }) as Promise<T>,
+  );
 }
 
 /**
@@ -98,6 +114,36 @@ export async function runWrite<T>(fn: () => Promise<T>): Promise<T> {
   } catch (error) {
     throw new DatabaseError(error);
   }
+}
+
+/**
+ * Runs `fn` inside a transaction on the base connection with NO role switch
+ * applied — i.e. as the connection's owner role. `current_setting('role',
+ * true)` returns the empty string, which every operator-only `app.*` function
+ * in this codebase treats as `none` (`coalesce(nullif(current_setting('role',
+ * true), ''), 'none')` is the single idiom used by every setter).
+ *
+ * The ONLY intended callers are server-side handlers for inbound provider
+ * webhooks (SES/SNS event ingestion, M13.2 P9-2) that need to invoke
+ * operator-level entry points after authenticating the request. Every other
+ * write goes through `withCallerContext` so the acting user's permissions
+ * and RLS apply. A caller that reaches for this helper for anything else is
+ * writing a bug.
+ *
+ * SERVER ONLY. `loadDatabaseUrl()` throws in the browser.
+ */
+export async function withOwnerConnection<T>(
+  fn: (sql: postgres.TransactionSql) => Promise<T>,
+): Promise<T> {
+  // Narrow the postgres.js generic return type the same way withCallerContext
+  // does, for the same reason.
+  return retryIfNotStarted(
+    (markStarted) =>
+      getClient().begin(async (tx) => {
+        markStarted();
+        return fn(tx);
+      }) as Promise<T>,
+  );
 }
 
 /** Test/dev only: closes the pool so a script can exit. Never called from request-handling code. */

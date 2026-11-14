@@ -1,0 +1,9 @@
+  kolekto_itest_worker: LOGIN=true BYPASSRLS=false SUPERUSER=false CREATEROLE=false CREATEDB=false REPLICATION=false INHERIT=false PASSWORD_SET=false; memberships 0; policies 10
+  pause switch: exactly one row, email_sending_enabled = false (read only)
+itest:worker-role complete.
+  kolekto_itest_worker: LOGIN=true BYPASSRLS=false SUPERUSER=false CREATEROLE=false CREATEDB=false REPLICATION=false INHERIT=false PASSWORD_SET=false; memberships 0; policies 10
+  pause switch: exactly one row, email_sending_enabled = false (read only)
+itest:worker-role complete.
+  kolekto_itest_worker: LOGIN=true BYPASSRLS=false SUPERUSER=false CREATEROLE=false CREATEDB=false REPLICATION=false INHERIT=false PASSWORD_SET=false; memberships 0; policies 10
+  pause switch: exactly one row, email_sending_enabled = false (read only)
+itest:worker-role complete.

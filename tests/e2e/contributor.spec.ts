@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { expectPaymentReview } from "./helpers/payments.ts";
 import { openWizard, walkWizard, type StepFiller } from "./helpers/wizard.ts";
-import type { StepKind } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
+import type { SectionKind } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
 
 /**
  * The public contributor experience (M7), in a real browser against the real
@@ -113,7 +114,7 @@ async function createDuesCollection(
   page: Page,
   name: string,
   amount: string,
-  fill: Partial<Record<StepKind, StepFiller>> = {},
+  fill: Partial<Record<SectionKind, StepFiller>> = {},
 ): Promise<void> {
   await openWizard(page);
   await walkWizard(page, {
@@ -221,6 +222,7 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
 
   // The collection's own question is required, and the server says so.
   await contributor.getByLabel("Full name").fill("Grace Adeyemi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011110102");
   await contributor.getByRole("button", { name: "Continue" }).click();
   await expect(contributor.getByText(/House number/)).toBeVisible();
@@ -228,9 +230,9 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
   await contributor.getByLabel("House number").fill("14B Sobi Close");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
-  // The payment boundary: the amount is resolved, and nothing has been charged.
-  await expect(contributor.getByText("Ready to continue to payment")).toBeVisible();
-  await expect(contributor.getByText(/Nothing has been charged/)).toBeVisible();
+  // The payment boundary: the amount is resolved, and nothing has been charged
+  // until the contributor presses Pay.
+  await expectPaymentReview(contributor, { contributorName: "Grace Adeyemi", contribution: "₦5,000" });
   await expect(contributor.getByText("₦5,000").first()).toBeVisible();
 
   await anonymous.close();
@@ -267,6 +269,7 @@ test("identification cannot be forged: the server refuses a contribution with no
   await anonymous.clearCookies();
 
   await contributor.getByLabel("Full name").fill("Somebody Else");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011110299");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
@@ -457,10 +460,11 @@ test("an open collection asks nobody to identify, and a closed one takes nothing
 
   await contributor.getByLabel("How much would you like to contribute?").fill("7500");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011110501");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
-  await expect(contributor.getByText("Ready to continue to payment")).toBeVisible();
+  await expect(contributor.getByRole("heading", { name: "Review and pay, Ada Obi" })).toBeVisible();
   await expect(contributor.getByText("₦7,500").first()).toBeVisible();
 
   // Closing it takes the form away entirely — there is nothing to continue to.

@@ -1,0 +1,58 @@
+ M .gitignore
+ M apps/web/AGENTS.md
+ M apps/worker/package.json
+ M apps/worker/src/index.ts
+ M apps/worker/src/notification-processor.ts
+ M apps/worker/src/notification-rules.ts
+ M apps/worker/src/notification-send-message.ts
+ M apps/worker/src/notification-sender-state.ts
+ M apps/worker/src/notification-sender.ts
+ D apps/worker/test/notification-processor.integration.test.ts
+ M apps/worker/test/notification-processor.test.ts
+ D apps/worker/test/notification-rate-limit.integration.test.ts
+ D apps/worker/test/notification-send-claim.integration.test.ts
+ D apps/worker/test/notification-sender.integration.test.ts
+ D apps/worker/test/notification-suppression.integration.test.ts
+ M docs/database/M13.2-LOCAL-DATABASE-RUNBOOK.md
+ M package.json
+?? .claude/
+?? apps/worker/src/dead-letter.ts
+?? apps/worker/src/notification-email-templates.ts
+?? apps/worker/src/worker-safety.ts
+?? apps/worker/test/dead-letter.test.ts
+?? apps/worker/test/integration/
+?? apps/worker/test/itest-acceptance.test.ts
+?? apps/worker/test/itest-db.test.ts
+?? apps/worker/test/itest-env-file.test.ts
+?? apps/worker/test/itest-environment.test.ts
+?? apps/worker/test/itest-gate.test.ts
+?? apps/worker/test/itest-harness.test.ts
+?? apps/worker/test/itest-isolation.test.ts
+?? apps/worker/test/itest-queue.test.ts
+?? apps/worker/test/itest-worker.test.ts
+?? apps/worker/test/notification-email-templates.test.ts
+?? apps/worker/test/notification-sender.test.ts
+?? apps/worker/test/support/
+?? apps/worker/test/worker-safety.test.ts
+?? docs/INVESTIGATION-AUTH-MEMBERS-REMINDERS.md
+?? docs/database/CLEAN-LOCAL-DATABASE-INVESTIGATION.md
+?? docs/database/M13.2-IMPLEMENTATION-APPROVAL-CHECKLIST.md
+?? docs/database/M13.2-NOTIFICATION-FINAL-DIAGNOSTIC.md
+?? docs/database/M13.2-P6-P7-ACCEPTANCE-REPORT.md
+?? docs/database/M13.2-P8-ACCEPTANCE-REPORT.md
+?? docs/database/M13.2-PHASE-1A-IMPLEMENTATION-REPORT.md
+?? docs/database/M13.2-PHASE-1B-IMPLEMENTATION-REPORT.md
+?? docs/database/M13.2-PHASE-1C-IMPLEMENTATION-REPORT.md
+?? docs/database/M13.2-PHASE-3-IMPLEMENTATION-REPORT.md
+?? docs/database/M13.2-PHASE-4-IMPLEMENTATION-REPORT.md
+?? docs/database/M13.2-PHASE-5-IMPLEMENTATION-REPORT.md
+?? docs/database/M13.2-PHASE-6-DESIGN-REPORT.md
+?? docs/database/M13.2-PHASE-6A-IMPLEMENTATION-REPORT.md
+?? docs/database/M13.2-PHASE-6B-2-IMPLEMENTATION-REPORT.md
+?? docs/database/M13.2-PHASE-6B-PREFLIGHT-REPORT.md
+?? docs/database/M13.2-PHASE-7-DESIGN-REPORT.md
+?? docs/database/M13.2-TEST-ISOLATION-PLAN-REVIEW.md
+?? docs/database/M13.2-TEST-ISOLATION-REMEDIATION-PLAN.md
+?? docs/database/evidence/
+?? scripts/itest/
+?? supabase-itest/

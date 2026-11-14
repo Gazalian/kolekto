@@ -11,7 +11,7 @@
  */
 
 import type { TransactionSql } from "postgres";
-import { ANONYMOUS, type CallerContext, runWrite, withCallerContext } from "./client.ts";
+import { ANONYMOUS, type CallerContext, DatabaseError, runWrite, withCallerContext } from "./client.ts";
 import type {
   AmountModel,
   CollectionCategory,
@@ -521,6 +521,293 @@ export async function transitionCollectionStatus(
     ) as status`,
   );
   return row!.status;
+}
+
+/**
+ * Host-facing publish with an explicit notification target (M13.3).
+ *
+ * `notifyTarget` controls the audit action the DB function writes, which in
+ * turn tells the audit trigger whether to enqueue and tells the worker which
+ * recipient plan to run:
+ *
+ *   'all'    → audit `collection.publish`; worker fans out to every
+ *              audience member with a linked account (existing default).
+ *   'unpaid' → audit `collection.publish_remind_unpaid`; worker fans out
+ *              only to audience members with an obligation in
+ *              (unpaid, in_installments, overdue) on this collection.
+ *   'none'   → audit `collection.publish_silent`; trigger does not watch
+ *              this action, so no pgmq message is enqueued at all.
+ *
+ * Business state (status, published_at, published_by) is identical in all
+ * three cases. Narrow by design: only draft → active/scheduled.
+ */
+export type PublishNotifyTarget = "all" | "unpaid" | "none";
+
+export async function publishCollection(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    expected: CollectionStatus;
+    notifyTarget: PublishNotifyTarget;
+    reason?: string | undefined;
+  },
+): Promise<CollectionStatus> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ status: CollectionStatus }[]>`select app.publish_collection(
+      ${input.collectionId}, ${input.expected}, ${input.reason ?? null}, ${input.notifyTarget}
+    ) as status`,
+  );
+  return row!.status;
+}
+
+/**
+ * Preview counts for the host publish dialog (M13.3). `eligible` is the full
+ * audience with a linked account; `unpaid` is the subset with an outstanding
+ * obligation on this collection. Permission-checked by the DB function.
+ * Reused by the post-publish reminder dialog — same cohorts, same permissions.
+ */
+export async function countCollectionPublishRecipients(
+  caller: CallerContext,
+  collectionId: string,
+): Promise<{ eligible: number; unpaid: number }> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ eligible: number; unpaid: number }[]>`
+      select * from app.count_collection_publish_recipients(${collectionId})`,
+  );
+  return row ?? { eligible: 0, unpaid: 0 };
+}
+
+/**
+ * M13.3 post-publish reminder (20261029100000). Sends a reminder on an
+ * already-published (active or scheduled) collection. `notifyTarget = "all"`
+ * writes an audit action of `collection.remind` (full audience);
+ * `"unpaid"` writes `collection.remind_unpaid` (audience members with an
+ * unpaid / in_installments / overdue obligation). The DB function is
+ * permission-checked (collection.publish) and idempotent on
+ * (community, actor, idempotency key): a duplicate submission returns the
+ * previously-recorded audit_log_id without enqueuing a second event.
+ */
+export type ReminderNotifyTarget = "all" | "unpaid";
+
+export interface SendPublishReminderResult {
+  auditLogId: string;
+  created: boolean;
+  notifyTarget: ReminderNotifyTarget;
+}
+
+export async function sendCollectionPublishReminder(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    notifyTarget: ReminderNotifyTarget;
+    idempotencyKey: string;
+    reason?: string | undefined;
+  },
+): Promise<SendPublishReminderResult> {
+  const [row] = await call(caller, (tx) =>
+    tx<{ audit_log_id: string; created: boolean; notify_target: ReminderNotifyTarget }[]>`
+      select * from app.send_collection_publish_reminder(
+        ${input.collectionId}, ${input.notifyTarget}, ${input.idempotencyKey}, ${input.reason ?? null}
+      )`,
+  );
+  if (!row) {
+    throw new Error("sendCollectionPublishReminder returned no row");
+  }
+  return {
+    auditLogId: row.audit_log_id,
+    created: row.created,
+    notifyTarget: row.notify_target,
+  };
+}
+
+// ── Member announcements (20261109100100_member_collection_announcements) ──
+//
+// Collection announcements reach community MEMBERS by email through the
+// contact on their member record; no account is needed. These two wrappers
+// call functions defined in supabase/migrations/20261109100100_member_collection_announcements.sql.
+// On a database where that migration is not applied the functions do not
+// exist: the preview returns null (the caller falls back to the in-app counts)
+// and the announcement throws AnnouncementsUnavailableError.
+
+/** SQLSTATE 42883 undefined_function: the proposal has not been applied to this database. */
+function isUndefinedFunction(error: unknown): boolean {
+  return error instanceof DatabaseError && error.sqlState === "42883";
+}
+
+export class AnnouncementsUnavailableError extends Error {
+  constructor() {
+    super("Announcing changes to members is not available yet.");
+    this.name = "AnnouncementsUnavailableError";
+  }
+}
+
+export type AnnouncementCategory = "announcement" | "update" | "reminder";
+
+export interface AnnouncementRecipientPreview {
+  audienceTotal: number;
+  emailEligible: number;
+  inAppEligible: number;
+  collectionReachable: boolean;
+  skippedNotReachable: number;
+  /**
+   * M13.3: members not emailed because no owner/admin has confirmed the community
+   * communication notice (community_notice_missing). Consent is not a requirement.
+   */
+  skippedNoticeMissing: number;
+  skippedOptedOut: number;
+  skippedNoEmail: number;
+  skippedInvalidEmail: number;
+  skippedUnverifiedAccount: number;
+  /** A future start: members are skipped (collection_not_reachable) until the page opens. */
+  startsLater: boolean;
+  /** M13.3: whether the community's communication notice is currently attested. */
+  communityNoticeAttested: boolean;
+}
+
+/** Counts only, never addresses. Permission-checked (collection.publish) by the database. Null when not installed. */
+export async function previewCollectionAnnouncementRecipients(
+  caller: CallerContext,
+  collectionId: string,
+  category: AnnouncementCategory,
+): Promise<AnnouncementRecipientPreview | null> {
+  try {
+    const [row] = await call(caller, (tx) =>
+      tx<{
+        audience_total: number;
+        email_eligible: number;
+        in_app_eligible: number;
+        collection_reachable: boolean;
+        skipped_not_reachable: number;
+        skipped_notice_missing: number;
+        skipped_opted_out: number;
+        skipped_no_email: number;
+        skipped_invalid_email: number;
+        skipped_unverified_account: number;
+        starts_later: boolean;
+        community_notice_attested: boolean;
+      }[]>`select * from app.preview_collection_announcement_recipients(${collectionId}, ${category})`,
+    );
+    if (!row) return null;
+    return {
+      audienceTotal: row.audience_total,
+      emailEligible: row.email_eligible,
+      inAppEligible: row.in_app_eligible,
+      collectionReachable: row.collection_reachable,
+      skippedNotReachable: row.skipped_not_reachable,
+      skippedNoticeMissing: row.skipped_notice_missing,
+      skippedOptedOut: row.skipped_opted_out,
+      skippedNoEmail: row.skipped_no_email,
+      skippedInvalidEmail: row.skipped_invalid_email,
+      skippedUnverifiedAccount: row.skipped_unverified_account,
+      startsLater: row.starts_later,
+      communityNoticeAttested: row.community_notice_attested === true,
+    };
+  } catch (error) {
+    if (isUndefinedFunction(error)) return null;
+    throw error;
+  }
+}
+
+/**
+ * Explicitly announce changes to a live collection. Idempotent on
+ * (community, actor, idempotencyKey). Never called by an edit itself.
+ */
+export async function announceCollectionUpdate(
+  caller: CallerContext,
+  input: {
+    collectionId: string;
+    changedFields: string[];
+    idempotencyKey: string;
+    /** Member announcements v2: optional organiser message (<=1000 chars; addresses stripped in the DB). */
+    customMessage?: string | undefined;
+    /** Member announcements v2: optional per-send audience ("all_members" | "groups" | "selected_members"). */
+    targetAudience?: "all_members" | "groups" | "selected_members" | undefined;
+    /** Required when targetAudience = "groups". */
+    targetGroupIds?: readonly string[] | undefined;
+  },
+): Promise<{ auditLogId: string; created: boolean }> {
+  try {
+    // Prefer v2; fall back to the original (no custom, no target) on an older DB.
+    const useV2 =
+      input.customMessage !== undefined ||
+      input.targetAudience !== undefined ||
+      (input.targetGroupIds !== undefined && input.targetGroupIds.length > 0);
+    const [row] = await call(caller, (tx) =>
+      useV2
+        ? tx<{ audit_log_id: string; created: boolean }[]>`
+            select * from app.announce_collection_update_v2(
+              ${input.collectionId}, ${input.changedFields}::text[], ${input.idempotencyKey},
+              ${input.customMessage ?? null}, ${input.targetAudience ?? null},
+              ${input.targetGroupIds ? [...input.targetGroupIds] : []}::uuid[]
+            )`
+        : tx<{ audit_log_id: string; created: boolean }[]>`
+            select * from app.announce_collection_update(
+              ${input.collectionId}, ${input.changedFields}::text[], ${input.idempotencyKey}
+            )`,
+    );
+    if (!row) throw new Error("announceCollectionUpdate returned no row");
+    return { auditLogId: row.audit_log_id, created: row.created };
+  } catch (error) {
+    if (isUndefinedFunction(error)) throw new AnnouncementsUnavailableError();
+    throw error;
+  }
+}
+
+// ── Community communication notice (20261109100000_m13_3_communication_policy) ──
+//
+// An owner/admin confirms that members were told how their contact details are
+// used for community messages. Until this is confirmed, no community email
+// (collection announcements, updates, reminders) becomes pending. Not consent.
+
+/** The notice wording version the UI shows and attests. Must be listed in app.accepted_communication_notice_versions(). */
+export const COMMUNITY_NOTICE_VERSION = "community-notice-v1";
+
+export interface CommunityNoticeStatus {
+  attested: boolean;
+  noticeVersion: string | null;
+  recordedAt: string | null;
+  recordedByName: string | null;
+  latestAction: "attest" | "revoke" | null;
+}
+
+/** Null when the migration is not applied on this database. Permission-checked by the database. */
+export async function getCommunityNoticeStatus(caller: CallerContext, communityId: string): Promise<CommunityNoticeStatus | null> {
+  try {
+    const [row] = await call(caller, (tx) =>
+      tx<{
+        attested: boolean;
+        notice_version: string | null;
+        recorded_at: Date | string | null;
+        recorded_by_name: string | null;
+        latest_action: "attest" | "revoke" | null;
+      }[]>`select * from app.community_communication_notice_status(${communityId})`,
+    );
+    if (!row) return null;
+    return {
+      attested: row.attested === true,
+      noticeVersion: row.notice_version,
+      recordedAt: row.recorded_at === null ? null : new Date(row.recorded_at).toISOString(),
+      recordedByName: row.recorded_by_name,
+      latestAction: row.latest_action,
+    };
+  } catch (error) {
+    if (isUndefinedFunction(error)) return null;
+    throw error;
+  }
+}
+
+export async function attestCommunityNotice(caller: CallerContext, communityId: string): Promise<void> {
+  await call(caller, (tx) => tx`select app.attest_community_communication_notice(${communityId}, ${COMMUNITY_NOTICE_VERSION})`);
+}
+
+export type CommunityNoticeRevokeReason = "notice_changed" | "attested_in_error" | "community_request" | "other";
+
+export async function revokeCommunityNotice(
+  caller: CallerContext,
+  communityId: string,
+  reason: CommunityNoticeRevokeReason,
+): Promise<void> {
+  await call(caller, (tx) => tx`select app.revoke_community_communication_notice(${communityId}, ${reason})`);
 }
 
 // ── Collection audience (20260920150000) ───────────────────────────────────

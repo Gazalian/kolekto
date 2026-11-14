@@ -63,6 +63,7 @@ export function ContributeForm({
   fields,
   thankYouMessage,
   organiser,
+  paymentEnabled = false,
 }: {
   communitySlug: string;
   collectionSlug: string;
@@ -82,6 +83,15 @@ export function ContributeForm({
   fields: PublicField[];
   thankYouMessage: string | null;
   organiser: string;
+  /**
+   * Whether online checkout is available in this environment. Decided on
+   * the server and threaded in, so the banner at the top of the form can
+   * tell the contributor up front what will happen after Continue — pay
+   * securely online, or wait to hear from the organiser. The client
+   * cannot derive this; `payment` state only appears after the server
+   * action responds.
+   */
+  paymentEnabled?: boolean;
 }) {
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -104,8 +114,13 @@ export function ContributeForm({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<ContributionResult["summary"] | null>(null);
+  const [payment, setPayment] = useState<ContributionResult["payment"] | null>(null);
+  const [redirecting, setRedirecting] = useState(false);
   const [member, setMember] = useState<IdentifiedMember | null>(null);
   const [isPending, startTransition] = useTransition();
+  // One key per checkout, so a double-click or a retry after a timeout resumes
+  // the same payment attempt instead of starting a second one.
+  const [checkoutKey, setCheckoutKey] = useState(() => crypto.randomUUID());
 
   const isManaged = audienceMode !== "public";
 
@@ -159,10 +174,17 @@ export function ContributeForm({
     );
   }
 
+  /** Back to the form. The order may change, so the next Pay starts a new checkout. */
+  function editOrder(): void {
+    setDone(null);
+    setPayment(null);
+    setCheckoutKey(crypto.randomUUID());
+  }
+
   if (done) {
     return (
       <div className="flex flex-col gap-4 rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)] p-5">
-        <h2 className="text-lg font-semibold text-[var(--color-text)]">Your details are checked, {done.contributorName}</h2>
+        <h2 className="text-lg font-semibold text-[var(--color-text)]">{payment ? `Review and pay, ${done.contributorName}` : `Your details are checked, ${done.contributorName}`}</h2>
 
         <dl className="divide-y divide-[var(--color-border)]">
           {done.memberName && (
@@ -234,25 +256,58 @@ export function ContributeForm({
           )}
         </dl>
 
-        {/* The payment boundary (ADR 0012). This is where M7 stops: the amount
-            is resolved and everything needed to pay it is in hand. The exact
-            state of affairs is said plainly — no receipt, no reference number,
-            no "payment successful", because nothing has been paid and nothing
-            has been stored. */}
-        <div className="rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] px-4 py-3">
-          <p className="text-sm font-medium text-[var(--color-text)]">Ready to continue to payment</p>
-          <p className="text-sm text-[var(--color-text-muted)]">
-            {organiser} cannot take payment through Kolekto yet. Nothing has been charged, nothing has been saved, and
-            nothing you owe has changed — contact {organiser} to arrange payment, and check back here when online
-            payment opens.
-          </p>
-        </div>
+        {/* Fee review (D-28). Every figure comes from the server, frozen on the
+            payment attempt when it was created (D-16); the form only shows them. */}
+        {payment && (
+          <dl className="divide-y divide-[var(--color-border)] rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-bg)] px-4">
+            <div className="flex justify-between gap-3 py-2 text-sm">
+              <dt className="text-[var(--color-text-muted)]">Contribution</dt>
+              <dd className="font-medium text-[var(--color-text)]">{payment.fees.contribution}</dd>
+            </div>
+            {payment.feesAddedToTotal && (
+              <>
+                <div className="flex justify-between gap-3 py-2 text-sm">
+                  <dt className="text-[var(--color-text-muted)]">Processing fee</dt>
+                  <dd className="font-medium text-[var(--color-text)]">{payment.fees.gatewayFee}</dd>
+                </div>
+                <div className="flex justify-between gap-3 py-2 text-sm">
+                  <dt className="text-[var(--color-text-muted)]">Kolekto fee</dt>
+                  <dd className="font-medium text-[var(--color-text)]">{payment.fees.platformFee}</dd>
+                </div>
+              </>
+            )}
+            <div className="flex justify-between gap-3 py-2 text-sm">
+              <dt className="font-semibold text-[var(--color-text)]">Total to pay</dt>
+              <dd className="font-semibold text-[var(--color-text)]">{payment.fees.totalPayable}</dd>
+            </div>
+            {!payment.feesAddedToTotal && (
+              <p className="py-2 text-xs text-[var(--color-text-muted)]">{organiser} covers the payment fees.</p>
+            )}
+          </dl>
+        )}
 
         {thankYouMessage && <p className="text-sm text-[var(--color-text-muted)]">{thankYouMessage}</p>}
 
-        <Button variant="secondary" onClick={() => setDone(null)}>
-          Back to the form
-        </Button>
+        {payment ? (
+          <div className="flex flex-col gap-2">
+            <Button
+              disabled={redirecting}
+              onClick={() => {
+                setRedirecting(true);
+                window.location.assign(payment.checkoutUrl);
+              }}
+            >
+              {redirecting ? "Opening checkout…" : `Pay ${payment.fees.totalPayable}`}
+            </Button>
+            <Button variant="secondary" disabled={redirecting} onClick={editOrder}>
+              Edit
+            </Button>
+          </div>
+        ) : (
+          <Button variant="secondary" onClick={editOrder}>
+            Back to the form
+          </Button>
+        )}
       </div>
     );
   }
@@ -286,9 +341,14 @@ export function ContributeForm({
             }
           : {}),
         answers,
+        checkoutKey,
       });
+      if (result.restartCheckout) setCheckoutKey(crypto.randomUUID());
       if (result.error) setError(result.error);
-      else if (result.summary) setDone(result.summary);
+      else if (result.summary) {
+        setDone(result.summary);
+        setPayment(result.payment ?? null);
+      }
     });
   }
 
@@ -648,15 +708,21 @@ export function ContributeForm({
         <TextField
           label="Email address"
           type="email"
-          hint="For your receipt. An email address or a phone number is enough."
+          autoComplete="email"
+          hint="Your receipt is sent here."
           value={email}
+          required
           onChange={(event) => setEmail(event.target.value)}
         />
         <TextField
           label="Phone number"
+          type="tel"
           inputMode="tel"
+          autoComplete="tel"
           placeholder="+2348012345678"
+          hint="So the organiser can reach you about this payment."
           value={phone}
+          required
           onChange={(event) => setPhone(event.target.value)}
         />
       </fieldset>
@@ -699,10 +765,16 @@ export function ContributeForm({
 
       {error && <Banner tone="danger">{error}</Banner>}
 
-      <Banner tone="info">
-        Online payment for this collection is not open yet. You can check your details now; {organiser} will confirm how
-        to pay.
-      </Banner>
+      {paymentEnabled ? (
+        <Banner tone="info">
+          Fill in your details and you&apos;ll be able to review your total and pay securely online.
+        </Banner>
+      ) : (
+        <Banner tone="info">
+          Online payment isn&apos;t available for this collection yet. You can fill in your details now — {organiser}{" "}
+          will let you know how to pay.
+        </Banner>
+      )}
 
       <Button type="submit" size="lg" loading={isPending}>
         Continue

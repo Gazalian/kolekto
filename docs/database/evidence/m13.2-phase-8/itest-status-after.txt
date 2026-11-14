@@ -1,0 +1,20 @@
+work directory: supabase-itest (project_id kolekto-itest); config guard passed; no link artifacts in .temp
+  migrations: 120 source file(s), 120 in the copy, byte-identical (SHA-256 per file)
+  migrations aggregate sha256: source 7ededc0f14bd600b… copy 7ededc0f14bd600b…
+  .env.itest: present (contents never shown)
+  cli API_URL: http://127.0.0.1:55421
+  cli INBUCKET_URL: http://127.0.0.1:55424
+  cli MAILPIT_URL: http://127.0.0.1:55424
+  cli DB endpoint: 127.0.0.1:55422
+  supabase_storage_kolekto-itest running 
+  supabase_rest_kolekto-itest running 
+  supabase_realtime_kolekto-itest running 
+  supabase_inbucket_kolekto-itest running 1025/tcp->*:55425 8025/tcp->*:55424
+  supabase_auth_kolekto-itest running 
+  supabase_kong_kolekto-itest running 8000/tcp->*:55421
+  supabase_db_kolekto-itest running 5432/tcp->*:55422
+  role kolekto_itest: LOGIN=true BYPASSRLS=true SUPERUSER=false CREATEROLE=false CREATEDB=false REPLICATION=false INHERIT=true; member of [postgres]
+  role kolekto_itest_worker: LOGIN=true BYPASSRLS=false SUPERUSER=false CREATEROLE=false CREATEDB=false REPLICATION=false INHERIT=false PASSWORD_SET=false; memberships 0; policies 10
+  net: PUBLIC grants 0
+  kolekto.itest_db_host_port: 55422; kolekto.itest_stack: set, matches .env.itest
+  pause switch: exactly one row, email_sending_enabled = false (read only)

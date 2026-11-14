@@ -1,5 +1,6 @@
 import type { AuditLog, Community } from "@kolekto/db";
 import { Badge, EmptyState, Table, Tbody, Td, Th, Thead, Tr } from "@kolekto/ui";
+import { notFound } from "next/navigation";
 import { formatDistanceToNow } from "../../../../lib/format.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
 
@@ -8,7 +9,10 @@ export const metadata = { title: "Activity" };
 export default async function ActivityPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const supabase = await createClient();
-  const { data: community } = await supabase.from("communities").select("*").eq("slug", slug).single();
+  // Same reason as the community overview: a row the caller cannot see is not
+  // a server-side error, and a vanished session mid-render must not crash.
+  const { data: community } = await supabase.from("communities").select("*").eq("slug", slug).maybeSingle();
+  if (!community) notFound();
   const c = community as Community;
 
   // audit_logs_select_officer (RLS) already requires audit.view — a viewer

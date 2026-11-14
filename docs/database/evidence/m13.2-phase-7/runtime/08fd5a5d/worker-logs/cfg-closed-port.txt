@@ -1,0 +1,6 @@
+{"msg":"worker_database_unavailable","attempt":1,"of":5,"fatal":false,"error":{"name":"Error","code":"ECONNREFUSED","message":"connect ECONNREFUSED [number]:53413"}}
+{"msg":"worker_database_unavailable","attempt":2,"of":5,"fatal":false,"error":{"name":"Error","code":"ECONNREFUSED","message":"connect ECONNREFUSED [number]:53413"}}
+{"msg":"worker_database_unavailable","attempt":3,"of":5,"fatal":false,"error":{"name":"Error","code":"ECONNREFUSED","message":"connect ECONNREFUSED [number]:53413"}}
+{"msg":"worker_database_unavailable","attempt":4,"of":5,"fatal":false,"error":{"name":"Error","code":"ECONNREFUSED","message":"connect ECONNREFUSED [number]:53413"}}
+{"msg":"worker_database_unavailable","attempt":5,"of":5,"fatal":false,"error":{"name":"Error","code":"ECONNREFUSED","message":"connect ECONNREFUSED [number]:53413"}}
+Kolekto worker: database unavailable after 5 attempt(s); exiting.

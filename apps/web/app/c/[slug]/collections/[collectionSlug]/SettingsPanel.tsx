@@ -25,6 +25,7 @@ import {
   setTierHiddenAction,
   updateCollectionAction,
 } from "../actions.ts";
+import { AmountField } from "../AmountField.tsx";
 import { CoverUploader } from "../CoverUploader.tsx";
 import { EventEditor, type EventDraft } from "../EventEditor.tsx";
 import { ItemsEditor, itemsToPayload, type ItemDraft } from "../ItemsEditor.tsx";
@@ -239,21 +240,21 @@ export function SettingsPanel({
           </div>
 
           {isDraft && collection.amount_model === "fixed" && (
-            <TextField label="Amount each person pays" value={fixedAmount} onChange={(event) => setFixedAmount(event.target.value)} />
+            <AmountField label="Amount each person pays" value={fixedAmount} onValueChange={setFixedAmount} />
           )}
           {isDraft && collection.amount_model === "open_amount" && (
             <div className="grid gap-4 sm:grid-cols-2">
-              <TextField label="Smallest contribution" value={minAmount} onChange={(event) => setMinAmount(event.target.value)} />
-              <TextField label="Largest contribution" value={maxAmount} onChange={(event) => setMaxAmount(event.target.value)} />
+              <AmountField label="Smallest contribution" value={minAmount} onValueChange={setMinAmount} />
+              <AmountField label="Largest contribution" value={maxAmount} onValueChange={setMaxAmount} />
             </div>
           )}
 
-          <TextField
+          <AmountField
             label="Target"
             hint="What the collection is working toward. Not an amount received."
             value={targetAmount}
             disabled={isFinished}
-            onChange={(event) => setTargetAmount(event.target.value)}
+            onValueChange={setTargetAmount}
           />
 
           <SelectField

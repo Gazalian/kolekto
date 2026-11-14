@@ -1,0 +1,5 @@
+Kolekto worker: connected. Polling notification_events queue.
+Email sender NOT started (configuration refused): {"name":"ConfigError","message":"EMAIL_PROVIDER is not a supported provider. Supported: fake, mailpit, ses."}
+{"msg":"notification_event_skipped","msg_id":"325","read_ct":1,"action":null,"reason":"invalid_message"}
+{"msg":"notification_event_health","queue_depth":0,"queue_max_read_ct":0,"queue_oldest_age_s":0,"processed_total":0,"skipped_total":1,"failed_total":0,"dead_lettered_total":0,"poll_failures_total":0}
+Kolekto worker: shutting down.

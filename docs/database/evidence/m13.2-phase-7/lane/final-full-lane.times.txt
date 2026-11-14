@@ -1,0 +1,4 @@
+command: npm run test:integration -- --with-smtp (from apps/worker)
+start 2026-11-05 18:22:12 UTC
+end 2026-11-05 18:30:52 UTC
+exit 0

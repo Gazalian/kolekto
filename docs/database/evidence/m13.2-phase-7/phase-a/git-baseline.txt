@@ -1,0 +1,9 @@
+captured_utc=2026-11-05T17:07:50Z
+branch=fix/auth-nav-and-cookie-forwarding
+head=ee9462b07997afb2419bfd18d6e397f33d8cfcc2
+index_entries_staged=0
+porcelain_lines=55
+porcelain_md5=167b9f0164441a865349434dab26b9c6
+stash@{0}: On m8.1-financial-foundation: pre-m13.1: unstaged M12A work
+6de78db commit
+55c358d commit

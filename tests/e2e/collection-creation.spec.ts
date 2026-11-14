@@ -77,7 +77,7 @@ test("two types ask different questions, in different words, in a different orde
       event: async (p) => {
         // The first screen is the event, flyer included. It is not called a
         // "collection", and it does not ask for a "contribution amount".
-        await expect(p.getByText("Step 2 of " + stepCount("ticketing") + " · The event")).toBeVisible();
+        await expect(p.getByText("Step 1 of " + stepCount("ticketing") + " · The event")).toBeVisible();
         await expect(p.getByText("Event flyer")).toBeVisible();
         await expect(p.getByLabel("Amount each person pays")).toHaveCount(0);
 
@@ -98,7 +98,7 @@ test("two types ask different questions, in different words, in a different orde
   await walkWizard(page, {
     flowKey: "recurring",
     intent: /^Recurring/,
-    stopBefore: "fees",
+    stopBefore: "audience",
     fill: {
       basics: async (p) => {
         // Its own noun, and a neutral example.
@@ -132,7 +132,7 @@ test("the fee decision changes the numbers, is saved, and charges nothing", asyn
   await walkWizard(page, {
     flowKey: "fixed",
     intent: /Fixed contribution/,
-    stopBefore: "cover",
+    stopBefore: "audience",
     fill: {
       basics: async (p) => {
         await p.getByLabel("What is this collection called?").fill("Ikoyi Annual Levy 2026");
@@ -159,29 +159,30 @@ test("the fee decision changes the numbers, is saved, and charges nothing", asyn
 
         // ── The estimate is available, and clearly marked as one ──────────────
         await p.getByRole("button", { name: "Show an estimate of the fees" }).click();
-        await expect(p.getByText(/An estimate, using Kolekto's fee schedule \(2026-09-founder\)/i)).toBeVisible();
+        await expect(p.getByText(/An estimate, using Kolekto's fee schedule \(2026-11-founder\)/i)).toBeVisible();
         await expect(p.getByText(/not a settlement amount/i)).toBeVisible();
 
         // The two fees are named separately, never summed into one line: an
         // organiser deciding whether to absorb them is entitled to know which
         // is the processor's and which is Kolekto's.
-        await expect(p.getByText("Estimated payment processing fee")).toBeVisible();
-        await expect(p.getByText("Estimated Kolekto service fee")).toBeVisible();
+        await expect(p.getByText("Processing fee", { exact: true })).toBeVisible();
+        await expect(p.getByText("Kolekto fee", { exact: true })).toBeVisible();
 
-        // D-10: 1.5% modeled provider fee and 1.5% Kolekto fee on ₦20,000 —
-        // ₦300 each, both under their caps.
-        await expect(p.getByText("₦300", { exact: true })).toHaveCount(2);
-        await expect(p.getByText("₦600", { exact: true })).toBeVisible();
+        // D-11/D-28, SCHEDULE_2026_11_FOUNDER: 1.5% processing + 0.5% Kolekto
+        // on ₦20,000 — ₦300 and ₦100, summed as ₦400 of estimated total fees.
+        await expect(p.getByText("₦300", { exact: true })).toBeVisible();
+        await expect(p.getByText("₦100", { exact: true })).toBeVisible();
+        await expect(p.getByText("₦400", { exact: true })).toBeVisible();
 
-        // Absorbing: the contributor pays ₦20,000, the community nets ₦19,400.
-        await expect(p.getByText("₦19,400")).toBeVisible();
+        // Absorbing: the contributor pays ₦20,000, the community nets ₦19,600.
+        await expect(p.getByText("₦19,600")).toBeVisible();
 
-        // Passing on: ₦20,000 + ₦600 of fees. NOT ₦20,619, which is what 3% of
-        // fees charged on the payable would produce (20,000 / 0.97) — the
+        // Passing on: ₦20,000 + ₦400 of fees. NOT ₦20,408, which is what 2% of
+        // fees charged on the payable would produce (20,000 / 0.98) — the
         // arithmetic is on the contribution, so it cannot compound.
         await chooseFeeBearer("Contributor pays")(p);
-        await expect(p.getByText("₦20,600")).toBeVisible();
-        await expect(p.getByText("₦20,619")).toHaveCount(0);
+        await expect(p.getByText("₦20,400")).toBeVisible();
+        await expect(p.getByText("₦20,408")).toHaveCount(0);
 
         await expect(p.getByText(/nothing has been charged/i)).toBeVisible();
       },
@@ -195,9 +196,10 @@ test("the fee decision changes the numbers, is saved, and charges nothing", asyn
   await page.getByRole("link", { name: /Continue setting this up/ }).first().click();
   await page.waitForLoadState("networkidle");
 
-  // Back to the fee step and check the radio the organiser actually chose.
+  // Back to the amount step — where the fee question now sits, beside the
+  // amount it applies to — and check the radio the organiser actually chose.
   await page.getByRole("button", { name: "Back" }).click();
-  await expect(page.getByRole("heading", { name: "Who pays the fees?" })).toBeVisible({ timeout: 45_000 });
+  await expect(page.getByRole("heading", { name: "How much does each person pay?" })).toBeVisible({ timeout: 45_000 });
   await expect(page.getByRole("radio", { name: "Contributor pays" })).toBeChecked();
 
   // And nothing was charged: the draft has no contribution, no payment and no
@@ -301,6 +303,7 @@ test("a per-order limit set during creation is enforced by the server", async ({
   // ...and the SERVER refuses more, whatever the browser sends.
   await contributor.getByLabel(/How many/).fill("5");
   await contributor.getByLabel("Full name").fill("Ada Obi");
+  await contributor.getByLabel("Email address").fill("contributor@example.test");
   await contributor.getByLabel("Phone number").fill("+2348011112222");
   await contributor.getByRole("button", { name: "Continue" }).click();
   await expect(contributor.getByText(/at most 2 of "Regular" in one order/i)).toBeVisible();
@@ -319,7 +322,7 @@ test("somebody outside the community cannot reach or change its collection confi
   await walkWizard(page, {
     flowKey: "fixed",
     intent: /Fixed contribution/,
-    stopBefore: "fees",
+    stopBefore: "audience",
     fill: {
       basics: async (p) => {
         await p.getByLabel("What is this collection called?").fill("Private Levy 2026");
@@ -368,12 +371,12 @@ test("a resumed draft comes back in its own flow, at its own step", async ({ pag
   await signInAsNewUser(page, "e2e-resume-flow");
   const slug = await createCommunity(page, `E2E Resume Flow ${Date.now()}`);
 
-  // A ticketed event, abandoned after its tickets are priced.
+  // A ticketed event, abandoned after its tickets are priced (before the fee step).
   await openWizard(page);
   await walkWizard(page, {
     flowKey: "ticketing",
     intent: /^Tickets/,
-    stopBefore: "purchaseRules",
+    stopBefore: "fees",
     fill: {
       event: async (p) => {
         await p.getByLabel("What is the event called?").fill("West Africa Founders Dinner");
@@ -398,8 +401,8 @@ test("a resumed draft comes back in its own flow, at its own step", async ({ pag
   // The flow is recovered from the rows, never stored (ADR 0013) — so it
   // comes back as the EVENT it is, with the event flow's own length and its
   // own vocabulary, at the step it was left on.
-  await expect(resumed.getByText(`Step 4 of ${stepCount("ticketing")} · Buying`)).toBeVisible({ timeout: 45_000 });
-  await expect(resumed.getByRole("heading", { name: "How may people buy?" })).toBeVisible();
+  await expect(resumed.getByText(`Step 3 of ${stepCount("ticketing")} · Fees`)).toBeVisible({ timeout: 45_000 });
+  await expect(resumed.getByRole("heading", { name: "Who pays the fees?" })).toBeVisible();
 
   await resumed.getByRole("button", { name: "Back" }).click();
   await expect(resumed.getByLabel("Ticket type name").first()).toHaveValue("Regular");

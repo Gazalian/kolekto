@@ -1,0 +1,1 @@
+Worker fatal: {"name":"ConfigError","message":"Missing required environment variable SUPABASE_DB_URL. Copy .env.example to .env.local and fill it in. Nothing is defaulted here on purpose — see docs/adr/0007-environment-isolation.md."}

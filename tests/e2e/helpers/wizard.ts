@@ -1,5 +1,5 @@
 import { expect, type Page } from "@playwright/test";
-import { flowFor, type StepKind } from "../../../apps/web/app/c/[slug]/collections/new/flows.ts";
+import { flowFor, type SectionKind, type StepKind } from "../../../apps/web/app/c/[slug]/collections/new/flows.ts";
 
 /**
  * Walking the collection wizard, one flow at a time (M7.7 §33).
@@ -31,9 +31,14 @@ export interface WizardWalk {
   flowKey: string;
   /** The intent card to click, as its title reads on screen. */
   intent: RegExp;
-  fill?: Partial<Record<StepKind, StepFiller>>;
-  /** Stop before this step instead of finishing — for the drafts that are meant to be abandoned. */
-  stopBefore?: StepKind;
+  /**
+   * Keyed by SECTION, not by screen: a filler runs on whichever step asks
+   * that section, in the order the step asks them. Merging two sections onto
+   * one screen therefore moves no spec.
+   */
+  fill?: Partial<Record<SectionKind, StepFiller>>;
+  /** Stop before the step that asks this section (or is this kind) — for drafts meant to be abandoned. */
+  stopBefore?: SectionKind | StepKind;
 }
 
 const CONTINUE = { name: "Continue", exact: true } as const;
@@ -72,9 +77,14 @@ export async function walkWizard(page: Page, walk: WizardWalk): Promise<void> {
       `${flow.key} step ${index + 1} should ask "${step.heading}"`,
     ).toBeVisible({ timeout: 45_000 });
 
-    if (walk.stopBefore && step.kind === walk.stopBefore) return;
+    if (
+      walk.stopBefore &&
+      (step.kind === walk.stopBefore || step.sections.includes(walk.stopBefore as SectionKind))
+    ) {
+      return;
+    }
 
-    await walk.fill?.[step.kind]?.(page);
+    for (const section of step.sections) await walk.fill?.[section]?.(page);
 
     if (step.kind === "review") {
       await page.getByRole("button", { name: "Open this draft" }).click();
@@ -86,14 +96,14 @@ export async function walkWizard(page: Page, walk: WizardWalk): Promise<void> {
   }
 }
 
-/** The progress line, e.g. "Step 3 of 9 · Fees". Asserted where a flow's shape is the point. */
+/** The progress line, e.g. "Step 3 of 6 · Fees". Asserted where a flow's shape is the point. */
 export async function expectStep(page: Page, position: number, of: number, label: string): Promise<void> {
   await expect(page.getByText(`Step ${position} of ${of} · ${label}`)).toBeVisible({ timeout: 45_000 });
 }
 
-/** How long a flow is, including the intent picker — what the progress line counts. */
+/** How long a flow is — what the progress line counts. The type picker is not a step. */
 export function stepCount(flowKey: string): number {
-  return flowFor(flowKey).steps.length + 1;
+  return flowFor(flowKey).steps.length;
 }
 
 /** Fills a tier row (a package or a ticket type) by its position. */

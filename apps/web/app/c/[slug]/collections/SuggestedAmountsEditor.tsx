@@ -1,7 +1,8 @@
 "use client";
 
-import { Button, TextField } from "@kolekto/ui";
+import { Button } from "@kolekto/ui";
 import { Plus, Trash2 } from "lucide-react";
+import { AmountField } from "./AmountField.tsx";
 
 /**
  * The one-tap amounts an open collection offers (§26, §29).
@@ -24,12 +25,12 @@ export function SuggestedAmountsEditor({
       {amounts.map((amount, index) => (
         <div key={index} className="flex items-end gap-2">
           <div className="flex-1">
-            <TextField
+            <AmountField
               label={`Suggestion ${index + 1}`}
-              placeholder="e.g. 5000"
+              placeholder="e.g. 5,000"
               value={amount}
               disabled={disabled}
-              onChange={(event) => onChange(amounts.map((a, i) => (i === index ? event.target.value : a)))}
+              onValueChange={(value) => onChange(amounts.map((a, i) => (i === index ? value : a)))}
             />
           </div>
           {!disabled && (

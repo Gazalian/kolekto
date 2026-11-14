@@ -24,6 +24,15 @@ import {
   setItemHidden,
   setTierHidden,
   transitionCollectionStatus,
+  publishCollection,
+  sendCollectionPublishReminder,
+  countCollectionAudience,
+  countCollectionPublishRecipients,
+  previewCollectionAnnouncementRecipients,
+  announceCollectionUpdate,
+  AnnouncementsUnavailableError,
+  type AnnouncementCategory,
+  type AnnouncementRecipientPreview,
   updateCollection,
   updateObligationAmount,
   waiveObligationAmount,
@@ -43,6 +52,9 @@ import {
   setCollectionTiersSchema,
   syncObligationsSchema,
   transitionCollectionStatusSchema,
+  publishCollectionSchema,
+  sendCollectionPublishReminderSchema,
+  announceCollectionUpdateSchema,
   updateCollectionSchema,
   updateObligationAmountSchema,
   waiveObligationSchema,
@@ -88,9 +100,25 @@ function revalidateCollection(slug: string, collectionSlug?: string): void {
 export async function createCollectionAction(
   slug: string,
   input: unknown,
-): Promise<ActionResult & { collectionId?: string; collectionSlug?: string | undefined }> {
+): Promise<
+  ActionResult & { collectionId?: string; collectionSlug?: string | undefined; feeModeError?: string | undefined }
+> {
   const parsed = createCollectionSchema.safeParse(input);
   if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "Check the form and try again" };
+
+  // Optional: who bears the fees on the new collection. `app.create_collection`
+  // copies the community's default; the wizard sends its own so the row
+  // matches what the organiser is shown from the first save. Written here,
+  // in the same request, rather than as a second round trip from the browser.
+  const requestedFeeMode =
+    typeof input === "object" && input !== null && "feeMode" in input ? (input as { feeMode: unknown }).feeMode : undefined;
+  if (
+    requestedFeeMode !== undefined &&
+    requestedFeeMode !== "community_absorbs" &&
+    requestedFeeMode !== "contributor_pays"
+  ) {
+    return { error: "Say who bears the fees" };
+  }
 
   const caller = await requireCallerContext();
   const data = parsed.data;
@@ -123,8 +151,19 @@ export async function createCollectionAction(
     const supabase = await createClient();
     const { data: created } = await supabase.from("collections").select("slug").eq("id", collectionId).maybeSingle();
 
+    // The collection exists either way; a fee mode that did not save is
+    // reported beside it, not as a failed create.
+    let feeModeError: string | undefined;
+    if (requestedFeeMode) {
+      try {
+        await setCollectionFeeMode(caller, { collectionId, feeMode: requestedFeeMode });
+      } catch (error) {
+        feeModeError = messageFrom(error, "Could not save who pays the fees");
+      }
+    }
+
     revalidateCollection(slug);
-    return { ok: true, collectionId, collectionSlug: created?.slug as string | undefined };
+    return { ok: true, collectionId, collectionSlug: created?.slug as string | undefined, feeModeError };
   } catch (error) {
     return { error: messageFrom(error, "Could not create the collection") };
   }
@@ -440,6 +479,132 @@ export async function transitionCollectionStatusAction(
     return { ok: true, status };
   } catch (error) {
     return { error: messageFrom(error, "Could not change the collection's status") };
+  }
+}
+
+/**
+ * M13.3: host-facing publish with an explicit notify choice. Uses
+ * `app.publish_collection` so the audit action name reflects what the host
+ * chose (`collection.publish` enqueues, `collection.publish_silent` does
+ * not). Everything else — state transition, published_at, published_by —
+ * matches the ordinary publish path.
+ */
+export async function publishCollectionAction(
+  slug: string,
+  collectionSlug: string,
+  input: unknown,
+): Promise<ActionResult & { status?: string }> {
+  const parsed = publishCollectionSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That publish choice is not available" };
+
+  const caller = await requireCallerContext();
+  try {
+    const status = await publishCollection(caller, parsed.data);
+    revalidateCollection(slug, collectionSlug);
+    return { ok: true, status };
+  } catch (error) {
+    return { error: messageFrom(error, "Could not publish the collection") };
+  }
+}
+
+/**
+ * Recipient preview for the publish, reminder and update-announcement
+ * dialogs. `eligible` is the in-app audience (members with a linked
+ * account). `email` is the member-record email reach — null until the
+ * MEMBER-ANNOUNCEMENTS proposal is applied, in which case the dialog says
+ * email reach is not available yet. Payment-status counts are deliberately
+ * not returned: payment status cannot be established, so "unpaid" is not
+ * offered. Read-only, scoped by each function's own permission check.
+ */
+export async function previewPublishRecipientsAction(
+  collectionId: string,
+  category: AnnouncementCategory = "announcement",
+): Promise<
+  | {
+      eligible: number;
+      with_obligation: number;
+      awaiting: number;
+      email: AnnouncementRecipientPreview | null;
+    }
+  | { error: string }
+> {
+  if (!["announcement", "update", "reminder"].includes(category)) return { error: "Unknown announcement type" };
+  const caller = await requireCallerContext();
+  try {
+    const [publish, audience, email] = await Promise.all([
+      countCollectionPublishRecipients(caller, collectionId),
+      countCollectionAudience(caller, collectionId),
+      previewCollectionAnnouncementRecipients(caller, collectionId, category),
+    ]);
+    return {
+      eligible: publish.eligible,
+      with_obligation: audience.with_obligation,
+      awaiting: audience.awaiting,
+      email,
+    };
+  } catch (error) {
+    return { error: messageFrom(error, "Could not count the recipients") };
+  }
+}
+
+/**
+ * Member announcements: explicitly announce changes to a live collection.
+ * The organiser picks what changed from a fixed list; an edit never sends
+ * this by itself. Idempotent on the dialog's key.
+ */
+export async function announceCollectionUpdateAction(
+  input: unknown,
+): Promise<(ActionResult & { created?: boolean }) | { error: string }> {
+  const parsed = announceCollectionUpdateSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That announcement is not valid" };
+
+  const caller = await requireCallerContext();
+  try {
+    const result = await announceCollectionUpdate(caller, {
+      collectionId: parsed.data.collectionId,
+      changedFields: [...parsed.data.changedFields],
+      idempotencyKey: parsed.data.idempotencyKey,
+      customMessage: parsed.data.customMessage,
+      targetAudience: parsed.data.targetAudience,
+      targetGroupIds: parsed.data.targetGroupIds,
+    });
+    return { ok: true, created: result.created };
+  } catch (error) {
+    if (error instanceof AnnouncementsUnavailableError) return { error: error.message };
+    return { error: messageFrom(error, "Could not send the announcement") };
+  }
+}
+
+/**
+ * M13.3 post-publish reminder (20261029100000). Sends a reminder on an
+ * already-published collection. The DB function enforces permission
+ * (collection.publish), state (active | scheduled) and idempotency on the
+ * client-generated key; the audit insert fires the shared notification
+ * trigger, which enqueues a pgmq message for the worker to fan out.
+ *
+ * No slug argument: the dialog opens with the current page already loaded,
+ * so revalidation is unnecessary (the notification data a viewer sees comes
+ * from the bell, not from this page).
+ */
+export async function sendCollectionReminderAction(
+  input: unknown,
+): Promise<
+  (ActionResult & { auditLogId?: string; created?: boolean; notifyTarget?: "all" }) | { error: string }
+> {
+  const parsed = sendCollectionPublishReminderSchema.safeParse(input);
+  if (!parsed.success) return { error: parsed.error.issues[0]?.message ?? "That reminder is not valid" };
+
+  const caller = await requireCallerContext();
+  try {
+    const result = await sendCollectionPublishReminder(caller, parsed.data);
+    return {
+      ok: true,
+      auditLogId: result.auditLogId,
+      created: result.created,
+      notifyTarget: "all",
+    };
+  } catch (error) {
+    return { error: messageFrom(error, "Could not send the reminder") };
   }
 }
 

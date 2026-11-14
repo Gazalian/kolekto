@@ -99,6 +99,7 @@ export function CollectionView({
   tiers,
   items,
   fields,
+  paymentEnabled = false,
 }: {
   mode: CollectionViewMode;
   communitySlug: string;
@@ -107,6 +108,16 @@ export function CollectionView({
   tiers: CollectionViewTier[];
   items: CollectionViewItem[];
   fields: CollectionViewField[];
+  /**
+   * Whether online checkout can start for this environment. Threaded in
+   * from the server page so the contribution form can tell the contributor
+   * up front — before they start filling in details — whether they are
+   * about to pay online or be contacted by the organiser.
+   *
+   * Defaults to false so a preview or a caller that does not know (and
+   * therefore cannot promise online payment) renders the safer copy.
+   */
+  paymentEnabled?: boolean;
 }) {
   const deadline = collection.deadline_at ? new Date(collection.deadline_at) : null;
   // When the event is, which is a different date from when the collection stops
@@ -325,6 +336,7 @@ export function CollectionView({
           fields={fields}
           thankYouMessage={collection.thank_you_message}
           organiser={collection.community_name}
+          paymentEnabled={paymentEnabled}
         />
       )}
 
