@@ -22,69 +22,58 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-13, session 11 (M8.3b resolver hardening; contributor onboarding flag; CI stays green)
+**Last updated:** 2026-11-14, session 12 (contributor-onboarding gap closed with option 1 — obligation created at capture)
 
 ### What was done this session
 
 | Area | Change | Where |
 |---|---|---|
-| CI | Run 7 (session-10 code) failed on all three E2E jobs + typecheck: root cause was a DOM-only `RequestInfo` type in the Paystack adapter test's fetch stub, invisible to local incremental builds but fatal to CI's clean build. Replaced with `string \| URL \| Request` (what Node's fetch accepts without the DOM lib). Run 9 landed all seven checks green on commit `9521283`: invariants (9s), secrets (28s), typecheck (1m1s), pgTAP (3m7s), shard 1 (11m14s), shard 2 (6m9s), aggregate (3s). | `packages/adapters/test/paystack-payment-provider.test.ts` |
-| M8.3b: ceiling | Added `MAX_PAYMENT_KOBO = 500_000_000n` (₦5,000,000, audit §14.5) and `assertWithinCeiling()`, applied AFTER model-specific resolution so every model — fixed/open/tiered/basketed/items/per-member — is bounded identically. The DB's `payment_limits.max_payment_kobo` row stays authoritative; this is a pre-DB refusal so the UI never accepts what the DB would reject. | `packages/domain/src/contribution.ts` |
-| M8.3b: single-tier stock | The basket path already refuses `quantity > quantityLimit`; the single-tier "choose one" path (quantity = 1) now also refuses a tier with `quantityLimit = 0` as "sold out". Without it, a plain-tier collection could sell past its limit from the public page, bypassing the stock lock the basket path and the DB both enforce. | same |
-| M8.3b: `amountOwed = expected − waived − applied` | `ContributionObligation` gains an optional `appliedKobo` field (absent reads as zero, backward-compatible). The resolver now subtracts applied contributions so a repeat visit does not offer the full amount again — matters the moment installments land (O-7, O-13), and matters sooner as a safety net for the audit §4.6 reconciliation gap (capture failing to flip obligation status). Negative applied is refused as MISCONFIGURED. | same |
-| M8.3b: status mapping | `in_installments` now raises `INSTALLMENTS_NOT_SUPPORTED` with a clear user message rather than falling through (D-19). `overdue` is accepted — a late payment is still accepted; the window check is separate. `unpaid`, `paid`, `exempt`, `cancelled` behave as before. Added `INSTALLMENTS_NOT_SUPPORTED` and `PAYMENT_ABOVE_CEILING` to `ContributionErrorCode` (both already referenced by `CHECKOUT_ERROR_MESSAGES` in `actions.ts`). | same |
-| M8.3b: tests | 19 new tests cover each addition at its boundary: single-tier sold-out, tier still has stock, applied-subtract, applied-zero default, applied-meets-balance → NOTHING_OWED, negative applied → MISCONFIGURED, each obligation status (unpaid, overdue, in_installments, exempt, cancelled, paid), ceiling exactly-at, fixed above, open-amount above, tiered basket SUM above, items order SUM above, obligation remaining above. 235 domain tests green (216 + 19 new). | `packages/domain/test/contribution.test.ts` |
-| Pure window check | Already exists in `packages/domain/src/contribution-window.ts` as `isOpenForContributions(opensOn, closesOn, now)` with the correct date-string signature; built in a prior session. The resolver does not duplicate it — a redundant Date-based variant written this session was removed before commit. | n/a |
+| CI | Run on `6f75f48` (session 11 code + docs) is green on all seven checks: invariants, secrets, typecheck + unit, migrations + pgTAP, E2E shard 1, E2E shard 2, E2E aggregate. No port-54322 flake; no rerun needed. | n/a |
+| Owner decision | Option 1 (lazy obligation materialisation at capture) chosen for the "member pays before being onboarded → obligation reads unpaid" gap. `selected_members` deliberately untouched. | n/a |
+| Obligation on capture | `app.complete_payment_capture` replaced. When the attempt has a `member_id`, no `obligation_id`, no `cycle_key`, and the collection (re-read at capture) is `audience_mode in ('all_members','groups')`, `amount_model = 'fixed'`, `schedule = 'one_time'`: (a) if an obligation for (collection, member, null cycle) now exists — the organiser ran "Add members" while the member was at checkout — it is judged with the existing rules: unpaid/overdue for the same amount → linked and paid; paid → `needs_review: already_paid`; changed (waived, exempt, cancelled, different amount) → `needs_review: obligation_changed`; (b) otherwise an obligation is inserted `unpaid` for exactly `attempt.contribution_kobo`, `due_at = collection.deadline_at`, `assigned_by = null`, then the contribution is inserted already pointing at it, then the obligation is updated to `paid` — so `block_manual_paid_status` checks the evidence exactly as for an assigned obligation (CASH-02 / SEC-20a). Audited as `obligation.assign_on_payment` (system actor; reference + contribution id in the payload). Contributions stay append-only: nothing is updated after insert. `sync_collection_obligations` already skips members with an obligation, so a later sync leaves the paid row alone. | `supabase/migrations/20261114100000_obligation_on_capture.sql` |
+| Race handling | If "Add members" inserts the same member's obligation between T2's check and T2's insert, the insert's `on conflict do nothing` returns nothing and T2 raises `CAPTURE_RACED_ASSIGNMENT`, rolling back the whole capture. The attempt stays `captured`; the orchestrator returns `{outcome:"error"}` and the sweep re-runs T2 next pass, which then sees the obligation in the decision step. Collection row is `FOR UPDATE`, so two captures for one collection are already serialised. | same |
+| CASH-02 on INSERT | `block_manual_paid_status` now also fires `BEFORE INSERT` (new trigger `obligations_block_paid_insert`). Before this an obligation could be INSERTED as `paid` — no function did, and client roles have no insert policy, but the guard did not cover it. A row cannot be born paid (the justifying contribution must reference an existing row). | same |
+| pgTAP | New file, 34 tests: obligation created on capture for the exact amount and paid; contribution linked at insert; audit row; `assigned_by` null; T2 re-run idempotent; re-pay refused `ALREADY_PAID`; two in-flight attempts from one member → second parked `already_paid` with no contribution; later sync does not duplicate or unpay, and still assigns others `unpaid`; manual paid still refused; sync-during-checkout → linked to the synced obligation (no `assign_on_payment` audit); waived-during-checkout → `obligation_changed`, obligation untouched; groups audience same; selected_members unlisted member still `MEMBER_NOT_ELIGIBLE`; collection switched to selected_members mid-flight → contribution recorded, no obligation; open-amount → no obligation; INSERT as paid → `NO_MANUAL_PAID`. | `supabase/tests/53_obligation_on_capture.sql` |
+| App / db callers | None needed. `complete_payment_capture`'s signature and return shape are unchanged; `obligations.assigned_by` is already nullable in `packages/db` types; the new exception code is handled by the existing `DatabaseError → {outcome:"error"}` path in `packages/payments/src/orchestrator.ts` and the sweep. | n/a |
 
-**Verification locally:** `npm run typecheck` clean, `node scripts/invariants/run-all.mjs` all seven ok, 235 domain + 195 web tests pass.
+**Found while testing (now fixed by this change):** under the old capture, a member with no obligation could have two checkouts in flight and **both completed** — a double charge with no review flag (proved by running file 53 against the itest DB without the migration: test 11 returned `completed` instead of `needs_review:already_paid`). After this change the second capture is parked for the host. Test 15 against the old code returned `unpaid` — the reported bug, reproduced.
 
-### Flagged — contributor onboarding scenario (needs product scope before coding)
-
-The user described a scenario that this session investigated but did not fix. The investigation is documented here so the next session can act on a clear option set rather than re-trace it.
-
-**Scenario.** A community member who has NOT been added to a specific collection's roll makes a payment and the system counts it. Later the organiser adds that member to the roll — the payment should still be reflected as paid.
-
-**Current behaviour, per audience mode** (`supabase/migrations/20260920150000_collection_audience.sql`, `20260922100000_member_context_reference.sql`, `20261111100100_payment_functions.sql`):
-
-- `public` — anyone with the link can pay. No obligation; no "paid" state against a roll.
-- `all_members` / `groups` — `resolve_collection_audience` INCLUDES every eligible community member, obligation or not. `find_collection_member` finds them; `create_payment_attempt` accepts them; the fixed-amount path falls back to `collection.fixed_amount_kobo` when there is no obligation. **The payment goes through**, but `complete_payment_capture` only `update obligations set status='paid'` when `attempt.obligation_id` is non-null, and the contribution is written with `obligation_id = null`. If the organiser later runs `sync_collection_obligations` (the "Assign" / "Add members" action), it inserts a fresh obligation row with the default `status='unpaid'`. The contributor has paid; the obligation reads unpaid. **This is the correctness gap the user is describing.**
-- `selected_members` — `resolve_collection_audience` ONLY returns members with an existing obligation row. `find_collection_member` cannot find a community member who is not on the selected list, so they cannot pay at all. "Selected" and "obligated" are the same act, by design.
-
-**Options for a fix** (owner picks scope; all three are substantial migrations):
-
-1. **Lazy obligation materialisation at capture time.** In `complete_payment_capture`, if `attempt.member_id is not null` and `attempt.obligation_id is null`, create an obligation for that member with `status='paid'` and link the contribution to it. Audit-log the creation with a distinct action. Needs a new path through the `block_manual_paid_status` trigger — the trigger allows 'paid' only when a matching captured contribution exists; this flow has the contribution in the same transaction. Tested by pgTAP. Only applicable to `all_members` / `groups`.
-2. **Reconcile on sync.** In `sync_collection_obligations`, when inserting a new obligation, check for a matching completed contribution (same collection, member, cycle) and set `status='paid'` + backlink the contribution row's `obligation_id`. Simpler to write, but silently mutates an append-only column on contributions, which weakens the ledger discipline the rest of the schema upholds.
-3. **No obligation at all for these audiences.** Treat `all_members` / `groups` as "contribution-is-the-evidence" — the Members view reads paid state by joining `contributions ⨝ members`, never from `obligations.status`. Removes a lot of code but is a wide-reaching product/UX change (the "Assign" flow disappears for these audiences).
-
-**Recommendation for the owner.** Option 1 — lazy materialisation at capture — matches the user's stated semantics most directly ("the system just counts it as paid even after they are onboarded"), preserves the append-only ledger, and leaves `selected_members` semantics intact. Roughly a half-day of migration + pgTAP + tests. Do not touch `selected_members` without a separate explicit decision — the current "hand-picked only" rule is intentional.
+**Verification locally:**
+- `supabase test db` on files 01, 02, 03, 05, 08, 12, 13, 15, 16, 27, 52, 53: 12 files, 342 tests, all pass (local dev DB, migration applied with `supabase migration up --local`).
+- File 53 run against the itest DB (no migration, inside begin/rollback): tests 3, 5, 8, 9, 11, 12, 13, 15 and later ones fail, as expected — the tests detect the gap.
+- `node scripts/invariants/run-all.mjs`: all seven hold. `npm run typecheck`: clean (no TS changed).
+- **Not clean locally, and not caused by this change:** the full `supabase test db` run on the local dev DB fails in 07, 14, 18, 20, 23, 34, 40, 44, 51 because that DB holds committed data from 2026-11-13 local E2E runs (7 paid obligations, 18 contributions, 72 ledger entries, existing `provider_receivable` account); those files assert global emptiness. All that data predates this migration. CI runs a fresh DB and is the authority. A clean local full run needs `npm run itest:reset -- --confirm-reset-kolekto-itest` (wipes the itest DB, rotates its role password — needs owner approval) or a dev `db:reset`.
+- **Not run:** the worker integration test (`apps/worker/test/integration/payments-orchestrator.integration.test.ts`) — the itest DB refuses to run against a migration set that differs from its volume until reset. No new TS test was added; the DB function is covered by pgTAP.
+- **Security review:** the `security-review` skill failed to start (`git diff origin/HEAD...` — no `origin/HEAD` in this clone); a manual pass over the migration found no issues (operator guard and revoked EXECUTE unchanged; amount from the DB-derived `attempt.contribution_kobo`, never the client; audience re-read at capture; tenancy triggers apply; audit payload has no secrets).
 
 ### Still open
 
-- **CI for session 11:** M8.3b not yet pushed. Expect clean — the change is domain-only, pure TypeScript, new test file, no SQL or route touched.
-- **Contributor onboarding fix:** the three options above; needs an owner call before coding. The pgTAP suite will need new tests for whichever path is chosen.
-- **Sandbox matrix against a real Paystack test account:** infrastructural, outside this repo. The adapter is unit-tested against synthetic bodies that match the shapes in the audit; a real run swaps the bodies in with no code change.
-- **Deferred for M8.10+:** `financial_events` table + worker-based processing (audit §4.6); subaccount splits (PA-06); "actual Paystack fee > fee charged" alarm (M8.7); transfers, refunds, disputes.
+- **Commit + push:** session 12 files are uncommitted (`supabase/migrations/20261114100000_obligation_on_capture.sql`, `supabase/tests/53_obligation_on_capture.sql`, this doc). Push to PR #31 and watch CI — pgTAP job is the one that exercises the new file.
+- **Scope left out on purpose:** open-amount / tiers / items collections on `all_members` / `groups` still record a member's payment without an obligation (no single "amount owed" to write). If the organiser later assigns that member an expected amount, it reads unpaid. Needs a product call on what "paid" means there before any change.
+- **`selected_members`:** unchanged by design. Reopen only with an explicit owner decision.
+- **Existing data:** none in production (payments not live). Any local/staging contribution captured before this migration with `obligation_id = null` stays as it is — this change does not backfill.
+- **Sandbox matrix against a real Paystack test account:** infrastructural, outside this repo (NEW test account, public HTTPS staging URL, `whsec_`).
+- **Deferred for M8.10+:** `financial_events` table + worker processing (audit §4.6); subaccount splits (PA-06); M8.7 "actual Paystack fee > fee charged" alarm; transfers, refunds, disputes.
 - **Carried over** (no change): fake checkout is in memory; sweep re-reads pending attempts every minute; `listDuePaymentAttempts` is not served by `payment_attempts_sweep_idx`; callback action needs rate limiting.
-- **PR shape:** kept on PR #31 — the four new commits (banner, M8.9 adapter+route, typecheck fix, M8.3b) are all payments-foundation work. If the owner prefers a split, M8.9 and M8.3b can each move to their own PR off a short-lived branch.
+- **PR shape:** still PR #31. If the owner prefers a split, this migration can move to its own PR off a short-lived branch.
 
 ### Next thing to do
 
-1. Push session 11 and watch CI.
-2. Decide the contributor-onboarding option (1, 2, or 3 above) and implement the chosen one, including pgTAP tests. Only `all_members` / `groups` are in scope unless `selected_members` is explicitly reopened.
-3. Arrange the external infra for the Paystack sandbox matrix: a NEW test account, a public HTTPS staging URL, and `whsec_` provisioned. Run the §9 matrix through the deployed route.
-4. Start M8.7 (monitoring alarms — especially "actual Paystack fee > fee charged") when the owner is ready.
+1. Commit session 12 and push; check CI (pgTAP job runs file 53 on a fresh DB).
+2. Arrange the Paystack sandbox infra and run the §9 matrix through the deployed route — or start M8.7 alarms, whichever the owner names.
+3. Optional, when convenient: reset the local dev DB (`npm run db:reset`) so the full local pgTAP run is green again.
 
 ### Prompt for the next session (copy and paste)
 
 ```
 Continue payments on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
-1. Check CI on the latest commit. If a supabase port 54322 flake recurs on an E2E shard, `gh run rerun --failed`; otherwise diagnose from logs without raising timeouts or weakening assertions.
-2. The "Flagged — contributor onboarding scenario" section of the status doc lists three options for the "community member pays before being onboarded → obligation reads unpaid" gap. Say which option to take (1 = lazy materialisation at capture; 2 = reconcile on sync; 3 = no obligation for all_members/groups). Then implement it: SQL migration, `apps/web` and `packages/db` callers as needed, and pgTAP tests. Do not touch selected_members semantics without a separate decision.
-3. If an owner redirect names something else — sandbox matrix, M8.7 alarms, something new — do that instead.
+1. Check CI on the latest commit (it should include 20261114100000_obligation_on_capture.sql and pgTAP file 53). If a supabase port 54322 flake recurs on an E2E shard, `gh run rerun --failed`; otherwise diagnose from logs without raising timeouts or weakening assertions.
+2. If session 12 is not yet committed/pushed, commit it (migration, pgTAP 53, status doc) and push to PR #31 first.
+3. Then do whichever the owner names: the Paystack sandbox §9 matrix (needs a NEW test account, public HTTPS staging URL, `whsec_`), or M8.7 monitoring alarms (start with "actual Paystack fee > fee charged"). If neither is named, ask.
 4. At stop, replace this doc's "Latest report" section with what you built, why, what is still open, the next thing to do, and the next prompt.
 
-Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 `COLLECTION_IMPORTED` guard. Any obligation-creation path added must preserve CASH-02 / SEC-20a (the `block_manual_paid_status` trigger allows 'paid' only when a matching captured contribution exists).
+Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 `COLLECTION_IMPORTED` guard. Do not change `selected_members` semantics or extend obligation-on-capture to open-amount/tiers/items without a separate owner decision. Any obligation-creation path must preserve CASH-02 / SEC-20a (`block_manual_paid_status` now guards INSERT and UPDATE: 'paid' only when a matching applied contribution exists).
 ```
 
 ---
