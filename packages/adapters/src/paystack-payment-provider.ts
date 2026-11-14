@@ -142,6 +142,9 @@ export function tryLoadPaystackConfigFromEnv(
 export class PaystackPaymentProvider implements PaymentProvider {
   readonly name = "paystack" as const;
 
+  /** True for an `sk_test_` key: Paystack test mode, where no real money moves. */
+  readonly testMode: boolean;
+
   readonly #config: Required<Omit<PaystackConfig, "legacyWebhookFallback">> & {
     readonly legacyWebhookFallback: boolean;
   };
@@ -160,6 +163,7 @@ export class PaystackPaymentProvider implements PaymentProvider {
       requestTimeoutMs: config.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
       legacyWebhookFallback: config.legacyWebhookFallback ?? true,
     };
+    this.testMode = config.secretKey.startsWith("sk_test_");
   }
 
   // ── initialize ────────────────────────────────────────────────────────────
@@ -595,20 +599,41 @@ function mapPaystackStatus(raw: string): ProviderPaymentStatus {
 
 // ── Webhook helpers ─────────────────────────────────────────────────────────
 
+/**
+ * Real Paystack webhooks look like `{ event: "charge.success", data: { id,
+ * reference, ... } }` — there is no top-level `id`. (The original unit tests
+ * assumed one, so this gap only showed in the sandbox against the real
+ * provider.) The webhook idempotency key (D-25) must be unique per event
+ * delivery, and `data.id` is the transaction id — the same across
+ * `charge.success`, a later `charge.failure` on the same attempt, or a
+ * resend — so when the id has to come from `data`, the key is composed
+ * with the event name so two different event kinds on one transaction
+ * never collide. A top-level `id`, should Paystack ever add one, wins over
+ * `data.id` — that is the right shape for an event identifier and we do
+ * not second-guess it.
+ */
 function identityFrom(parsed: unknown): ProviderEventIdentity | null {
   if (!isRecord(parsed)) return null;
-  const id =
-    typeof parsed["id"] === "string"
-      ? parsed["id"]
-      : typeof parsed["id"] === "number"
-        ? String(parsed["id"])
-        : null;
-  if (id === null || id.trim() === "") return null;
-  return {
-    provider: "paystack",
-    providerEventId: id,
-    providerEventType: typeof parsed["event"] === "string" ? parsed["event"] : "unknown",
-  };
+  const event = typeof parsed["event"] === "string" ? parsed["event"] : "unknown";
+
+  const topLevelId = readId(parsed["id"]);
+  if (topLevelId !== null) {
+    return { provider: "paystack", providerEventId: topLevelId, providerEventType: event };
+  }
+
+  const data = isRecord(parsed["data"]) ? parsed["data"] : null;
+  const dataId = data === null ? null : readId(data["id"]);
+  if (dataId !== null) {
+    return { provider: "paystack", providerEventId: `${event}:${dataId}`, providerEventType: event };
+  }
+
+  return null;
+}
+
+function readId(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() === "" ? null : value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
 }
 
 // ── Low-level helpers ───────────────────────────────────────────────────────

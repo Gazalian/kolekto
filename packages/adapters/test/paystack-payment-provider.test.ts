@@ -143,6 +143,16 @@ describe("tryLoadPaystackConfigFromEnv", () => {
   });
 });
 
+describe("testMode", () => {
+  it("is true only for an sk_test_ key", () => {
+    assert.equal(createPaystackPaymentProvider(BASE_CONFIG).testMode, true);
+    assert.equal(
+      createPaystackPaymentProvider({ ...BASE_CONFIG, secretKey: "sk_live_stub_0000000000000000000000000000" }).testMode,
+      false,
+    );
+  });
+});
+
 // ── initialize ──────────────────────────────────────────────────────────────
 
 describe("initialize", () => {
@@ -462,7 +472,7 @@ describe("authenticateWebhook (modern Paystack-Signature)", () => {
     assert.equal(result.outcome, "rejected");
   });
 
-  it("rejects when the body is valid JSON but carries no event id", () => {
+  it("rejects when the body is valid JSON but carries no event id anywhere", () => {
     const t = Math.floor(Date.now() / 1000);
     const noIdBody = new TextEncoder().encode(
       JSON.stringify({ event: "charge.success", data: { reference: "KLK-TEST-0000000001" } }),
@@ -474,6 +484,54 @@ describe("authenticateWebhook (modern Paystack-Signature)", () => {
     assert.equal(result.outcome, "rejected");
     if (result.outcome !== "rejected") return;
     assert.equal(result.rejection.reason, "missing_event_id");
+  });
+
+  // Real Paystack webhook bodies: no top-level id; the transaction id is at data.id
+  // (numeric in production, shown here in both numeric and string forms). The earlier
+  // version of this adapter only read a top-level id, so every real webhook was
+  // rejected as missing_event_id — caught in the sandbox, not by this test suite.
+  it("accepts a realistic Paystack body whose id is inside data (numeric)", () => {
+    const t = Math.floor(Date.now() / 1000);
+    const realShape = new TextEncoder().encode(
+      JSON.stringify({ event: "charge.success", data: { id: 1234567890, reference: "KLK-TEST-0000000002", status: "success", amount: 500000, currency: "NGN" } }),
+    );
+    const hex = sign(realShape, WEBHOOK_SECRET, t);
+    const result = createPaystackPaymentProvider(BASE_CONFIG).authenticateWebhook(realShape, {
+      "paystack-signature": `t=${t},v1=${hex}`,
+    });
+    assert.equal(result.outcome, "authentic");
+    if (result.outcome !== "authentic") return;
+    // Event name + data.id, so two different events on one transaction never collide on the idempotency key.
+    assert.equal(result.identity.providerEventId, "charge.success:1234567890");
+    assert.equal(result.identity.providerEventType, "charge.success");
+  });
+
+  it("composes the id the same way when data.id is a string", () => {
+    const t = Math.floor(Date.now() / 1000);
+    const realShape = new TextEncoder().encode(
+      JSON.stringify({ event: "charge.success", data: { id: "9876543210", reference: "KLK-TEST-0000000003" } }),
+    );
+    const hex = sign(realShape, WEBHOOK_SECRET, t);
+    const result = createPaystackPaymentProvider(BASE_CONFIG).authenticateWebhook(realShape, {
+      "paystack-signature": `t=${t},v1=${hex}`,
+    });
+    assert.equal(result.outcome, "authentic");
+    if (result.outcome !== "authentic") return;
+    assert.equal(result.identity.providerEventId, "charge.success:9876543210");
+  });
+
+  it("prefers a top-level id over data.id when both exist", () => {
+    const t = Math.floor(Date.now() / 1000);
+    const both = new TextEncoder().encode(
+      JSON.stringify({ id: "evt_top", event: "charge.success", data: { id: 1234567890, reference: "KLK-TEST-0000000004" } }),
+    );
+    const hex = sign(both, WEBHOOK_SECRET, t);
+    const result = createPaystackPaymentProvider(BASE_CONFIG).authenticateWebhook(both, {
+      "paystack-signature": `t=${t},v1=${hex}`,
+    });
+    assert.equal(result.outcome, "authentic");
+    if (result.outcome !== "authentic") return;
+    assert.equal(result.identity.providerEventId, "evt_top");
   });
 });
 
