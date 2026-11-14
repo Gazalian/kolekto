@@ -9,7 +9,8 @@
  *     checkout action, the local fake checkout page and the callback all
  *     have to see ONE instance. Next may load this module once per route
  *     bundle, so the instance lives on `globalThis` rather than in a
- *     module variable.
+ *     module variable. KOLEKTO_LOCAL_PAYMENT_PROVIDER=paystack_test swaps
+ *     it for Paystack TEST mode (sandbox runs; see below).
  *   · Staging / production: `PaystackPaymentProvider`, selected by
  *     environment and returned only once both `PAYSTACK_SECRET_KEY` and
  *     `PAYSTACK_WEBHOOK_SECRET` are present. The orchestrator already
@@ -45,14 +46,38 @@ export function getFakePaymentProvider(): FakePaymentProvider | null {
 /**
  * The provider for this environment, or null when none is configured.
  *
- *   · local       → the in-memory fake (never the real Paystack; the orchestrator refuses that pairing too)
+ *   · local       → the in-memory fake, unless the Paystack TEST opt-in below is set
  *   · staging     → the Paystack adapter when its env is complete, else null (the banner then reads "not available yet")
  *   · production  → the Paystack adapter when its env is complete, else null
  */
 export function getPaymentProvider(): PaymentProvider | null {
   const { environment } = loadConfig();
-  if (environment === "local") return getFakePaymentProvider();
+  if (environment === "local") return getLocalPaystackTestProvider() ?? getFakePaymentProvider();
   return getPaystackPaymentProvider();
+}
+
+/** The value of KOLEKTO_LOCAL_PAYMENT_PROVIDER that opts this machine in to Paystack test mode. */
+const LOCAL_PAYSTACK_TEST = "paystack_test";
+
+/**
+ * LOCAL ONLY, opt-in: with KOLEKTO_LOCAL_PAYMENT_PROVIDER=paystack_test this
+ * machine checks out through Paystack TEST mode instead of the fake, against
+ * the local database. It exists for the §9 sandbox rows that need Paystack to
+ * reach us (webhooks), through a tunnel to this dev server. The callback stays
+ * on this machine (APP_BASE_URL is loopback in local).
+ *
+ * Refuses (throws) when the Paystack env is missing or holds a live key:
+ * local never takes real money. Never consulted outside local.
+ */
+function getLocalPaystackTestProvider(): PaymentProvider | null {
+  if (process.env["KOLEKTO_LOCAL_PAYMENT_PROVIDER"]?.trim() !== LOCAL_PAYSTACK_TEST) return null;
+  const provider = getPaystackPaymentProvider();
+  if (provider === null || !provider.testMode) {
+    throw new Error(
+      `REFUSING: KOLEKTO_LOCAL_PAYMENT_PROVIDER=${LOCAL_PAYSTACK_TEST} needs the Paystack TEST key and webhook secret in .env.local (never a live key).`,
+    );
+  }
+  return provider;
 }
 
 /**
