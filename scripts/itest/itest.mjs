@@ -400,6 +400,21 @@ function psql(sql) {
   return r.stdout.split(/\r?\n/).filter((l) => l !== "");
 }
 
+/** The CLI's own storage health wait gave up (the only `db reset` failure `reset` recovers from). */
+const STORAGE_NOT_READY = new RegExp(`supabase_storage_${PROJECT_ID} container is not ready: (?:starting|unhealthy)`);
+
+/** Read-only: every source migration, and nothing else, is recorded as applied on the test database. */
+function verifyMigrationsApplied() {
+  const expected = readdirSync(MIGRATIONS_SOURCE).sort().map((f) => f.split("_")[0]);
+  const applied = psql("begin read only;\nselect version from supabase_migrations.schema_migrations order by version;\nrollback;");
+  const missing = expected.filter((v) => !applied.includes(v));
+  const extra = applied.filter((v) => !expected.includes(v));
+  if (missing.length > 0 || extra.length > 0 || applied.length !== expected.length) {
+    refuse(`The reset did not apply exactly the source migrations (missing ${missing.length}, unexpected ${extra.length}). Nothing more was done.`);
+  }
+  log(`  migrations applied: all ${applied.length} source versions recorded on the test database`);
+}
+
 /** Read-only: role, its attributes, and the two database-level identity settings. */
 function readBootstrapState() {
   const rows = psql(`begin read only;
@@ -881,10 +896,26 @@ async function reset(args) {
   }
   preflight();
   verifyRunningStack();
+  // Start from a settled stack: a reset begun while storage is still restarting
+  // (e.g. after an earlier failed reset) fails in "Initialising schema".
+  waitHealthy();
   reportMigrations(writeMigrationCopy());
   log(`Resetting the ${PROJECT_ID} database (supabase db reset --local --no-seed --workdir supabase-itest). CLI output is captured, not shown.`);
   const r = supabase(["db", "reset", "--local", "--no-seed"]);
-  if (r.status !== 0) refuse(`supabase db reset failed (exit ${r.status}). Redacted tail:\n${redactedTail(`${r.stdout}\n${r.stderr}`)}`);
+  if (r.status !== 0) {
+    const out = `${r.stdout}\n${r.stderr}`;
+    // After the migrations the CLI restarts storage and gives it a short health
+    // wait of its own, which `db reset` cannot skip (it has no
+    // --ignore-health-check). On a busy Docker VM storage needs longer. That one
+    // failure is handled as `up` handles it: this wrapper's own bounded wait,
+    // then proof that every migration was applied. Any other failure refuses.
+    if (!STORAGE_NOT_READY.test(out)) {
+      refuse(`supabase db reset failed (exit ${r.status}). Redacted tail:\n${redactedTail(out)}`);
+    }
+    log("  the CLI stopped waiting for storage after the reset; waiting with this wrapper's bounded health wait (as itest:up does).");
+    waitHealthy();
+    verifyMigrationsApplied();
+  }
   checkTempDir();
   verifyRunningStack();
   checkEnvFileIgnored();
