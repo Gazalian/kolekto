@@ -25,6 +25,8 @@ const MIGRATIONS = new URL("../../../supabase/migrations/", import.meta.url);
 const POLICY_SQL = readFileSync(new URL("20261109100000_m13_3_communication_policy.sql", MIGRATIONS), "utf8");
 const ANNOUNCE_SQL = readFileSync(new URL("20261109100100_member_collection_announcements.sql", MIGRATIONS), "utf8");
 const R3_SQL = readFileSync(new URL("20261109100200_m13_3_send_time_recheck.sql", MIGRATIONS), "utf8").replace(/\r\n/g, "\n");
+// The category map was last redefined in 20261116100000 (payment lifecycle events, essential).
+const CATEGORY_SQL = readFileSync(new URL("20261116100000_payment_notifications_receipt_fee_alarm.sql", MIGRATIONS), "utf8").replace(/\r\n/g, "\n");
 const QUOTA_MIGRATION = readFileSync(
   new URL("../../../supabase/migrations/20261024200000_notification_quota_controls.sql", import.meta.url),
   "utf8",
@@ -186,7 +188,7 @@ describe("collection email decision (SQL) agrees with the worker", () => {
 describe("M13.3 R3 SQL agrees with the worker", () => {
   it("app.communication_category_for_event classifies exactly the worker's events, identically", () => {
     const rows = [
-      ...between(R3_SQL, "-- EVENT-CATEGORY-BEGIN", "-- EVENT-CATEGORY-END").matchAll(
+      ...between(CATEGORY_SQL, "-- EVENT-CATEGORY-BEGIN", "-- EVENT-CATEGORY-END").matchAll(
         /\('([a-z_.]+)',\s*'([a-z_]+)',\s*(null(?:::text)?|'[a-z_]+'),\s*(null(?:::text)?|'[a-z_]+')\)/g,
       ),
     ].map((m) => ({

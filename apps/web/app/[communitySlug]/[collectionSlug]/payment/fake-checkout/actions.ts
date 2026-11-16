@@ -27,5 +27,7 @@ export async function completeFakeCheckoutAction(formData: FormData): Promise<vo
 
   fake.completeCheckout(reference, outcome as FakeOutcome);
   const callback = new URL(checkout.callbackUrl);
+  callback.searchParams.set("trxref", reference);
+  callback.searchParams.set("reference", reference);
   redirect(`${callback.pathname}${callback.search}`);
 }

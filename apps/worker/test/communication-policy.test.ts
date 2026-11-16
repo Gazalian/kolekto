@@ -199,6 +199,10 @@ describe("event classification", () => {
     "collection.remind": { category: "community_operational", fanout: "per_audience_member", topic: "reminder" },
     "collection.publish_remind_unpaid": { category: "payment", fanout: "per_audience_member", purpose: "targeted_reminder" },
     "collection.remind_unpaid": { category: "payment", fanout: "per_audience_member", purpose: "targeted_reminder" },
+    "payment.initialized": { category: "essential", fanout: "payer" },
+    "payment.captured": { category: "essential", fanout: "payer" },
+    "payment.needs_review": { category: "essential", fanout: "payer" },
+    "payment.failed": { category: "essential", fanout: "payer" },
   };
 
   for (const [action, want] of Object.entries(EXPECTED)) {
