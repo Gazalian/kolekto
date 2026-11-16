@@ -21,7 +21,9 @@
 -- ── 1. Essential emails skip L1 ─────────────────────────────────────────────
 --
 -- The ONLY change is wrapping the L1 block (lines 339–359 of 20261109100200)
--- in: if v_delivery.communication_category <> 'essential' then … end if;
+-- in: if v_delivery.communication_category is distinct from 'essential' then … end if;
+-- (`is distinct from` is NULL-safe: existing rows store NULL for category, so a
+-- plain `<>` would evaluate to NULL and the whole L1 check would be skipped.)
 -- Everything else is an exact copy of the function from 20261109100200.
 
 create or replace function app.reserve_email_attempt(
@@ -115,7 +117,7 @@ begin
   -- who makes two payments in one day must receive both receipts. L1 is
   -- designed for marketing/reminder emails, not for the payer's own
   -- transaction messages.
-  if v_delivery.communication_category <> 'essential' then
+  if v_delivery.communication_category is distinct from 'essential' then
     select count(*) into v_address_count
     from public.notification_send_attempts a
     where a.address_key = v_address

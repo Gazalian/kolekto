@@ -137,7 +137,7 @@ for (const name of FLOW_NAMES) {
     const { flow } = seeded;
 
     await page.getByRole("button", { name: "Pay successfully" }).click();
-    await expect(page).toHaveURL(new RegExp(`/payment/callback\\?reference=${reference}$`));
+    await expect(page).toHaveURL(new RegExp(`/payment/callback\\?(trxref=${reference}&)?reference=${reference}$`));
     await expect(page.getByRole("heading", { name: "Payment Successful" })).toBeVisible();
 
     // The receipt shows on the page and downloads as a PDF (20261116100000).
@@ -176,7 +176,7 @@ test("a declined card records no contribution and gives the stock back", async (
   const { page, reference, close } = await orderAndOpenCheckout(browser, "items");
 
   await page.getByRole("button", { name: "Card declined" }).click();
-  await expect(page).toHaveURL(new RegExp(`/payment/callback\\?reference=${reference}$`));
+  await expect(page).toHaveURL(new RegExp(`/payment/callback\\?(trxref=${reference}&)?reference=${reference}$`));
   await expect(page.getByRole("heading", { name: "Payment Failed" })).toBeVisible();
   await expect(page.getByText("Your payment was not successful. Please try again.")).toBeVisible();
 
@@ -192,7 +192,7 @@ test("a cancelled payment records no contribution and stays pending during its h
   const { page, reference, close } = await orderAndOpenCheckout(browser, "items");
 
   await page.getByRole("button", { name: "Cancel payment" }).click();
-  await expect(page).toHaveURL(new RegExp(`/payment/callback\\?reference=${reference}$`));
+  await expect(page).toHaveURL(new RegExp(`/payment/callback\\?(trxref=${reference}&)?reference=${reference}$`));
   // Abandoned inside the 30-minute hold is pending, not failed (20261114110000):
   // the payer may still finish. The sweep marks it abandoned after the hold.
   await expect(page.getByRole("heading", { name: "Payment Pending" })).toBeVisible();
