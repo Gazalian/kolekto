@@ -57,6 +57,12 @@ export const WATCHED_ACTIONS = [
   "member.join_via_invite",
   "officer_invitation.accept",
   "officer_term.end",
+  // Payment lifecycle → the payer's email (notification-payment.ts). Queued
+  // by the trigger since 20261116100000_payment_notifications_receipt_fee_alarm.sql.
+  "payment.initialized",
+  "payment.captured",
+  "payment.needs_review",
+  "payment.failed",
 ] as const;
 
 export type WatchedAction = (typeof WATCHED_ACTIONS)[number];
@@ -170,7 +176,9 @@ export type SkipReason =
   | "not_a_person_action"
   | "event_too_old"
   | "member_unavailable"
-  | "imported_member";
+  | "imported_member"
+  /** A payment event whose attempt cannot be read, or belongs to another community. */
+  | "payment_unavailable";
 
 export type Admission = { readonly process: true } | { readonly process: false; readonly reason: SkipReason };
 

@@ -63,6 +63,10 @@ const TEMPLATE_EVENT_TYPES = [
   "collection.publish",
   "collection.remind",
   "collection.announce_update",
+  "payment.initialized",
+  "payment.captured",
+  "payment.needs_review",
+  "payment.failed",
 ] as const;
 
 /** Collection announcements: these must link to the collection, so they never fall back to the placeholder. */
@@ -115,6 +119,11 @@ export function renderTemplate(ctx: EventContext): RenderedEmail | null {
     case "collection.remind":
     case "collection.announce_update":
       return renderCollectionAnnouncement(ctx);
+    case "payment.initialized":
+    case "payment.captured":
+    case "payment.needs_review":
+    case "payment.failed":
+      return renderPaymentEmail(ctx);
   }
 }
 
@@ -390,6 +399,147 @@ function renderCollectionAnnouncement(ctx: EventContext): RenderedEmail | null {
   );
 
   // A header value: never let a name carry a line break into the Subject.
+  return { subject: subject.replace(/[\r\n]+/g, " "), text: textLines.join("\n"), html };
+}
+
+// ── Payment emails (to the payer) ───────────────────────────────────────────
+//
+// Sent to the address the payer typed for THIS payment, about THIS payment
+// only. Facts: community and collection names, the KLK reference, amounts
+// (integer kobo → formatNaira, never a float), the date and channel. Never
+// the address itself, the phone, another payer, or an internal id. A link
+// is added only when it can be built from APP_BASE_URL and valid slugs; the
+// message is complete without it.
+
+const PAYMENT_REFERENCE = /^KLK-[0-9A-HJKMNP-TV-Z]{26}$/;
+
+function nairaOrEmpty(payload: Record<string, unknown>, key: string): string {
+  const raw = str(payload, key);
+  return /^[0-9]{1,15}$/.test(raw) ? formatNaira(kobo(raw)) : "";
+}
+
+/** The receipt page for a payment, or null when no link can be built. */
+export function receiptUrl(appBaseUrl: string | undefined, communitySlug: string, collectionSlug: string, reference: string): string | null {
+  const base = collectionUrl(appBaseUrl, communitySlug, collectionSlug);
+  if (!base || !PAYMENT_REFERENCE.test(reference)) return null;
+  return `${base}/payment/receipt?reference=${encodeURIComponent(reference)}`;
+}
+
+const CHANNEL_LABELS: Readonly<Record<string, string>> = {
+  card: "Card",
+  bank_transfer: "Bank transfer",
+  bank: "Bank",
+  ussd: "USSD",
+  mobile_money: "Mobile money",
+  qr: "QR",
+};
+
+function renderPaymentEmail(ctx: EventContext): RenderedEmail {
+  const p = ctx.payload;
+  const community = str(p, "community_name") || "the organiser";
+  const collection = str(p, "collection_name") || "a collection";
+  const reference = PAYMENT_REFERENCE.test(str(p, "payment_reference")) ? str(p, "payment_reference") : "";
+  const payer = str(p, "payer_name").trim();
+  const total = nairaOrEmpty(p, "amount_kobo");
+  const contribution = nairaOrEmpty(p, "contribution_kobo");
+  const collectionLink = collectionUrl(ctx.appBaseUrl, str(p, "community_slug"), str(p, "collection_slug"));
+  const receiptLink = reference ? receiptUrl(ctx.appBaseUrl, str(p, "community_slug"), str(p, "collection_slug"), reference) : null;
+  const greeting = payer ? `Hello ${payer},` : "Hello,";
+
+  let subject: string;
+  let lead: string;
+  let after: string[];
+  const details: [string, string][] = [];
+  let link: { label: string; url: string } | null = null;
+
+  switch (ctx.eventType) {
+    case "payment.captured": {
+      subject = `Payment receipt: ${total || contribution} to ${collection}`;
+      lead = `Your payment to ${collection} (${community}) was successful. Here is your receipt.`;
+      if (contribution) details.push(["Contribution", contribution]);
+      const processing = nairaOrEmpty(p, "gateway_fee_kobo");
+      const platform = nairaOrEmpty(p, "platform_fee_kobo");
+      const vat = nairaOrEmpty(p, "vat_kobo");
+      if (str(p, "fee_bearer") === "contributor_pays") {
+        if (processing) details.push(["Processing fee", processing]);
+        if (platform) details.push(["Kolekto fee", platform]);
+        if (vat && str(p, "vat_kobo") !== "0") details.push(["VAT", vat]);
+      }
+      if (total) details.push(["Total paid", total]);
+      const paidAt = str(p, "paid_at");
+      if (paidAt) details.push(["Date", formatDeadline(paidAt)]);
+      const channel = CHANNEL_LABELS[str(p, "channel")];
+      if (channel) details.push(["Paid with", channel]);
+      if (reference) details.push(["Reference", reference]);
+      after = ["Keep this email as your receipt. Quote the reference if you contact the organiser about this payment."];
+      if (receiptLink) link = { label: "View or download your receipt", url: receiptLink };
+      break;
+    }
+    case "payment.needs_review":
+      subject = `Payment received: ${collection}`;
+      lead = `We received your payment to ${collection} (${community}). The organiser needs to check it before it is applied, so it is not confirmed yet.`;
+      if (total) details.push(["Amount paid", total]);
+      if (reference) details.push(["Reference", reference]);
+      after = [
+        "Your money is recorded and safe. You do not need to pay again.",
+        "Quote the reference if you contact the organiser about this payment.",
+      ];
+      break;
+    case "payment.failed":
+      subject = `Payment not completed: ${collection}`;
+      lead =
+        str(p, "failure_kind") === "declined"
+          ? `Your payment to ${collection} (${community}) was not successful.`
+          : `Your payment to ${collection} (${community}) was not completed in time, so it was cancelled.`;
+      if (total) details.push(["Amount", total]);
+      if (reference) details.push(["Reference", reference]);
+      after = [
+        "We have not received this payment. You can start a new payment from the collection page.",
+        "If money left your account for this payment, contact the organiser and quote the reference.",
+      ];
+      if (collectionLink) link = { label: "Go to the collection", url: collectionLink };
+      break;
+    default: {
+      // payment.initialized
+      subject = `Payment started: ${collection}`;
+      lead = `You started a payment to ${collection} (${community}).`;
+      if (total) details.push(["Amount", total]);
+      if (reference) details.push(["Reference", reference]);
+      after = [
+        "When the payment is successful we will email your receipt.",
+        "If you did not start this payment, you can ignore this email: no money is taken unless the payment is completed on the payment page.",
+      ];
+      const checkoutUrl = str(p, "checkout_url");
+      if (checkoutUrl && /^https:\/\/checkout\.paystack\.com\/[A-Za-z0-9_-]{4,80}$/.test(checkoutUrl)) {
+        link = { label: "Complete your payment", url: checkoutUrl };
+      }
+      break;
+    }
+  }
+
+  const textLines = [greeting, "", lead, ""];
+  for (const [k, v] of details) textLines.push(`${k}: ${v}`);
+  if (details.length) textLines.push("");
+  for (const line of after) textLines.push(line);
+  if (link) textLines.push("", `${link.label}: ${link.url}`);
+  textLines.push("", "— Kolekto", "", "This is an automated message. Please do not reply.");
+
+  const detailRows = details
+    .map(([k, v]) => `<tr><td style="padding:4px 16px 4px 0;color:#666;">${escapeHtml(k)}</td><td style="padding:4px 0;text-align:right;"><strong>${escapeHtml(v)}</strong></td></tr>`)
+    .join("");
+  const eLink = link ? escapeHtml(link.url) : "";
+  const html = emailLayout(
+    subject,
+    `<p style="margin:0 0 16px;">${escapeHtml(greeting)}</p>` +
+      `<p style="margin:0 0 16px;">${escapeHtml(lead)}</p>` +
+      (detailRows ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;width:100%;max-width:420px;">${detailRows}</table>` : "") +
+      after.map((line) => `<p style="margin:0 0 12px;">${escapeHtml(line)}</p>`).join("") +
+      (link
+        ? `<p style="margin:24px 0;"><a href="${eLink}" style="display:inline-block;padding:12px 20px;background-color:#111;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">${escapeHtml(link.label)}</a></p>` +
+          `<p style="margin:0 0 16px;font-size:13px;color:#666;">Or open this link: <a href="${eLink}" style="color:#333;">${eLink}</a></p>`
+        : ""),
+  );
+
   return { subject: subject.replace(/[\r\n]+/g, " "), text: textLines.join("\n"), html };
 }
 

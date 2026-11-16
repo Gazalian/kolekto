@@ -123,7 +123,7 @@ export function formatReportDateTime(on: Date): string {
  * whole report fails to generate. Losing a character is bad; losing the
  * report is worse, and the substitution is visible.
  */
-function drawable(text: string): string {
+export function drawable(text: string): string {
   let safe = "";
   for (const character of text) {
     const code = character.codePointAt(0)!;
@@ -157,7 +157,7 @@ const fontCache = new Map<string, Buffer>();
  * the server bundle. `join(process.cwd(), "public", "fonts", …)` is scoped;
  * `readFileSync(candidate)` is not.
  */
-function loadFont(file: "DejaVuSans.ttf" | "DejaVuSans-Bold.ttf"): Buffer {
+export function loadFont(file: "DejaVuSans.ttf" | "DejaVuSans-Bold.ttf"): Buffer {
   const cached = fontCache.get(file);
   if (cached) return cached;
 

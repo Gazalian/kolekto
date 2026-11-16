@@ -44,6 +44,7 @@ import {
   type EmailOutcome,
 } from "./notification-eligibility.ts";
 import { eventPolicy, type CommunicationCategory } from "./communication-policy.ts";
+import { isPaymentAction, processPaymentEvent } from "./notification-payment.ts";
 import {
   admission,
   buildPayload,
@@ -99,6 +100,16 @@ export async function processNotificationMessage(
 
   const admitted = admission(msg, nowMs);
   if (!admitted.process) return SKIPPED(admitted.reason);
+
+  // Payment lifecycle: one event and one email to the payer; no in-app row.
+  const paymentAction = msg.action;
+  if (isPaymentAction(paymentAction)) {
+    return atomically(sql, async (tx): Promise<ProcessOutcome> => {
+      const result = await processPaymentEvent(tx, msg, paymentAction);
+      if (result.kind === "attempt_unavailable") return SKIPPED("payment_unavailable");
+      return { outcome: "processed", deliveries: 0, email: result.email };
+    });
+  }
 
   return atomically(sql, async (tx): Promise<ProcessOutcome> => {
     const facts = await readFacts(tx, msg);

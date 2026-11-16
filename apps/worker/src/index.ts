@@ -26,6 +26,7 @@ import postgres from "postgres";
 
 import { processNotificationMessage } from "./notification-processor.js";
 import { PAYMENT_SWEEP_INTERVAL_MS, paymentSweepAllowed, sweepLogLine, sweepPaymentAttempts, workerPaymentContext } from "./payment-sweep.ts";
+import { FEE_ALARM_INTERVAL_MS, feeAlarmAllowed, readFeeAlarms, summarizeFeeAlarms } from "./payment-fee-alarm.ts";
 import { getSendLimits } from "./notification-rate-limit.ts";
 import { runSenderTick } from "./notification-sender.ts";
 import { abandonBatch, FAULT_AT_HEADER, FAULT_CODE_HEADER, FAULT_READS_HEADER, handleQueueMessage, PARKED_AT_HEADER, PARKED_REASON_HEADER, PROCESSED_HEADER, type QueueMessage, type QueueOps } from "./queue-disposition.ts";
@@ -233,6 +234,17 @@ async function main() {
     console.error(JSON.stringify({ msg: "payment_sweep_state", enabled: false, reason: "probe_failed", error: safeErrorSummary(err) }));
   }
   let lastPaymentSweep = 0;
+
+  // M8.7 alarm 1 (payment-fee-alarm.ts). Read-only, never fatal.
+  let feeAlarm = false;
+  try {
+    const decision = await feeAlarmAllowed(sql);
+    feeAlarm = decision.enabled;
+    console.log(JSON.stringify({ msg: "payment_fee_alarm_state", enabled: decision.enabled, ...(decision.enabled ? {} : { reason: decision.reason }) }));
+  } catch (err) {
+    console.error(JSON.stringify({ msg: "payment_fee_alarm_state", enabled: false, reason: "probe_failed", error: safeErrorSummary(err) }));
+  }
+  let lastFeeAlarm = 0;
   const pollFailures = new PollFailureTracker();
 
   process.on("SIGINT", () => { running = false; });
@@ -337,6 +349,18 @@ async function main() {
         if (line) console.log(JSON.stringify(line));
       } catch (err) {
         console.error("Payment sweep error:", safeErrorJson(err));
+      }
+    }
+
+    // ── Payment fee alarm (M8.7) ─────────────────────────────────────────────
+    if (feeAlarm && Date.now() - lastFeeAlarm >= FEE_ALARM_INTERVAL_MS) {
+      lastFeeAlarm = Date.now();
+      try {
+        for (const line of summarizeFeeAlarms(await readFeeAlarms(sql, Date.now()))) {
+          (line.severity === "critical" ? console.error : console.warn)(JSON.stringify(line));
+        }
+      } catch (err) {
+        console.error(JSON.stringify({ msg: "payment_fee_alarm_error", error: safeErrorSummary(err) }));
       }
     }
 

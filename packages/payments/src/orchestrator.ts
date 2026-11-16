@@ -180,7 +180,7 @@ export async function startCheckout(ctx: PaymentContext, input: StartCheckoutInp
     reference: attempt.reference,
     amount: fees.totalPayable,
     currency: "NGN",
-    callbackUrl: `${origin}/${encodeURIComponent(input.communitySlug)}/${encodeURIComponent(input.collectionSlug)}/payment/callback?reference=${encodeURIComponent(attempt.reference)}`,
+    callbackUrl: `${origin}/${encodeURIComponent(input.communitySlug)}/${encodeURIComponent(input.collectionSlug)}/payment/callback`,
     contributorEmail: input.contributorEmail,
     metadata: { collection_id: input.collectionId },
     subaccountCode: null,

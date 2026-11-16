@@ -54,6 +54,8 @@ const PUBLIC_PAYMENT_PAGES = new Set([
   "callback",
   // The local stand-in for the provider's checkout. The page itself 404s outside KOLEKTO_ENV=local.
   "fake-checkout",
+  // The receipt page (the KLK reference is the bearer secret; no account needed).
+  "receipt",
 ]);
 
 /**
@@ -63,12 +65,11 @@ const PUBLIC_PAYMENT_PAGES = new Set([
  */
 export function isPublicPaymentPath(pathname: string): boolean {
   const segments = pathname.split("/").filter(Boolean);
-  return (
-    segments.length === 4 &&
-    !APP_SEGMENTS.has(segments[0]!) &&
-    segments[2] === "payment" &&
-    PUBLIC_PAYMENT_PAGES.has(segments[3]!)
-  );
+  if (segments.length < 4 || APP_SEGMENTS.has(segments[0]!) || segments[2] !== "payment") return false;
+  if (segments.length === 4) return PUBLIC_PAYMENT_PAGES.has(segments[3]!);
+  // /{community}/{collection}/payment/receipt/pdf — the PDF download.
+  if (segments.length === 5 && segments[3] === "receipt" && segments[4] === "pdf") return true;
+  return false;
 }
 
 export function isPublicPath(pathname: string): boolean {

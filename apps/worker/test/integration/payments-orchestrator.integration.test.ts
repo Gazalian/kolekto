@@ -29,6 +29,8 @@ import { createFakePaymentProvider, type FakePaymentProvider, type FakeScenario 
 import { type PaymentDb, recordProviderTransaction } from "@kolekto/db";
 import { confirmPayment, type PaymentContext, providerStatement, startCheckout, type StartCheckoutResult, sweepPaymentAttempts } from "@kolekto/payments";
 
+import { processNotificationMessage } from "../../src/notification-processor.ts";
+import { renderTemplate } from "../../src/notification-email-templates.ts";
 import { connectVerified, liveGateDeps } from "../support/itest-db.ts";
 import { createIntegrationGate } from "../support/itest-gate.ts";
 import { createFileHarness, inRollback } from "../support/itest-isolation.ts";
@@ -307,6 +309,83 @@ describe("M8.5 payment orchestrator against the real database", () => {
         // Running it again changes nothing.
         const again = await sweepPaymentAttempts(ctx, { limit: 1000 });
         assert.deepEqual(again.outcomes.filter((o) => o.reference === paid.reference || o.reference === held.reference), []);
+      });
+    } finally {
+      await sql.end();
+    }
+  });
+
+  it("the payer is emailed when the payment starts and gets a receipt when it completes (20261116100000)", async () => {
+    const sql = connectVerified(gate.verified(), { max: 1 });
+    try {
+      await inRollback(sql, async (tx: Tx) => {
+        const community = await seedPaymentCommunity(tx, scope);
+        const flow = await seedFlow(tx, scope, community, "tiered");
+        const ctx = contextFor(tx);
+        const payer = scope.address();
+        const started = expectOk(
+          await startCheckout(ctx, {
+            environment: "local",
+            appOrigin: APP_ORIGIN,
+            collectionId: flow.collectionId,
+            collectionCategory: flow.category,
+            collectionSlug: flow.collectionSlug,
+            communitySlug: community.communitySlug,
+            amountModel: flow.amountModel,
+            feeBearer: flow.feeBearer,
+            resolved: flow.resolved,
+            memberId: flow.memberId,
+            contributorName: "ITest Payer",
+            contributorEmail: payer,
+            contributorPhone: "+2348097771999",
+            answers: {},
+            attendeeNames: flow.attendeeNames,
+            checkoutIdempotencyKey: scope.uuid(),
+          }),
+        );
+        ctx.provider.completeCheckout(started.reference, "success");
+        assert.equal((await confirmPayment(ctx, started.reference)).outcome, "completed");
+
+        // What the notification trigger queued, rebuilt from the audit rows it reads.
+        const audits = await tx<{ message: Record<string, unknown> }[]>`
+          select jsonb_build_object(
+                   'audit_log_id', id, 'community_id', community_id, 'action', action, 'actor_type', actor_type::text,
+                   'actor_user_id', actor_user_id, 'actor_name', actor_name_snapshot, 'object_type', object_type,
+                   'object_id', object_id, 'after_state', after_state, 'created_at', created_at) as message
+          from public.audit_logs where object_id = ${started.attemptId} and action like 'payment.%'
+          order by created_at, action`;
+        assert.deepEqual(audits.map((a) => a.message["action"]).sort(), ["payment.captured", "payment.initialized"]);
+
+        for (let round = 0; round < 2; round += 1) {
+          for (const a of audits) {
+            const out = await processNotificationMessage(tx as unknown as postgres.TransactionSql, a.message);
+            assert.equal(out.outcome, "processed", JSON.stringify(out));
+          }
+        }
+
+        const deliveries = await tx<{ event_type: string; status: string; recipient_address: string | null; assurance: string | null; dedupe_key: string | null; category: string | null; send_class: string; payload: Record<string, unknown> }[]>`
+          select e.event_type, d.status::text as status, d.recipient_address, d.recipient_address_assurance as assurance,
+                 d.dedupe_key, d.communication_category as category, d.send_class::text as send_class, e.payload
+          from public.notification_deliveries d join public.notification_events e on e.id = d.notification_event_id
+          where e.object_id = ${started.attemptId} order by e.event_type`;
+        assert.equal(deliveries.length, 2, "one email per event, even after a redelivery");
+        for (const d of deliveries) {
+          assert.equal(d.status, "pending");
+          assert.equal(d.recipient_address, payer);
+          assert.equal(d.assurance, "unverified_supplied");
+          assert.equal(d.category, "essential");
+          assert.equal(d.send_class, "transactional");
+          assert.ok(!JSON.stringify(d.payload).includes(payer), "the address never enters the event payload");
+        }
+        assert.deepEqual(deliveries.map((d) => d.dedupe_key), [`receipt:${started.attemptId}`, `payment_started:${started.attemptId}`]);
+
+        const receipt = deliveries.find((d) => d.event_type === "payment.captured")!;
+        const rendered = renderTemplate({ eventType: receipt.event_type, payload: receipt.payload, appBaseUrl: APP_ORIGIN })!;
+        assert.ok(rendered.text.includes(`Reference: ${started.reference}`));
+        assert.ok(rendered.text.includes(`/payment/receipt?reference=${started.reference}`));
+
+        const read = first(await tx<{ receipt: Record<string, unknown> | null }[]>`select app.payment_receipt(${started.reference}) as receipt`);
+        assert.equal(read.receipt?.["reference"], started.reference);
       });
     } finally {
       await sql.end();

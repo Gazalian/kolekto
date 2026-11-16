@@ -102,10 +102,12 @@ export const CURRENT_CAPABILITIES: PolicyCapabilities = Object.freeze({
  *                         app.evaluate_email_eligibility
  *   per_audience_member — one row per member of the collection audience, via
  *                         app.evaluate_collection_email_recipients
+ *   payer               — the address the payer typed for this payment, via
+ *                         app.payment_notification_context (notification-payment.ts)
  *   none                — this event never produces an email row (a product
  *                         rule, e.g. R-E3: no rejection mail; R1: no joiner mail)
  */
-export type EmailFanout = "per_event_recipient" | "per_audience_member" | "none";
+export type EmailFanout = "per_event_recipient" | "per_audience_member" | "payer" | "none";
 
 /**
  * The preference topic inside community operational messages. It is also the
@@ -131,6 +133,13 @@ const EVENT_POLICIES: Readonly<Record<string, EventPolicy>> = Object.freeze({
   // A. Essential service notices with no email by product rule.
   "member.reject_join": { category: "essential", emailFanout: "none" },
   "member.join_via_invite": { category: "essential", emailFanout: "none" },
+  // A. Essential: a transaction message about the recipient's OWN payment,
+  // to the address they typed for it (20261116100000). Not the payment
+  // category (D), which is for "you still owe" targeting and stays blocked.
+  "payment.initialized": { category: "essential", emailFanout: "payer" },
+  "payment.captured": { category: "essential", emailFanout: "payer" },
+  "payment.needs_review": { category: "essential", emailFanout: "payer" },
+  "payment.failed": { category: "essential", emailFanout: "payer" },
 
   // B. Community operational. Neutral: none of these says what anyone owes.
   "collection.publish": { category: "community_operational", emailFanout: "per_audience_member", topic: "announcement" },

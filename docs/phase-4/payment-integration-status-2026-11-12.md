@@ -1,16 +1,18 @@
 # Payment integration — status and next steps
 
 **Date:** 2026-11-12  
-**Branch:** `feat/payments-foundation`  
-**Last commits:**
+**Branch:** `feat/payment-receipts-alarms` (sessions 20–21, uncommitted; cut from `main`, which holds PR #33 merged 2026-11-14)  
+**Last commits** (on `main` after the merge):
 
+- `b99660d` Merge pull request #33 from Gazalian/feat/payments-foundation
+- `92fe539` docs(payments): status after sessions 14-18
+- `8f932bb` fix(itest): itest:reset waits for storage like itest:up
+- `a868fc2` feat(payments): local Paystack test opt-in and sandbox runner
+- `ae2c215` feat(payments): abandoned checkout waits for its hold
+- `771a1a0` fix(adapters): read Paystack webhook id from data.id
+- `4063739` docs(payments): correct session 12 status — PR #31 already merged
+- `3668131` feat(payments): create member obligation on capture for all-members/groups
 - `46b6e16` feat(domain): M8.3b resolver hardening — stock, applied, status, ceiling
-- `9521283` fix(adapters): drop DOM-only `RequestInfo` type from fetch stub
-- `8c9eea6` docs(payments): update M8.9 status report (session 10 — Paystack adapter + webhook)
-- `9d9dc73` feat(payments): M8.9 Paystack adapter and webhook route
-- `57fc62a` docs(payments): update M8.5 status report (session 9 — CI green, banner shipped)
-- `a9b6606` fix(e2e): match 2026-11-founder fee labels and client-side contact guard
-- `30fb66f` feat(contribute): gate the pre-payment banner on whether checkout is available
 
 **Authoritative docs** (read these before changing anything):
 
@@ -24,74 +26,104 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-14, session 18 (webhook fix live; three §9 webhook rows passed; declined-card run waiting on the owner)
+**Last updated:** 2026-11-16, session 22 (callback bug fix + UI polish + worker started + email investigation on `feat/payment-receipts-alarms`; **uncommitted**)
 
-Sessions 14–18 are all **uncommitted**.
+### Where the work stands
 
-### Sessions 14–17 summary (kept)
+`main` holds sessions 14–19 (PR #33, merged 2026-11-14). Sessions 20–22 work on branch **`feat/payment-receipts-alarms`** (cut from `origin/main`). Nothing is committed or pushed yet. The new migration `20261116100000` is applied on both the **itest** stack (all 131 migrations, pgTAP 57/57 files green) and the **local dev DB**. The receipt page, receipt PDF and callback receipt are browser-verified on the local dev DB.
 
-- **14:** abandoned-waits-for-hold rule (`20261114110000`), callback copy, pgTAP 54, local Paystack test opt-in (`KOLEKTO_LOCAL_PAYMENT_PROVIDER=paystack_test`), runner scenario filter.
-- **15:** no new code; copied the TEST keys and the local opt-in from the repo-root `.env.local` into `apps/web/.env.local` (which `next dev` reads).
-- **16:** `itest:reset` repaired in `scripts/itest/itest.mjs` (storage health wait + migration-applied proof); worker integration test 48/48; card success row passed with two card payments through the runner.
-- **17:** webhook event-id bug fixed on the money path (`identityFrom` now reads `data.id`); three new unit tests for the real Paystack body shape (adapters 205/205); `@kolekto/adapters` added to Next's `transpilePackages` so a payment-path source edit reaches the dev server. Checkout A captured through the callback. B left `initialized` on purpose for the webhook row. **Both changes needed a `next dev` cold restart.**
+**Session 22 added:** Callback bug fix (Paystack double-reference), callback + receipt UI redesign, worker started (11 emails sent to Mailpit), and two open bugs found — receipt rate-limited and missing checkout link in "payment started" email. See details below.
 
-### What was done this session
+### What was built (sessions 20–21), and why
 
-| Area | Change / result | Where |
-| --- | --- | --- |
-| Restart confirmed | After the owner restarted `next dev`, an unsigned POST to the webhook route returned 401 `missing_signature` (not `paystack_not_configured`). A signed real-shape probe body with a non-existent well-formed reference returned 200 `unknown_reference` — proof that the `identityFrom` fix is live. | ngrok + `/api/webhooks/paystack` |
-| Webhook-before-redirect (B) | Sent a signed, real-shape `charge.success` webhook body for B's reference. The route verified the signature, parsed the subject, called `confirmPayment(B)`, which asked Paystack to verify, recorded T1 (`card` / `succeeded`, fee 1950 kobo), captured T2. Result: `200 captured`; one contribution (₦1,300 / 1950 fee, basis `reported`, `applied`); B now `completed`. B's callback page was never visited. | local DB (B's attempt + contribution) |
-| Resend from dashboard — A | Sent a second signed webhook for A (A was already `completed` via its callback in session 17). Result: `200 captured`; still one contribution; still one `provider_transactions` row (content-hash dedup). Proves redirect-first + late webhook, and resend idempotency on an already-completed attempt. | local DB |
-| Resend from dashboard — B | Sent a second signed webhook for B (already completed via its webhook). Same result: `200 captured`; still one contribution; still one `provider_transactions` row. | local DB |
-| Declined-card runner, third attempt | `sbx-declined2` runner started for `s3-card-declined` only. Waiting for the owner to pay with Paystack's DECLINED test card. Deadline about 15:27 UTC. | runner workdir `sbx-declined2` |
+| Area | What | Why | Where |
+| --- | --- | --- | --- |
+| Payment events → audit → queue | New trigger `payment_attempts_audit_transition` writes `payment.initialized` (created → initialized) and `payment.failed` (initialized → failed / expired). `payment.captured` and `payment.needs_review` were already audited by T2. All four joined the notification trigger's `c_watched` (not suppressible). An attempt that never reached a checkout (refused / unanswered initialize) produces no event. | Plan §4.7 step 8: receipts go through the notification outbox, never an HTTP hop (legacy L2/L7). A trigger avoids re-creating the large payment functions. | `supabase/migrations/20261116100000_payment_notifications_receipt_fee_alarm.sql` |
+| Policy | The four payment events are **essential** (transaction message about the recipient's own payment, sent to the address they typed for it). The `payment` category (targeted "you still owe" reminders) is **unchanged and still blocked** until payment attribution is approved (M13.3 R0 decision 7). Same rows added to the SQL map `app.communication_category_for_event`. New email fan-out kind `payer`. | Receipts must always send; they are not reminders. | `apps/worker/src/communication-policy.ts`, migration §1c |
+| Worker: payer emails | `notification-payment.ts`: for each payment event, one notification event (payload: names, slugs, KLK reference, amounts as kobo digit strings, payer name — never the address) and **one** email delivery to the payer's address (`unverified_supplied`, `transactional`, `essential`, dedupe `receipt:` / `payment_started:` / `payment_review:` / `payment_failed:` + attempt id). Facts come from new SECURITY DEFINER `app.payment_notification_context(uuid)`; feature-detected, so a worker without the grant records the event and writes no email row. Invalid address → `skipped / invalid_recipient_address`. | Payer gets: "payment started", the receipt, "received, under review", "not completed". | `apps/worker/src/notification-payment.ts`, `notification-processor.ts` (branch before the member path) |
+| Email templates | Four payer templates (HTML + text, all values escaped, naira from integer kobo). Receipt lists contribution, processing fee, Kolekto fee (only when the contributor paid fees), total, date, channel, reference, and links to the receipt page. "Failed" never claims money was taken; "started" says no money is taken unless completed. | | `apps/worker/src/notification-email-templates.ts` |
+| Receipt read | `app.payment_receipt(reference)` → jsonb for **completed** payments only; email masked (`a***@domain`), phone never returned; lines by tier/item name. Server connection only (revoked from anon/authenticated + session guard). | The KLK reference (128 random bits) is the bearer secret; the payer holds it via the Paystack redirect and the receipt email. | migration §3, `packages/db/src/payments.ts` `getPaymentReceipt` |
+| Callback page | On `completed` shows the receipt inline with **Download receipt (PDF)**. On `pending` polls every 3 s up to ~60 s (plan §5.9), then "not confirmed yet — we will email your receipt; do not pay again". Heading texts unchanged so existing E2E stays valid. | Owner request: the page loads the receipt after a successful Paystack payment. | `apps/web/app/[communitySlug]/[collectionSlug]/payment/callback/*` |
+| Receipt page + PDF | `/{community}/{collection}/payment/receipt?reference=KLK-…` (DB read only, never calls Paystack; 404 unless completed and the slugs are the payment's own; `noindex`). PDF at `…/payment/receipt/pdf?reference=…` (pdf-lib + embedded DejaVu, `Cache-Control: private, no-store`). One formatter (`receipt-format.ts`) feeds page, PDF and tests, so they cannot disagree. | | `apps/web/app/[communitySlug]/[collectionSlug]/payment/receipt/*`, `apps/web/lib/payments/receipt*.ts`, `apps/web/lib/pdf/receipt.ts` (`drawable`/`loadFont` now exported from `report.ts`) |
+| Middleware: public receipt | Added `receipt` to `PUBLIC_PAYMENT_PAGES` and the 5-segment `receipt/pdf` path to `isPublicPaymentPath`. Without this the receipt and PDF redirected to login — wrong, because the contributor has no account; the KLK reference is the bearer secret. | Session 21 fix: a contributor following the receipt email link or the callback "Download PDF" was bounced to login. | `apps/web/lib/supabase/middleware.ts`, `middleware.test.ts` |
+| **M8.7 alarm 1** | `app.payment_fee_alarms(since)` over **real contributions** with `provider_fee_basis = 'reported'`: `provider_fee_exceeds_fee_charged` (reported fee > total fees Kolekto charged — a loss, **critical**) and `provider_fee_exceeds_estimate` (reported fee > attempt's internal 1% estimate — the sandbox's 1.5% card, **warning**), with `overrun_kobo`. Estimated fees never alarm. Worker checks every 15 min over a 24 h window and logs one `{"msg":"payment_fee_alarm",…}` line per alarm kind (counts and kobo totals only; no reference/name/email). Runs only where the role may execute the function. | Alarm on actual money, not on estimates. On today's D-28 schedule (2% charged), a 1.5% card fee fires the **warning** only; a **critical** needs a provider fee above 2%. | migration §4, `apps/worker/src/payment-fee-alarm.ts`, `apps/worker/src/index.ts` |
+| itest | `app.payment_notification_context(uuid)` added to the itest worker role's grants. | Mirrors the production grant the worker needs. | `scripts/itest/itest.mjs` |
 
-**§9 sandbox matrix — status**
+### Verification (sessions 20–21)
 
-| Row | Result | Evidence |
-| --- | --- | --- |
-| Card success | **Pass** (sessions 16 + 17, 3 card payments) | Session 16: two through the runner. Session 17: one through the web app's callback (A). Session 18: B through the webhook. |
-| Declined card | **Not run** | Runner is up; waiting on payment. |
-| Bank transfer | **Pass** (6 payments) | Session 13 (×4 through T1/T2) + session 15 (×2 verify-only). |
-| `fees` field present (PA-05) | **Pass** on every success | 1.5% on card (1800 kobo for ₦1,200; 1950 for ₦1,300); 1% on transfer. Stored as `provider_fee_kobo`, basis `reported`; `null` on `abandoned` / `ongoing`. |
-| Abandoned checkout | **Pass under the old rule**; new rule covered by pgTAP 54, integration test, live fake check | Session 14. |
-| Payment still in flight | **Pass** (session 13) | |
-| Idempotent confirm | **Pass** (sessions 13, 16); **Pass** this session on the webhook path | A and B each got a second signed webhook after being completed → `captured`, no new contribution, no new `provider_transactions` row. |
-| Obligation on capture with real Paystack | **Pass** (session 13) | |
-| **Redirect first, late webhook** | **Pass** (this session, A) | A captured through the callback (session 17); its late signed webhook acked `captured` with no second write. |
-| **Webhook before redirect** | **Pass** (this session, B) | B captured through the webhook (callback never ran); contribution and T1 row match the usual shape. |
-| **Resend from dashboard** | **Pass** (this session, A and B) | Second signed webhooks on already-completed attempts: `captured`, no new rows. |
-| Reverse | **Not run** | Refund subsystem deferred (M8.10+). |
-| Subaccount split (PA-06), settlement timing (PA-04) | **Not run** | No subaccount wiring (O-1/O-4); settlement not observable in test mode. |
+- Typecheck: `tsc --build` (all packages + web + worker) clean; `apps/web` `tsc --noEmit` clean.
+- Worker unit: **794/794** (new `notification-payment.test.ts`: policy, dedupe, payload never carries the address, templates, fee-alarm summary). Policy/rules/parity tests updated for the four new events.
+- Web unit (vitest): **201/201** (new `receipt-format.test.ts` + new middleware receipt/PDF assertions). Payments 8/8, db 6/6.
+- Invariants **7/7** (watched list = worker list). Lint 0 errors (1 old warning).
+- **itest:** `itest:reset` replayed all 131 migrations; **pgTAP 57/57 files** green including new **55** (25 assertions: audits + queue, no event for a never-initialized attempt, essential map, receipt redaction/state, notification context, fee alarms by kind and overrun, no client EXECUTE) and 52–54 unchanged. Worker integration lane (no SMTP) **49/49**, including a new case: real checkout → capture → audit rows → `processNotificationMessage` twice → exactly two pending payer emails with the right dedupe keys, no address in the payload, receipt link rendered, `payment_receipt` readable.
+- **Local dev DB:** migration `20261116100000` applied. **Browser verified** on `localhost:3001`:
+  - Receipt page (`/the-big-one/open-test/payment/receipt?reference=KLK-…`): renders with all fields (reference, date, payer, masked email, channel, item lines, fee breakdown, total, download link). Wrong-collection slug returns 404.
+  - Receipt PDF (`/…/payment/receipt/pdf?reference=…`): HTTP 200, `application/pdf`, 20 KB, starts with `%PDF-1.7`.
+  - Callback page (`/…/payment/callback?reference=…`): polls, then shows "Payment Successful" with the full receipt inline and the PDF download link. Zero console errors.
+  - Invalid/bad reference: 404 on both receipt page and PDF.
+- E2E spec updated (`tests/e2e/payments.spec.ts`: receipt reference visible, PDF link returns `application/pdf` starting `%PDF-`) but **not run**.
 
-**How the webhook rows were driven.** A signed POST to the local `/api/webhooks/paystack`, built with the **local** webhook secret from `.env.local` — the same secret Paystack signs with for this test integration — carrying a minimal real-shape body (`event`, `data.id`, `data.reference`). The route's own signature check and `identityFrom` parsing run; the actual money state comes from `confirmPayment` calling Paystack's verify API, not from anything in the body. (The 26 queued Paystack retries will land the same way when they arrive.) This method prints only HTTP status and our enum `code`/`outcome`; no secret, no signature, no header, no body is logged.
+**Not verified yet:** Playwright E2E; a real email send (SMTP / Mailpit lane); the worker-role (least-privilege) path end to end — the integration case runs on the owner connection; the itest grant is in place but not exercised by a test.
 
-**Verification this session:** three live webhook captures via the local route; database reads only; adapters 205/205 (unchanged from session 17); typechecks clean; invariants 7/7; lint 0 errors (1 old warning).
+### Declined card §9 row
+
+Runner `sbx-declined3` timed out at ~09:49 UTC without payment; it rolled back. The row remains **open and optional**. To fill it: rerun `paystack-sandbox.ts` for `s3-card-declined` only, pay with the DECLINED card 4084 0800 0000 5408 / CVV 001, and record whether Paystack verifies it as `failed` or `abandoned`.
+
+### Things to flag (decisions / risks)
+
+- **Initiation email can be aimed at any address.** Anyone can start a checkout with someone else's email; if Paystack initializes it, that address gets one "payment started" email per checkout. The per-address send limit (L1 in `reserve_email_attempt`) and the suppression list still apply. If this is unwanted, drop `payment.initialized` from the watched list (one line in the trigger + worker list).
+- **Payment emails are classified essential.** This is a classification choice made in this session for the payer's own transaction messages; it does not unblock "you still owe" reminders. Worth a line in the decision register.
+- **Callback polling** makes up to 20 verify calls per page load while pending. Callback rate limiting is still open.
+- **Production grant:** the worker role needs `grant execute on function app.payment_notification_context(uuid) to <worker role>`; the fee alarm needs an owner-equivalent role (like the payment sweep). Without them the worker logs `payment_fee_alarm_state enabled:false` and writes no payment email rows.
 
 ### Still open
 
-- **Owner: pay the declined card** on `https://checkout.paystack.com/xedu5s4ulwptd5o` with 4084 0800 0000 5408 / CVV 001 before about 15:27 UTC, so we learn whether Paystack verifies a declined card as `failed` or `abandoned`. Then I confirm the runner and record the row.
-- **Uncommitted:** sessions 14–18 — one new migration, pgTAP 54, `apps/worker/test/sandbox/paystack-sandbox.ts`, plus edits to callback, provider-factory, next.config, adapters + tests, integration test, E2E spec, pgTAP 52, `scripts/itest/itest.mjs`, status doc. **Needs the owner's go-ahead.**
-- **No PR** to `main` for `6f75f48`..HEAD. PR #32 landed on `m13.1-notification-foundation`, not `main`.
-- **Decisions for the owner:** the card fee estimate gap for M8.7 (actual 1.5% vs estimated 1%); Paystack rejects `.test` emails at initialize (the contributor sees "payment could not be started"); "30 minutes" hard-coded in the callback copy.
-- **Unchanged / deferred:** reversed row; obligation-on-capture scope; `selected_members`; `financial_events`; subaccounts (O-1/O-4); callback rate limiting; sweep index; old E2E data in the dev DB.
+- Commit + PR for `feat/payment-receipts-alarms` (owner go-ahead).
+- Playwright E2E run and SMTP integration lane (`--with-smtp`) for a receipt email in Mailpit.
+- Declined-card §9 row (optional, see above).
+- M8.7: remaining alarms (`needs_review` depth, unprocessed events age, stuck `created`, ledger imbalance, "contributor emails rejected at initialize").
+- "30 minutes" still hard-coded in the callback copy (`payment_limits.hold_minutes`).
+- Unchanged / deferred: `financial_events` table writer (webhook body persisted before ack, plan §4.6), reversed row, subaccounts (O-1/O-4), refunds, callback rate limiting, sweep index, old E2E data in the local DB, obligation-on-capture scope, `selected_members`.
+
+### Session 22 changes
+
+| Area | What | Why | Where |
+| --- | --- | --- | --- |
+| Callback bug fix | Removed `?reference=` from the callback URL the orchestrator sends to Paystack during `initialize()`. Paystack adds `?trxref=REF&reference=REF` on redirect automatically; the extra param produced duplicate `reference` keys, which Next.js returns as `string[]`, failing `verifyPaymentAction`. Added array-safe handling in `page.tsx` as defense-in-depth. Updated fake-checkout to add `trxref`/`reference` params on redirect. | Root cause of "This payment could not be found" after Paystack checkout. | `packages/payments/src/orchestrator.ts` (line 183), `apps/web/app/[…]/payment/callback/page.tsx`, `apps/web/app/[…]/payment/fake-checkout/actions.ts` |
+| Callback + receipt UI redesign | Rewrote `PaymentCallback.tsx`: card layout, status icons (spinner, check, warning, error, clock), design tokens, "Secured by Kolekto" footer. Polished `ReceiptView.tsx`: check badge, download icon, tabular-nums. Updated `receipt/page.tsx` wrapper to match. | Owner request: "make it look nice." | `apps/web/app/[…]/payment/callback/PaymentCallback.tsx`, `apps/web/app/[…]/payment/ReceiptView.tsx`, `apps/web/app/[…]/payment/receipt/page.tsx` |
+| Worker started | Worker `.env.local` already existed. Built and started the worker; it drained 17 queued messages (old ones skipped, payment events processed) and sent 11 emails to Mailpit (receipts, "payment started", "payment not completed", collection announcements). | Emails were not sending because the worker process was not running. | `apps/worker/` (no code changes, just ran it) |
+
+### Bugs found (session 22, NOT yet fixed)
+
+1. **Receipt email rate-limited (L1).** The per-address rate limit L1 = 3/address/24h in `app.reserve_email_attempt` (migration `20261013200000`) does not exempt `communication_category = 'essential'`. When a user makes two payments, the receipt for the second one is skipped (`recipient_rate_limited`). Confirmed in DB: delivery for `payment.captured` to `gazalsa@dkd.com` has `status = 'skipped', error_code = 'recipient_rate_limited'`. **Fix:** new migration to skip the L1 address check when `v_delivery.communication_category = 'essential'` in `app.reserve_email_attempt`.
+
+2. **No checkout link in "payment started" email.** The `payment.initialized` template in `notification-email-templates.ts` has no CTA link (unlike receipt → receipt page, failed → collection page). The user wants the Paystack checkout URL attached. **Fix:** (a) add `authorization_url` to `app.payment_notification_context` DB function (new migration), (b) add to `PaymentContextRow` and `buildPaymentPayload` in `notification-payment.ts`, (c) add a CTA link in the `payment.initialized` case of `renderPaymentEmail`. The URL is already stored on `payment_attempts.provider_meta->>'authorization_url'` (or similar — check the column).
 
 ### Next thing to do
 
-1. When the owner has paid the declined card: confirm the runner (`confirm-s3-card-declined`, then `finish`) and record `failed` vs `abandoned`.
-2. Owner go-ahead → commit sessions 14–18 and open a PR to `main`; check CI (pgTAP 53 and 54, E2E "cancelled payment" expecting Payment Pending).
-3. M8.7 alarms: start with "actual Paystack fee > fee charged" (card gap gives first real numbers), then "contributor emails rejected at initialize" count.
+1. **Fix the two email bugs above** (rate limit exemption + checkout link).
+2. Run tests (worker unit, web unit, pgTAP) to confirm the fixes.
+3. Commit atomically and open a PR to `main`.
+4. Run the Playwright payments spec and the SMTP integration lane.
 
 ### Prompt for the next session (copy and paste)
 
 ```
-Continue payments on branch feat/payments-foundation. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
+Continue payments on branch feat/payment-receipts-alarms (sessions 20–22 work is UNCOMMITTED). First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first".
 
-1. Declined card: if the sbx-declined2 runner has results, record the row in §9 (noting failed vs abandoned). Otherwise rerun the runner for s3-card-declined only and ask the owner to pay with the DECLINED test card.
-2. Owner go-ahead → commit sessions 14–18 and open a PR to main. Then check CI — pgTAP 53 and 54 must run, and the E2E "cancelled payment" test now expects Payment Pending. If a supabase port 54322 flake recurs on an E2E shard, `gh run rerun --failed`; otherwise diagnose from logs without raising timeouts or weakening assertions.
-3. Then M8.7 alarms, starting with "actual Paystack fee > fee charged" (card 1.5% vs estimate 1%).
-4. At stop, replace this doc's "Latest report" section with what you built, why, what is still open, the next thing to do, and the next prompt.
+Two email bugs to fix:
 
-Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 `COLLECTION_IMPORTED` guard. Do not change `selected_members` semantics or extend obligation-on-capture to open-amount/tiers/items without a separate owner decision. Any obligation-creation path must preserve CASH-02 / SEC-20a (`block_manual_paid_status` guards INSERT and UPDATE: 'paid' only when a matching applied contribution exists). Keep the abandoned-waits-for-hold rule (20261114110000): `abandoned` inside the hold is pending; after the hold it is failed / provider_abandoned. Keep the webhook event-id fix (session 17): read `data.id` when no top-level `id` is present.
+1. Receipt email rate-limited: app.reserve_email_attempt (migration 20261013200000) skips payment receipts via L1 (3/address/24h) even though they are communication_category = 'essential'. Write a new migration that makes reserve_email_attempt skip the L1 address check when the delivery's communication_category = 'essential'. The existing function is in 20261013200000 and was updated in 20261109100200_m13_3_send_time_recheck.sql. Update worker tests if needed.
+
+2. "Payment started" email has no checkout link: the payment.initialized template in apps/worker/src/notification-email-templates.ts (line ~502) sets no link. Add the Paystack authorization_url as a CTA. This requires: (a) adding authorization_url to app.payment_notification_context (new migration or extend 20261116100000); (b) adding it to PaymentContextRow and buildPaymentPayload in notification-payment.ts; (c) adding a CTA link in the payment.initialized case of renderPaymentEmail. Check payment_attempts for the column name that stores the Paystack authorization URL.
+
+After fixing both:
+3. Build the worker (npm run build in apps/worker), start it, make a test payment on the local Paystack sandbox, and confirm both the "payment started" email (with checkout link) and the receipt email arrive in Mailpit (http://127.0.0.1:54324).
+4. Run worker unit tests (794+), web unit tests (201+), pgTAP, typecheck.
+5. Ask the owner before committing. Then commit atomically and open a PR to main.
+6. At stop, replace this doc's "Latest report" section with what you built, why, what is still open, the next thing to do, and the next prompt.
+
+Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never remove the F5 COLLECTION_IMPORTED guard. Do not change selected_members semantics or extend obligation-on-capture to open-amount/tiers/items without a separate owner decision. Any obligation-creation path must preserve CASH-02 / SEC-20a (block_manual_paid_status guards INSERT and UPDATE: 'paid' only when a matching applied contribution exists). Keep the abandoned-waits-for-hold rule (20261114110000). Keep the webhook event-id fix (771a1a0). Keep payment emails essential and the payment (reminder) category blocked unless the owner decides otherwise.
 ```
 
 ---

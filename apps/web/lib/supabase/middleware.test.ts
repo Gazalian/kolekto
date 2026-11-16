@@ -116,11 +116,19 @@ describe("isPublicPaymentPath", () => {
     expect(isPublicPath("/lagos-alumni/annual-dues/payment/callback")).toBe(true);
   });
 
+  it("accepts the receipt page and the receipt PDF download", () => {
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/receipt")).toBe(true);
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/receipt/pdf")).toBe(true);
+    expect(isPublicPath("/lagos-alumni/annual-dues/payment/receipt")).toBe(true);
+    expect(isPublicPath("/lagos-alumni/annual-dues/payment/receipt/pdf")).toBe(true);
+  });
+
   it("rejects any other page, depth or app segment", () => {
     expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment")).toBe(false);
     expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/admin")).toBe(false);
     expect(isPublicPaymentPath("/lagos-alumni/annual-dues/settings/callback")).toBe(false);
     expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/callback/extra")).toBe(false);
+    expect(isPublicPaymentPath("/lagos-alumni/annual-dues/payment/receipt/extra")).toBe(false);
     expect(isPublicPaymentPath("/c/annual-dues/payment/callback")).toBe(false);
     expect(isPublicPaymentPath("/api/x/payment/callback")).toBe(false);
   });

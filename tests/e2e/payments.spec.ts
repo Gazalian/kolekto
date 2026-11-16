@@ -140,6 +140,15 @@ for (const name of FLOW_NAMES) {
     await expect(page).toHaveURL(new RegExp(`/payment/callback\\?reference=${reference}$`));
     await expect(page.getByRole("heading", { name: "Payment Successful" })).toBeVisible();
 
+    // The receipt shows on the page and downloads as a PDF (20261116100000).
+    await expect(page.getByText(reference, { exact: true })).toBeVisible();
+    const download = page.getByRole("link", { name: "Download receipt (PDF)" });
+    await expect(download).toBeVisible();
+    const pdf = await page.request.get((await download.getAttribute("href"))!);
+    expect(pdf.status()).toBe(200);
+    expect(pdf.headers()["content-type"]).toBe("application/pdf");
+    expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+
     const paid = await attemptState(reference);
     expect(paid.status).toBe("completed");
     expect(paid.contributions).toHaveLength(1);

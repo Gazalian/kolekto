@@ -261,3 +261,50 @@ export async function listDuePaymentAttempts(
   );
   return [...rows];
 }
+
+// ── Receipt read (20261116100000) ───────────────────────────────────────────
+
+export interface PaymentReceiptLine {
+  name: string | null;
+  quantity: number;
+  /** Integer kobo as a digit string. */
+  unit_price_kobo: string;
+  amount_kobo: string;
+}
+
+/** A completed payment's receipt. Amounts are integer kobo as digit strings. */
+export interface PaymentReceipt {
+  reference: string;
+  community_name: string;
+  community_slug: string;
+  collection_name: string;
+  collection_slug: string;
+  contributor_name: string;
+  /** a***@example.com — the full address never leaves the database here. */
+  contributor_email_masked: string | null;
+  amount_kobo: string;
+  contribution_kobo: string;
+  platform_fee_kobo: string;
+  gateway_fee_kobo: string;
+  vat_kobo: string;
+  total_fees_kobo: string;
+  fee_bearer: "contributor_pays" | "community_absorbs";
+  /** ISO timestamp. */
+  paid_at: string;
+  channel: string | null;
+  lines: PaymentReceiptLine[];
+}
+
+/**
+ * The receipt for a COMPLETED payment, by its KLK reference; null for any
+ * other state or an unknown reference. Read through app.payment_receipt on
+ * the server's own connection (no client role can call it).
+ */
+export async function getPaymentReceipt(db: PaymentDb, reference: string): Promise<PaymentReceipt | null> {
+  const rows = await call(db, (tx) =>
+    tx<{ receipt: PaymentReceipt | null }[]>`
+      select app.payment_receipt(${reference}) as receipt
+    ` as Promise<{ receipt: PaymentReceipt | null }[]>,
+  );
+  return rows[0]?.receipt ?? null;
+}

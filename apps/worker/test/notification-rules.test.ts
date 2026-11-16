@@ -45,7 +45,7 @@ function msg(patch: Record<string, unknown> = {}): AuditMessage {
 }
 
 describe("the watched actions", () => {
-  it("are exactly the eleven approved ones (M13.3: + remind, remind_unpaid, publish_remind_unpaid, announce_update)", () => {
+  it("are exactly the fifteen approved ones (M13.3: + remind, remind_unpaid, publish_remind_unpaid, announce_update; 20261116: + four payment events)", () => {
     assert.deepEqual(
       [...WATCHED_ACTIONS].sort(),
       [
@@ -60,6 +60,10 @@ describe("the watched actions", () => {
         "member.reject_join",
         "officer_invitation.accept",
         "officer_term.end",
+        "payment.initialized",
+        "payment.captured",
+        "payment.needs_review",
+        "payment.failed",
       ].sort(),
     );
   });
