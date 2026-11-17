@@ -31,6 +31,7 @@ export function CodeSettingsPanel({
   rollCount,
   canConfigure,
   canIssue,
+  referencesLocked,
 }: {
   slug: string;
   collection: Collection;
@@ -40,6 +41,12 @@ export function CodeSettingsPanel({
   rollCount: number;
   canConfigure: boolean;
   canIssue: boolean;
+  /**
+   * The provider has confirmed money for this collection (Phase 7, owner
+   * decision 2026-11-17): references cannot be switched on and the format
+   * cannot change. The database refuses it; this explains it first.
+   */
+  referencesLocked: boolean;
 }) {
   const [enabled, setEnabled] = useState(collection.codes_enabled);
   const [prefix, setPrefix] = useState(settings?.prefix ?? "");
@@ -51,7 +58,7 @@ export function CodeSettingsPanel({
   const [message, setMessage] = useState<{ tone: "danger" | "success"; text: string } | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const locked = issuedCount > 0;
+  const locked = issuedCount > 0 || referencesLocked;
   const example =
     style === "random"
       ? prefix
@@ -117,7 +124,7 @@ export function CodeSettingsPanel({
             type="checkbox"
             className="mt-0.5 h-4 w-4 rounded border-[var(--color-border-strong)]"
             checked={enabled}
-            disabled={!canConfigure}
+            disabled={!canConfigure || (referencesLocked && !collection.codes_enabled)}
             onChange={(event) => setEnabled(event.target.checked)}
           />
           <span>
@@ -214,7 +221,7 @@ export function CodeSettingsPanel({
               </div>
             )}
 
-            {locked && (
+            {issuedCount > 0 && !referencesLocked && (
               <Banner tone="info">
                 {issuedCount} reference{issuedCount === 1 ? " has" : "s have"} been issued, so the format is fixed —
                 they may already be printed on tickets or receipts. You can still switch references off, which only
@@ -222,6 +229,14 @@ export function CodeSettingsPanel({
               </Banner>
             )}
           </>
+        )}
+
+        {referencesLocked && (
+          <Banner tone="info">
+            You can no longer add new contributor references because this collection already has active contributors.
+            This helps preserve the consistency of existing contributor records.
+            {collection.codes_enabled ? " You can still switch references off." : ""}
+          </Banner>
         )}
 
         {message && <Banner tone={message.tone}>{message.text}</Banner>}

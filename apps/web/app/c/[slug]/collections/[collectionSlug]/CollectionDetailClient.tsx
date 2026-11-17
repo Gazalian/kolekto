@@ -44,6 +44,11 @@ import type { ExportFieldChoice } from "./export-fields.ts";
 import type { RollCounts } from "./roll.ts";
 import { CodeSettingsPanel } from "./CodeSettingsPanel.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
+import { FinancialOverview } from "./FinancialOverview.tsx";
+import { ContributorsPanel } from "./ContributorsPanel.tsx";
+import { MoneyPanel } from "./MoneyPanel.tsx";
+import { RemindersPanel } from "./RemindersPanel.tsx";
+import type { ContributorView, OverviewView } from "./contributor-register.ts";
 
 export interface ObligationRow {
   obligation: Obligation;
@@ -64,6 +69,11 @@ export interface CollectionPermissions {
   canExport: boolean;
   canCheckIn: boolean;
   canConfigureCodes: boolean;
+  canAcknowledge: boolean;
+  canViewContact: boolean;
+  /** balance.view: settlement, withdrawals and the ledger. */
+  canViewBalances: boolean;
+  canRequestWithdrawal: boolean;
 }
 
 /** The transitions an officer can reach from here, in the order a person would want them. Mirrors app.transition_collection_status, which is what actually decides. */
@@ -132,6 +142,11 @@ export function CollectionDetailClient({
   codeSettings,
   checkInPeople,
   checkInTotals,
+  overview,
+  contributorFirstPage,
+  contributorTotal,
+  referencesLocked,
+  loadedAt,
   permissions,
 }: {
   slug: string;
@@ -155,6 +170,13 @@ export function CollectionDetailClient({
   codeSettings: CollectionCodeSettings | null;
   checkInPeople: CheckInPerson[];
   checkInTotals: { expected: number; inside: number; left: number; notArrived: number };
+  /** Null when this officer may not see payments on this collection. */
+  overview: OverviewView | null;
+  contributorFirstPage: ContributorView[];
+  contributorTotal: number;
+  /** Money has been confirmed: no new contributor references (Phase 7). */
+  referencesLocked: boolean;
+  loadedAt: string;
   permissions: CollectionPermissions;
 }) {
   const isManaged = collection.participation_mode === "managed";
@@ -177,6 +199,17 @@ export function CollectionDetailClient({
 
   const tabs = [
     { key: "overview", label: "Overview" },
+    // Who has paid — one register for every type of collection, shown to
+    // officers the database lets read payments here.
+    ...(overview ? [{ key: "contributors", label: "Contributors" }] : []),
+    // Settlement, withdrawals and the ledger, for officers with balance.view.
+    ...(overview && permissions.canViewBalances && collection.status !== "draft"
+      ? [{ key: "money", label: "Money" }]
+      : []),
+    // Reminders go to a member roll, so only a managed, members-only collection has them.
+    ...(overview && isManaged && collection.audience_mode !== "public" && collection.status !== "draft"
+      ? [{ key: "reminders", label: "Reminders" }]
+      : []),
     ...(isManaged ? [{ key: "members", label: rollLabel }] : []),
     ...(isEvent ? [{ key: "checkin", label: "Check-in" }] : []),
     { key: "export", label: "Exports" },
@@ -326,7 +359,8 @@ export function CollectionDetailClient({
 
       {error && <Banner tone="danger">{error}</Banner>}
 
-      <nav className="flex gap-1 border-b border-[var(--color-border)]" aria-label="Collection sections">
+      {/* Scrolls sideways on a phone rather than widening the page. */}
+      <nav className="flex gap-1 overflow-x-auto border-b border-[var(--color-border)] [contain:inline-size]" aria-label="Collection sections">
         {tabs.map((option) => (
           <button
             key={option.key}
@@ -335,8 +369,8 @@ export function CollectionDetailClient({
             aria-current={tab === option.key ? "page" : undefined}
             className={
               tab === option.key
-                ? "-mb-px border-b-2 border-[var(--color-primary)] px-3 py-2 text-sm font-medium text-[var(--color-text)]"
-                : "-mb-px border-b-2 border-transparent px-3 py-2 text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                ? "-mb-px shrink-0 whitespace-nowrap border-b-2 border-[var(--color-primary)] px-3 py-2 text-sm font-medium text-[var(--color-text)]"
+                : "-mb-px shrink-0 whitespace-nowrap border-b-2 border-transparent px-3 py-2 text-sm font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
             }
           >
             {option.label}
@@ -346,13 +380,15 @@ export function CollectionDetailClient({
 
       {tab === "overview" && (
         <div className="flex flex-col gap-4">
-          {/* The honest state of this build. A collection can be configured,
-              published and shared; money cannot move yet (ADR 0006), and no
-              screen here shows an amount received, because none exists. */}
-          <Banner tone="info">
-            Online payment is not switched on yet, so no contribution has been recorded against any collection. What you
-            see here is what this collection asks for, never what has been received.
-          </Banner>
+          {/* What has been received, computed by the database from
+              contributions and the ledger. Absent for an officer who may not
+              see payments here. */}
+          {overview && status !== "draft" && (
+            <FinancialOverview
+              overview={overview}
+              target={collection.target_amount_kobo === null ? null : String(collection.target_amount_kobo)}
+            />
+          )}
 
           {status === "draft" && (
             <Banner tone="info">
@@ -512,6 +548,45 @@ export function CollectionDetailClient({
         </div>
       )}
 
+      {tab === "contributors" && overview && (
+        <ContributorsPanel
+          slug={slug}
+          collectionSlug={collection.slug}
+          fields={fields.map((field) => ({
+            key: field.key,
+            label: field.label,
+            type: field.type,
+            sort_order: field.sort_order,
+          }))}
+          firstPage={contributorFirstPage}
+          firstTotal={contributorTotal}
+          counts={{ contributions: overview.contributionCount, acknowledged: overview.acknowledgedCount }}
+          loadedAt={loadedAt}
+          flags={{
+            hasOptions: collection.amount_model === "tiers" || collection.amount_model === "items",
+            isEvent,
+            isRecurring,
+            isManaged,
+          }}
+          permissions={{
+            canAcknowledge: permissions.canAcknowledge,
+            canExport: permissions.canExport,
+            canViewContact: permissions.canViewContact,
+          }}
+        />
+      )}
+
+      {tab === "money" && overview && (
+        <MoneyPanel
+          slug={slug}
+          collectionSlug={collection.slug}
+          availableKobo={overview.availableKobo ?? "0"}
+          canRequestWithdrawal={permissions.canRequestWithdrawal}
+        />
+      )}
+
+      {tab === "reminders" && <RemindersPanel slug={slug} collectionSlug={collection.slug} />}
+
       {tab === "members" && (
         <ObligationsPanel
           slug={slug}
@@ -590,6 +665,7 @@ export function CollectionDetailClient({
               rollCount={rollCounts.all}
               canConfigure={permissions.canConfigureCodes}
               canIssue={permissions.canAssign}
+              referencesLocked={referencesLocked}
             />
           )}
           <SettingsPanel

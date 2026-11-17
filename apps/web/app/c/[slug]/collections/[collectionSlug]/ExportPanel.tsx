@@ -213,8 +213,8 @@ export function ExportPanel({
           {/* Part AI, said out loud rather than left to be discovered: the
               things a host might expect to find here and will not. */}
           <p className="rounded-[var(--radius-md)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text-muted)]">
-            There is no contributions or payments report yet. Online payment is not switched on, so nothing has been
-            received against any collection, and a file of empty amount columns would read as though nobody had paid.
+            These reports show who this collection asks and what they were asked for, never what has been received. To
+            export who has paid and how much, use Export on the Contributors tab.
           </p>
         </CardBody>
       </Card>

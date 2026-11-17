@@ -20,6 +20,10 @@ import { requireCallerContext } from "../../../../../lib/caller.ts";
  * control.
  */
 
+/** Phase 7 (owner decision 2026-11-17): enforced by the database, explained here. */
+const REFERENCES_LOCKED_MESSAGE =
+  "You can no longer add new contributor references because this collection already has active contributors. This helps preserve the consistency of existing contributor records.";
+
 export interface CodeSettingsResult {
   error?: string;
   ok?: boolean;
@@ -54,6 +58,9 @@ export async function saveCodeSettingsAction(
   try {
     await setCollectionCodeSettings(caller, input);
   } catch (error) {
+    if (error instanceof DatabaseError && error.code === "CONTRIBUTOR_REFERENCES_LOCKED") {
+      return { error: REFERENCES_LOCKED_MESSAGE };
+    }
     return { error: error instanceof DatabaseError ? error.message : "That could not be saved" };
   }
 
