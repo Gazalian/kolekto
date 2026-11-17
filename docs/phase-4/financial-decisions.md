@@ -650,3 +650,26 @@ exists); behaviour as recommended.**
   that closes a fundraiser when it crosses its target.
 - The Paystack adapter, webhook receiver and provider-event worker (M8.9),
   gated on a new Paystack test account and a public staging URL.
+
+## 17 · Decisions of 2026-11-17 (owner)
+
+Built uncommitted on `feat/payment-receipts-alarms`; design and runbook in
+`docs/product/COLLECTION-LEDGER-SETTLEMENT-WITHDRAWALS-REMINDERS.md`.
+
+- **Withdrawals: ledger + database lifecycle.** A `withdrawals` table; the
+  request locks the collection's available balance and holds the amount with a
+  journal; the community owner approves (or rejects with a reason); operations
+  pays out by hand and marks it paid or failed (failure releases the hold). No
+  Paystack Transfers, no saved bank-account screen. The first withdrawal per
+  collection is free; later ones are refused until O-2 fee brackets exist.
+- **Settlement: require provider confirmation.** T+1 05:00 Africa/Lagos per
+  D-09, but a payment moves from pending to available only after the provider's
+  settlement for it is recorded. Late provider settlement keeps it pending; an
+  amount mismatch is held as a discrepancy and audited.
+- **Contributor references: lock on first applied contribution.** After that,
+  references cannot be switched on and the format (prefix, separator, digits,
+  start number, tier prefixes) cannot change. Switching off stays allowed.
+- **Payment reminders: email + in-app.** Organiser-initiated only, to members
+  with no applied contribution; in-app to linked accounts, email to the roll
+  address honouring opt-out, the community notice and `email_sending_enabled`;
+  24-hour per-member cooldown; never automatic.
