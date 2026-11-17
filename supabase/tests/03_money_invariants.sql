@@ -110,7 +110,13 @@ select is_empty(
       -- it only after inserting the contribution that block_manual_paid_status
       -- requires; and create_payment_attempt, which only READS the status to
       -- refuse paying twice. Behaviour is decided in 52_payments.sql.
-      and p.proname not in ('block_manual_paid_status', 'complete_payment_capture', 'create_payment_attempt')
+      -- 2026-11-17: complete_withdrawal sets a WITHDRAWAL to paid (decided in
+      -- 58_withdrawals.sql); the two reconciliation reads and the reminder
+      -- roster only READ paid withdrawals / obligations. None touches an
+      -- obligation's status.
+      and p.proname not in ('block_manual_paid_status', 'complete_payment_capture', 'create_payment_attempt',
+                            'complete_withdrawal', 'collection_reconciliation_checks', 'platform_reconciliation',
+                            'payment_reminder_member_state')
     order by 1
   $$,
   'no function other than the payment capture path sets an obligation to paid — money is the only route (CASH-02, SEC-20a)'

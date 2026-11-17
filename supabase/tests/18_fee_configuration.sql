@@ -17,7 +17,7 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
-select plan(28);
+select plan(29);
 
 -- ── The role matrix ─────────────────────────────────────────────────────────
 --
@@ -269,6 +269,15 @@ reset role;
 -- through app.post_payment_journal. 52_payments.sql decides their behaviour.
 -- Money OUT — wallets, withdrawals, payouts, settlement releases, refunds,
 -- disputes — still has no table and no function, and is still asserted here.
+--
+-- NARROWED A THIRD TIME (owner decisions 2026-11-17; 20261117100100 settlement
+-- lifecycle, 20261117100200 withdrawals). The T+1 settlement release and the
+-- withdrawal lifecycle now exist, each as ONE table and a named set of
+-- functions, decided by 57_settlement_lifecycle.sql and 58_withdrawals.sql.
+-- What is still asserted: no wallet (D-02), no saved withdrawal account, no
+-- separate payout / provider-settlement / balance-release table, no refund or
+-- dispute (D-18/D-31 deferred through launch), and a new money-out table or
+-- function is a failure here until it is added on purpose.
 -- ─────────────────────────────────────────────────────────────────────────────
 
 select is(
@@ -276,34 +285,52 @@ select is(
    where table_schema = 'public'
      and table_name in (
        'payments', 'tickets',
-       'wallets', 'withdrawals', 'withdrawal_accounts', 'payouts',
+       'wallets', 'withdrawal_accounts', 'payouts',
        'settlements', 'provider_settlements', 'balance_releases',
        'refunds', 'disputes', 'holds', 'webhook_events'
      )),
   0,
-  'no wallet, withdrawal, payout, settlement, refund or dispute table exists — M8.3/M8.4 built money in, not money out'
+  'no wallet, saved withdrawal account, payout, refund or dispute table exists'
+);
+
+select set_eq(
+  $$ select table_name::text from information_schema.tables
+     where table_schema = 'public'
+       and (table_name like '%withdraw%' or table_name like '%settle%' or table_name like '%payout%'
+            or table_name like '%refund%' or table_name like '%wallet%') $$,
+  -- withdrawal_fee_schedules / withdrawal_fee_brackets are the fee configuration
+  -- from 20260924100000 (prices, not money movement).
+  $$ values ('withdrawals'), ('contribution_settlements'), ('settlement_schedules'),
+            ('withdrawal_fee_schedules'), ('withdrawal_fee_brackets') $$,
+  'money out has exactly the approved tables: withdrawals, contribution_settlements, settlement_schedules (2026-11-17), plus the 2026-09 withdrawal fee configuration'
 );
 
 -- D-02/ADR 0015: there is no community wallet, under any name, ever.
 select hasnt_column('public', 'communities', 'balance_kobo',
   'a community carries no balance (D-02): financial ownership is the collection, and a community wallet is forbidden rather than merely absent');
 
-select is(
-  (select count(*)::integer from pg_proc p
-   join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'app'
-     and (p.proname like '%payout%'
-          or p.proname like '%withdraw%' or p.proname like '%settle%'
-          or p.proname like '%refund%')),
-  0,
-  'and no app.* function settles, withdraws, pays out or refunds'
+select set_eq(
+  $$ select p.proname::text from pg_proc p
+     join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'app'
+       and (p.proname like '%payout%'
+            or p.proname like '%withdraw%' or p.proname like '%settle%'
+            or p.proname like '%refund%') $$,
+  $$ values
+       ('block_settlement_schedule_mutation'), ('collection_settlement_summary'), ('collection_withdrawals'),
+       ('complete_withdrawal'), ('decide_withdrawal'), ('fail_withdrawal'), ('guard_contribution_settlement'),
+       ('guard_withdrawal'), ('mark_withdrawal_processing'), ('record_provider_settlement'),
+       ('release_due_settlements'), ('release_withdrawal_hold'), ('request_withdrawal'),
+       ('schedule_contribution_settlement'), ('settlement_due_at'), ('settlement_schedule_version_at') $$,
+  'the app.* functions that settle, withdraw or pay out are exactly the approved set, and none refunds'
 );
 
 -- The ledger's writers, named. Every writer is an app.* SECURITY DEFINER
 -- function in a reviewed migration, and a new one is a failure here until it is
 -- added on purpose. Today: the capture path's journal poster and the account
--- provisioner it uses (20261111100100). Release, withdrawal and payout writers
--- are later milestones.
+-- provisioner it uses (20261111100100), and app.post_ledger_journal
+-- (20261117100200), the actor-recording poster used by withdrawal holds,
+-- releases and payouts.
 select set_eq(
   $$
     select n.nspname || '.' || p.proname
@@ -312,8 +339,8 @@ select set_eq(
     where n.nspname in ('public', 'app', 'private')
       and p.prosrc ~* 'insert\s+into\s+public\.ledger_'
   $$,
-  $$ values ('app.post_payment_journal'), ('app.ensure_ledger_account') $$,
-  'only the payment capture path writes the ledger — app.post_payment_journal and app.ensure_ledger_account, nothing else'
+  $$ values ('app.post_payment_journal'), ('app.ensure_ledger_account'), ('app.post_ledger_journal') $$,
+  'the ledger has exactly three writers — app.post_payment_journal, app.post_ledger_journal and app.ensure_ledger_account'
 );
 
 select is(

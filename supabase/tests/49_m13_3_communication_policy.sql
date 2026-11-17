@@ -125,17 +125,18 @@ select results_eq(
     ('marketing',             '-', 'in_app',   'disabled',   'category_not_on_channel'),
     ('marketing',             '-', 'sms',      'disabled',   'channel_disabled'),
     ('marketing',             '-', 'whatsapp', 'opt_in',     'marketing_consent,whatsapp_permission'),
-    ('payment', 'status',            'email',    'disabled', 'payment_attribution_unavailable'),
-    ('payment', 'status',            'in_app',   'disabled', 'payment_attribution_unavailable'),
-    ('payment', 'status',            'sms',      'disabled', 'payment_attribution_unavailable'),
-    ('payment', 'status',            'whatsapp', 'disabled', 'payment_attribution_unavailable'),
-    ('payment', 'targeted_reminder', 'email',    'disabled', 'payment_attribution_unavailable'),
-    ('payment', 'targeted_reminder', 'in_app',   'disabled', 'payment_attribution_unavailable'),
-    ('payment', 'targeted_reminder', 'sms',      'disabled', 'payment_attribution_unavailable'),
-    ('payment', 'targeted_reminder', 'whatsapp', 'disabled', 'payment_attribution_unavailable')
+    -- Payment attribution switched on by 20261117100500 (owner decision 2026-11-17).
+    ('payment', 'status',            'email',    'always',     '-'),
+    ('payment', 'status',            'in_app',   'always',     '-'),
+    ('payment', 'status',            'sms',      'disabled',   'channel_disabled'),
+    ('payment', 'status',            'whatsapp', 'opt_in',     'whatsapp_permission'),
+    ('payment', 'targeted_reminder', 'email',    'default_on', 'community_notice'),
+    ('payment', 'targeted_reminder', 'in_app',   'always',     '-'),
+    ('payment', 'targeted_reminder', 'sms',      'disabled',   'channel_disabled'),
+    ('payment', 'targeted_reminder', 'whatsapp', 'opt_in',     'whatsapp_permission')
   $$,
   'B: every category × channel cell matches the approved policy (and the worker)');
-select is((select requirement || ':' || detail from app.communication_requirement('payment', 'email')), 'disabled:payment_attribution_unavailable', 'B: a payment communication with no purpose is a blocked targeted reminder');
+select is((select requirement || ':' || detail from app.communication_requirement('payment', 'email')), 'default_on:community_notice', 'B: a payment communication with no purpose is a targeted reminder (default-on, community notice), never essential');
 select throws_ok($$ select * from app.communication_requirement('promotions', 'email') $$, '22023', null, 'B: an unknown category is refused');
 select throws_ok($$ select * from app.communication_requirement('essential', 'pigeon') $$, '22023', null, 'B: an unknown channel is refused');
 select ok(not exists (select 1 from b_matrix where detail like '%marketing_consent%' and cat <> 'marketing'), 'B: only marketing ever requires marketing consent (no universal consent gate)');

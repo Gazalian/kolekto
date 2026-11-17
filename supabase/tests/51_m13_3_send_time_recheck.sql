@@ -154,15 +154,18 @@ select is((select reservation from settled where k = 'ess'), 'granted', 'D: a me
 select is(app.recheck_delivery_eligibility('d3600000-0000-4000-8000-00000000000b'), null, 'D: recheck is NULL for essential');
 
 -- ── E. Payment, unknown and mismatched categories ────────────────────────────
-select is((select error_code from settled where k = 'unpaid'), 'payment_attribution_unavailable', 'E: a payment-targeted reminder stays blocked');
+-- 20261117100500 (owner decision 2026-11-17) switched payment attribution on:
+-- a targeted reminder email is default-on behind the community notice, so this
+-- row now passes the recheck and, like every bulk row, waits on the zero cap.
+select is((select reservation || ':' || coalesce(error_code, '-') from settled where k = 'unpaid'), 'provider_daily_limited:-', 'E: a payment-targeted reminder passes the policy recheck (attested community) and is deferred by the zero bulk cap, not sent');
 select is((select error_code from settled where k = 'unknown'), 'category_unknown', 'E: an unclassified event is not sent (fail closed)');
 select is((select error_code from settled where k = 'mismatch'), 'category_mismatch', 'E: a stored category that disagrees with the event is not sent');
 
 -- ── F. Shape of a settled ineligible row; no re-claim; no double ledger ──────
 select results_eq(
   $$ select count(*)::int from settled where reservation = 'ineligible' and status = 'skipped' and recipient_address is null and send_lease_token is null and attempt_count = 0 and ledger = 0 $$,
-  $$ values (8) $$,
-  'F: all eight ineligible rows are skipped, address erased, lease cleared, attempt undone, no ledger row');
+  $$ values (7) $$,
+  'F: all seven ineligible rows are skipped, address erased, lease cleared, attempt undone, no ledger row');
 select is((select reservation from settled where k = 'ess'), 'granted', 'F: (control) the granted row is the only one with a ledger row');
 select is((select ledger from settled where k = 'ess'), 1, 'F: … exactly one');
 select is((select claimed from app.claim_notification_delivery('d3600000-0000-4000-8000-000000000002', 300)), false, 'F: a row skipped at send time can never be claimed again');
