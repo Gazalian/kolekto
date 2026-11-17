@@ -39,6 +39,10 @@ interface World {
   actorEmail?: { address: string | null; assurance: string | null; skip_reason: string | null };
   /** Publisher notice: whether an email row for the actor's address already exists this event. */
   publisherDup?: boolean;
+  /** Payment reminders: whether app.payment_reminder_batch_recipients is executable. Default: no. */
+  reminderFn?: boolean;
+  /** Payment reminders: canned rows of app.payment_reminder_batch_recipients. */
+  reminderRecipients?: Array<{ member_id: string; user_id: string | null; eligible: boolean; address: string | null; assurance: string | null; skip_reason: string | null; in_app: boolean }>;
 }
 
 function fakeDb(world: World) {
@@ -46,6 +50,13 @@ function fakeDb(world: World) {
   const tx = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const text = strings.join("?").replace(/\s+/g, " ").trim();
     log.push({ text, values });
+    if (text.includes("has_function_privilege") && text.includes("payment_reminder_batch_recipients")) {
+      return [{ ok: world.reminderFn === true }];
+    }
+    if (text.includes("from app.payment_reminder_batch_recipients")) {
+      const rows = world.reminderRecipients ?? [];
+      return text.includes("where r.in_app") ? rows.filter((r) => r.in_app && r.user_id !== null) : rows;
+    }
     if (text.includes("has_function_privilege") && text.includes("evaluate_actor_email")) {
       return [{ available: world.actorEmailFn === true }];
     }
@@ -710,7 +721,7 @@ describe("M13.3 R3: communication_category on new email deliveries", () => {
   });
 });
 
-describe("payment-status targeting is disabled", () => {
+describe("unpaid targeting without a reminder batch tells nobody", () => {
   for (const action of ["collection.publish_remind_unpaid", "collection.remind_unpaid"]) {
     it(`${action}: the event is recorded, nobody is told — no in-app row, no email row, no recipient query`, async () => {
       const { sql, log } = fakeDb({
@@ -718,6 +729,8 @@ describe("payment-status targeting is disabled", () => {
         collection: { name: "D", slug: "d", community_slug: "k" },
         audience: [{ member_id: "m", user_id: "u" }],
         collectionRecipients: [{ member_id: "m", user_id: null, eligible: true, address: "a@example.com", assurance: "unverified_supplied", skip_reason: null }],
+        reminderFn: true,
+        reminderRecipients: [{ member_id: "m", user_id: "u", eligible: true, address: "a@example.com", assurance: "verified_account", skip_reason: null, in_app: true }],
       });
       const out = await processNotificationMessage(sql, message(action, { object_type: "collection" }), NOW);
       assert.deepEqual(out, { outcome: "processed", deliveries: 0, email: { kind: "no_row" } });
@@ -726,8 +739,57 @@ describe("payment-status targeting is disabled", () => {
       assert.ok(!log.some((r) => r.text.includes("from public.obligations")), "obligation status is never used as payment status");
       assert.ok(!log.some((r) => r.text.includes("from app.evaluate_collection_email_recipients")));
       assert.ok(!log.some((r) => r.text.includes("resolve_collection_audience")));
+      assert.ok(!log.some((r) => r.text.includes("from app.payment_reminder_batch_recipients")));
     });
   }
+});
+
+describe("organiser payment reminders (collection.remind_unpaid with a batch)", () => {
+  const BATCH = "a7000000-0000-4000-8000-000000000001";
+  const ROWS = [
+    { member_id: "m1", user_id: null, eligible: true, address: "bisi@example.com", assurance: "unverified_supplied", skip_reason: null, in_app: false },
+    { member_id: "m2", user_id: "u2", eligible: true, address: "lola@example.com", assurance: "verified_account", skip_reason: null, in_app: true },
+    { member_id: "m3", user_id: "u3", eligible: false, address: null, assurance: null, skip_reason: "already_paid", in_app: false },
+    { member_id: "m4", user_id: null, eligible: false, address: null, assurance: null, skip_reason: "opted_out", in_app: false },
+  ];
+  const remind = () => message("collection.remind_unpaid", { object_type: "collection", after_state: { reminder_batch_id: BATCH, member_count: 4 } });
+
+  it("in-app to linked, still-unpaid members; one email row per member: pending or skipped with the database's reason", async () => {
+    const { sql, log } = fakeDb({ collection: { name: "Levy", slug: "levy", community_slug: "k" }, reminderFn: true, reminderRecipients: ROWS, categoryColumn: true });
+    const out = await processNotificationMessage(sql, remind(), NOW);
+    assert.deepEqual(out, { outcome: "processed", deliveries: 1, email: { kind: "collection", pending: 2, skipped: 2 } });
+    assert.deepEqual(inAppRows(log).map((r) => r.values[3]), ["u2"], "only the linked, still-unpaid member is told in-app");
+    const emails = emailRows(log);
+    assert.equal(emails.length, 4);
+    assert.ok(emails.filter((r) => /'pending'/.test(r.text)).every((r) => r.values.includes("bulk") && r.values.includes("payment")), "bulk class, payment category");
+    assert.ok(emails.some((r) => /'skipped'/.test(r.text) && r.values.includes("already_paid")), "paid since the click: skipped");
+    assert.ok(emails.some((r) => /'skipped'/.test(r.text) && r.values.includes("opted_out")));
+    assert.ok(log.some((r) => r.text.includes("from app.payment_reminder_batch_recipients") && r.values.includes(BATCH)), "the batch from the audit row is read");
+    assert.ok(!log.some((r) => r.text.includes("from public.obligations")), "obligation status is never read directly");
+  });
+
+  it("the payload carries collection names and slugs only — no address", async () => {
+    const { sql, log } = fakeDb({ collection: { name: "Levy", slug: "levy", community_slug: "k" }, reminderFn: true, reminderRecipients: ROWS });
+    await processNotificationMessage(sql, remind(), NOW);
+    const p = eventInsert(log)!.payload;
+    assert.equal(p["collection_slug"], "levy");
+    assert.ok(!JSON.stringify(p).includes("@"), "no address in the event payload");
+  });
+
+  it("without the batch function (old database or ungranted role) nothing is delivered and nothing fails", async () => {
+    const { sql, log } = fakeDb({ collection: { name: "Levy", slug: "levy", community_slug: "k" }, reminderFn: false, reminderRecipients: ROWS });
+    const out = await processNotificationMessage(sql, remind(), NOW);
+    assert.deepEqual(out, { outcome: "processed", deliveries: 0, email: { kind: "collection_unavailable" } });
+    assert.equal(deliveryRows(log).length, 0);
+    assert.ok(!log.some((r) => r.text.includes("from app.payment_reminder_batch_recipients")), "never called when not executable");
+  });
+
+  it("a malformed batch id is treated as no batch", async () => {
+    const { sql, log } = fakeDb({ collection: { name: "Levy", slug: "levy", community_slug: "k" }, reminderFn: true, reminderRecipients: ROWS });
+    const out = await processNotificationMessage(sql, message("collection.remind_unpaid", { object_type: "collection", after_state: { reminder_batch_id: "nope" } }), NOW);
+    assert.deepEqual(out, { outcome: "processed", deliveries: 0, email: { kind: "no_row" } });
+    assert.equal(deliveryRows(log).length, 0);
+  });
 });
 
 // ── Publisher notice (collection.publish emails the officer who published) ───

@@ -18,6 +18,9 @@
  *
  * A third, minute-by-minute stage sweeps payment attempts nobody came back
  * for (payment-sweep.ts). Local only until a real provider exists (M8.9).
+ *
+ * A fourth stage releases T+1 settlements that are due and provider-confirmed
+ * (settlement-release.ts), wherever this role may execute the release.
  */
 
 import { createEmailProviderAsync, type EmailProvider } from "@kolekto/adapters";
@@ -27,6 +30,12 @@ import postgres from "postgres";
 import { processNotificationMessage } from "./notification-processor.js";
 import { PAYMENT_SWEEP_INTERVAL_MS, paymentSweepAllowed, sweepLogLine, sweepPaymentAttempts, workerPaymentContext } from "./payment-sweep.ts";
 import { FEE_ALARM_INTERVAL_MS, feeAlarmAllowed, readFeeAlarms, summarizeFeeAlarms } from "./payment-fee-alarm.ts";
+import {
+  SETTLEMENT_RELEASE_INTERVAL_MS,
+  releaseDueSettlements,
+  settlementReleaseAllowed,
+  settlementReleaseLogLine,
+} from "./settlement-release.ts";
 import { getSendLimits } from "./notification-rate-limit.ts";
 import { runSenderTick } from "./notification-sender.ts";
 import { abandonBatch, FAULT_AT_HEADER, FAULT_CODE_HEADER, FAULT_READS_HEADER, handleQueueMessage, PARKED_AT_HEADER, PARKED_REASON_HEADER, PROCESSED_HEADER, type QueueMessage, type QueueOps } from "./queue-disposition.ts";
@@ -245,6 +254,17 @@ async function main() {
     console.error(JSON.stringify({ msg: "payment_fee_alarm_state", enabled: false, reason: "probe_failed", error: safeErrorSummary(err) }));
   }
   let lastFeeAlarm = 0;
+
+  // T+1 settlement release (settlement-release.ts). Never fatal.
+  let settlementRelease = false;
+  try {
+    const decision = await settlementReleaseAllowed(sql);
+    settlementRelease = decision.enabled;
+    console.log(JSON.stringify({ msg: "settlement_release_state", enabled: decision.enabled, ...(decision.enabled ? {} : { reason: decision.reason }) }));
+  } catch (err) {
+    console.error(JSON.stringify({ msg: "settlement_release_state", enabled: false, reason: "probe_failed", error: safeErrorSummary(err) }));
+  }
+  let lastSettlementRelease = 0;
   const pollFailures = new PollFailureTracker();
 
   process.on("SIGINT", () => { running = false; });
@@ -361,6 +381,17 @@ async function main() {
         }
       } catch (err) {
         console.error(JSON.stringify({ msg: "payment_fee_alarm_error", error: safeErrorSummary(err) }));
+      }
+    }
+
+    // ── T+1 settlement release ───────────────────────────────────────────────
+    if (settlementRelease && Date.now() - lastSettlementRelease >= SETTLEMENT_RELEASE_INTERVAL_MS) {
+      lastSettlementRelease = Date.now();
+      try {
+        const line = settlementReleaseLogLine(await releaseDueSettlements(sql));
+        if (line) console.log(JSON.stringify(line));
+      } catch (err) {
+        console.error(JSON.stringify({ msg: "settlement_release_error", error: safeErrorSummary(err) }));
       }
     }
 

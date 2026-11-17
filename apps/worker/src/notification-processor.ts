@@ -43,7 +43,7 @@ import {
   type EligibilitySkipReason,
   type EmailOutcome,
 } from "./notification-eligibility.ts";
-import { eventPolicy, type CommunicationCategory } from "./communication-policy.ts";
+import { eventChannelRequirement, eventPolicy, type CommunicationCategory } from "./communication-policy.ts";
 import { isPaymentAction, processPaymentEvent } from "./notification-payment.ts";
 import {
   admission,
@@ -57,6 +57,7 @@ import {
   parseAnnounceTarget,
   parseAuditMessage,
   parseChangedFields,
+  parseReminderBatchId,
   recipientPlan,
   type AnnounceTarget,
   type AuditMessage,
@@ -184,9 +185,12 @@ export async function processNotificationMessage(
     // MEMBER from the member record (no account needed). Only one of the two
     // evaluations can apply to any action.
     const category = collectionEmailCategory(msg.action);
-    const email = category
-      ? await evaluateCollectionEmail(tx, msg, event.id, category)
-      : await evaluateEmail(tx, msg, facts.recipientHints, event.id);
+    const email =
+      msg.action === "collection.remind_unpaid"
+        ? await evaluatePaymentReminderEmail(tx, msg, event.id)
+        : category
+          ? await evaluateCollectionEmail(tx, msg, event.id, category)
+          : await evaluateEmail(tx, msg, facts.recipientHints, event.id);
 
     // Publisher notice: when a collection is PUBLISHED, email the officer who
     // published it (the actor) at their confirmed account email, as an
@@ -619,6 +623,97 @@ async function evaluateCollectionEmail(
   return { kind: "collection", pending, skipped };
 }
 
+// ── Organiser payment reminders (collection.remind_unpaid) ───────────────────
+
+/**
+ * Whether this connection may read reminder batches. Feature-detected BEFORE
+ * the call: a failed query would abort the whole transaction, and a worker on
+ * a database without 20261117100500 (or a role without the grant) must keep
+ * processing everything else. Without it, reminders produce no deliveries.
+ */
+async function reminderBatchSupport(sql: Db): Promise<boolean> {
+  const [row] = await sql<{ ok: boolean | null }[]>`
+    select coalesce(has_function_privilege(
+      to_regprocedure('app.payment_reminder_batch_recipients(uuid)'), 'execute'), false) as ok
+  `;
+  return row?.ok === true;
+}
+
+interface ReminderRecipientRow {
+  member_id: string;
+  user_id: string | null;
+  eligible: boolean;
+  address: string | null;
+  assurance: string | null;
+  skip_reason: string | null;
+}
+
+const STABLE_CODE = /^[a-z][a-z0-9_]{2,63}$/;
+
+/**
+ * One email delivery per member in the batch: `pending` at the address the
+ * database chose, or `skipped` with its stable reason. The database applies
+ * the facts (still unpaid, in the audience, opt-outs, community notice,
+ * address assurance); the central policy is consulted first so a disabled
+ * cell can never produce a pending row. Category `payment` is stored on each
+ * row so the send-time recheck re-applies the payment policy. Idempotent on
+ * the per-event recipient index.
+ */
+async function evaluatePaymentReminderEmail(sql: Db, msg: AuditMessage, eventId: string): Promise<EmailOutcome> {
+  const batchId = parseReminderBatchId(msg.after_state);
+  // An older notify_target=unpaid row names no members: nothing to evaluate.
+  if (!batchId) return { kind: "no_row" };
+  if (!(await reminderBatchSupport(sql))) return { kind: "collection_unavailable" };
+
+  const requirement = eventChannelRequirement(msg.action, "email");
+  const policyBlock = !requirement ? "category_not_on_channel" : requirement.kind === "disabled" ? requirement.reason : null;
+  const deliveryCategory = await deliveryCategoryFor(sql, msg.action);
+
+  const rows = await sql<ReminderRecipientRow[]>`
+    select member_id, user_id, eligible, address, assurance, skip_reason
+    from app.payment_reminder_batch_recipients(${batchId}::uuid)
+  `;
+
+  let pending = 0;
+  let skipped = 0;
+  for (const r of rows) {
+    const send = policyBlock === null && r.eligible && r.address !== null && r.assurance !== null;
+    if (send) {
+      await sql`
+        insert into public.notification_deliveries (
+          notification_event_id, community_id,
+          recipient_member_id, recipient_user_id,
+          recipient_address, recipient_address_assurance,
+          channel, status, send_class, communication_category
+        ) values (
+          ${eventId}::uuid, ${msg.community_id}::uuid,
+          ${r.member_id}::uuid, ${r.user_id}::uuid,
+          ${r.address}, ${r.assurance},
+          'email', 'pending', ${COLLECTION_EMAIL_SEND_CLASS}, ${deliveryCategory}
+        )
+        on conflict do nothing
+      `;
+      pending += 1;
+    } else {
+      const reason = policyBlock ?? (r.skip_reason && STABLE_CODE.test(r.skip_reason) ? r.skip_reason : "no_recipient");
+      await sql`
+        insert into public.notification_deliveries (
+          notification_event_id, community_id,
+          recipient_member_id, recipient_user_id,
+          channel, status, error_code, send_class, communication_category
+        ) values (
+          ${eventId}::uuid, ${msg.community_id}::uuid,
+          ${r.member_id}::uuid, ${r.user_id}::uuid,
+          'email', 'skipped', ${reason}, ${COLLECTION_EMAIL_SEND_CLASS}, ${deliveryCategory}
+        )
+        on conflict do nothing
+      `;
+      skipped += 1;
+    }
+  }
+  return { kind: "collection", pending, skipped };
+}
+
 interface AnnouncementContextRow {
   community_name: string | null;
   description_excerpt: string | null;
@@ -678,7 +773,10 @@ async function readFacts(
       const base = { collectionName: col.name, collectionSlug: col.slug, communitySlug: col.community_slug };
       // Member announcements: richer facts for the email, only when the
       // context function exists. Without it the payload is exactly as before.
-      const ctx = collectionEmailCategory(msg.action) ? await readAnnouncementContext(sql, msg.object_id) : null;
+      const ctx =
+        collectionEmailCategory(msg.action) || msg.action === "collection.remind_unpaid"
+          ? await readAnnouncementContext(sql, msg.object_id)
+          : null;
       if (!ctx) return { payload: base, recipientHints: {} };
       const deadline = ctx.deadline_at instanceof Date ? ctx.deadline_at.toISOString() : ctx.deadline_at;
       return {
@@ -797,13 +895,22 @@ async function resolveRecipients(sql: Db, msg: AuditMessage, hints: Facts["recip
       `;
 
     case "payment_status_unavailable":
-      // Disabled on purpose. obligations.status is 'unpaid' by default and no
-      // code path ever sets 'paid' or 'in_installments' (there is no
-      // contributions record, and cash/transfer payments cannot be entered),
-      // so "unpaid" would include members who have already paid. Telling
-      // them they still owe is worse than telling no one. The event row is
-      // kept for the audit trail; no delivery is created.
+      // Publish-time "unpaid" targeting stays off (organisers remind unpaid
+      // members through reminder batches). The event row is kept for the
+      // audit trail; no delivery is created.
       return [];
+
+    case "payment_reminder_batch": {
+      // The members the organiser chose, re-checked now: a member who paid
+      // since the click, left the audience or was archived gets nothing.
+      const batchId = parseReminderBatchId(msg.after_state);
+      if (!batchId || !(await reminderBatchSupport(sql))) return [];
+      return sql<Recipient[]>`
+        select r.member_id, r.user_id
+        from app.payment_reminder_batch_recipients(${batchId}::uuid) r
+        where r.in_app and r.user_id is not null
+      `;
+    }
 
     case "member_self":
       // Only a member who has an account can be told in-app. None do yet (D-LINK).

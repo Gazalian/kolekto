@@ -222,9 +222,15 @@ export type RecipientPlan =
   | { readonly kind: "officers_with_permission"; readonly permission: string }
   | { readonly kind: "officer_term_holder" }
   | { readonly kind: "nobody" }
-  // Payment-status targeting is disabled: Kolekto records no contributions
-  // and nothing ever moves an obligation to paid, so "unpaid" would include
-  // people who have paid (cash, transfer). The event is kept; nobody is told.
+  // Organiser payment reminders (20261117100500): the members the organiser
+  // chose, named by the audit row's reminder_batch_id and re-checked by
+  // app.payment_reminder_batch_recipients (paid since → nobody is told).
+  // An audit row without a batch (the older notify_target=unpaid paths) has
+  // no chosen members and tells nobody.
+  | { readonly kind: "payment_reminder_batch" }
+  // Payment-status targeting at PUBLISH time stays off: it predates the
+  // reminder batches, and organisers remind unpaid members through them.
+  // The event is kept; nobody is told.
   | { readonly kind: "payment_status_unavailable" };
 
 /**
@@ -244,8 +250,9 @@ export function recipientPlan(action: string): RecipientPlan {
     case "collection.announce_update":
       return { kind: "collection_audience" };
     case "collection.publish_remind_unpaid":
-    case "collection.remind_unpaid":
       return { kind: "payment_status_unavailable" };
+    case "collection.remind_unpaid":
+      return { kind: "payment_reminder_batch" };
     case "member.create":
     case "member.approve_join":
       return { kind: "member_self" };
@@ -424,6 +431,13 @@ export function parseAnnounceTarget(afterState: Record<string, unknown> | null):
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Organiser payment reminders: the batch an audit row queued, or null (older rows carry none). */
+export function parseReminderBatchId(afterState: Record<string, unknown> | null): string | null {
+  const raw = afterState?.["reminder_batch_id"];
+  return typeof raw === "string" && UUID_RE.test(raw) ? raw.toLowerCase() : null;
+}
+
 export function parseAnnounceGroupIds(afterState: Record<string, unknown> | null): string[] {
   const raw = afterState?.["target_group_ids"];
   if (!Array.isArray(raw)) return [];

@@ -62,6 +62,7 @@ const TEMPLATE_EVENT_TYPES = [
   "officer_term.end",
   "collection.publish",
   "collection.remind",
+  "collection.remind_unpaid",
   "collection.announce_update",
   "payment.initialized",
   "payment.captured",
@@ -73,6 +74,7 @@ const TEMPLATE_EVENT_TYPES = [
 const COLLECTION_TEMPLATE_EVENT_TYPES: readonly string[] = [
   "collection.publish",
   "collection.remind",
+  "collection.remind_unpaid",
   "collection.announce_update",
 ];
 
@@ -117,6 +119,7 @@ export function renderTemplate(ctx: EventContext): RenderedEmail | null {
       return renderOfficerTermEnd(ctx.payload);
     case "collection.publish":
     case "collection.remind":
+    case "collection.remind_unpaid":
     case "collection.announce_update":
       return renderCollectionAnnouncement(ctx);
     case "payment.initialized":
@@ -333,7 +336,17 @@ function renderCollectionAnnouncement(ctx: EventContext): RenderedEmail | null {
   let subject: string;
   let lead: string;
   let cta: string;
+  let note = "";
   switch (ctx.eventType) {
+    case "collection.remind_unpaid":
+      // An organiser chose this member from the unpaid list, and the worker
+      // re-checked "still unpaid" when it queued the email. A payment can
+      // still land between then and delivery, so the copy says so.
+      subject = `Payment reminder: ${name}`;
+      lead = `You haven't contributed to ${name} yet. ${community} sent you this reminder.`;
+      cta = paymentPossible ? "Pay now" : "Contribute now";
+      note = "If you have paid in the last few minutes, please ignore this message.";
+      break;
     case "collection.remind":
       subject = `Reminder from ${community}: ${name}`;
       lead = `This is a reminder from ${community} about ${name}.`;
@@ -375,7 +388,9 @@ function renderCollectionAnnouncement(ctx: EventContext): RenderedEmail | null {
   if (description) textLines.push(description, "");
   for (const [k, v] of details) textLines.push(`${k}: ${v}`);
   if (details.length) textLines.push("");
-  textLines.push(`${cta}: ${link}`, "No Kolekto account is needed to open this link.", "", ...footer, "", "— Kolekto", "", "This is an automated message. Please do not reply.");
+  textLines.push(`${cta}: ${link}`, "No Kolekto account is needed to open this link.", "");
+  if (note) textLines.push(note, "");
+  textLines.push(...footer, "", "— Kolekto", "", "This is an automated message. Please do not reply.");
 
   const eLink = escapeHtml(link);
   const detailRows = details
@@ -395,6 +410,7 @@ function renderCollectionAnnouncement(ctx: EventContext): RenderedEmail | null {
       (detailRows ? `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">${detailRows}</table>` : "") +
       `<p style="margin:24px 0;"><a href="${eLink}" style="display:inline-block;padding:12px 20px;background-color:#111;color:#ffffff;text-decoration:none;border-radius:6px;font-weight:600;">${escapeHtml(cta)}</a></p>` +
       `<p style="margin:0 0 16px;font-size:13px;color:#666;">Or open this link: <a href="${eLink}" style="color:#333;">${eLink}</a><br>No Kolekto account is needed to open this link.</p>` +
+      (note ? `<p style="margin:0 0 16px;font-size:13px;color:#666;">${escapeHtml(note)}</p>` : "") +
       `<p style="margin:16px 0 0;font-size:12px;color:#999;">${footer.map(escapeHtml).join("<br>")}</p>`,
   );
 

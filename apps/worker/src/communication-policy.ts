@@ -82,14 +82,19 @@ export type DisabledReason =
  * explicitly so tests can prove the future matrix without enabling anything.
  */
 export interface PolicyCapabilities {
-  /** A contributions record ties payments to obligations (G3). Not built. */
+  /**
+   * A contributions record ties payments to members and obligations (G3).
+   * Built by M8.4 (contributions, applied on capture) and switched on by
+   * 20261117100500 (owner decision 2026-11-17) for organiser-chosen payment
+   * reminders, which re-check "still unpaid" at fan-out time.
+   */
   readonly paymentAttribution: boolean;
   /** NCC requirements verified and an SMS provider contracted. Not done. */
   readonly smsApproved: boolean;
 }
 
 export const CURRENT_CAPABILITIES: PolicyCapabilities = Object.freeze({
-  paymentAttribution: false,
+  paymentAttribution: true,
   smsApproved: false,
 });
 
@@ -146,8 +151,10 @@ const EVENT_POLICIES: Readonly<Record<string, EventPolicy>> = Object.freeze({
   "collection.announce_update": { category: "community_operational", emailFanout: "per_audience_member", topic: "update" },
   "collection.remind": { category: "community_operational", emailFanout: "per_audience_member", topic: "reminder" },
 
-  // D. Payment: targeted at "members who still owe". Blocked by the matrix
-  // until payment attribution is reliable (R0 decision 7).
+  // D. Payment: targeted at "members who still owe". Allowed by the matrix
+  // since payment attribution exists (20261117100500). Only
+  // collection.remind_unpaid with a reminder batch produces deliveries; the
+  // recipient plan keeps collection.publish_remind_unpaid at none.
   "collection.publish_remind_unpaid": {
     category: "payment",
     emailFanout: "per_audience_member",
