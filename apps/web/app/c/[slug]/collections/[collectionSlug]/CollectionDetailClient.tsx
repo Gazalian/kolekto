@@ -13,7 +13,7 @@ import type {
   Obligation,
 } from "@kolekto/db";
 import { Badge, Banner, Button, Card, CardBody, Dialog } from "@kolekto/ui";
-import { Copy, ExternalLink, Share2 } from "lucide-react";
+import { Eye, Settings } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import {
@@ -46,9 +46,19 @@ import { CodeSettingsPanel } from "./CodeSettingsPanel.tsx";
 import { SettingsPanel } from "./SettingsPanel.tsx";
 import { FinancialOverview } from "./FinancialOverview.tsx";
 import { ContributorsPanel } from "./ContributorsPanel.tsx";
-import { MoneyPanel } from "./MoneyPanel.tsx";
+import {
+  LedgerActivity,
+  useCollectionMoney,
+  WithdrawalsList,
+  WithdrawDialog,
+  withdrawBlockText,
+  watText,
+} from "./MoneyPanel.tsx";
+import { PaymentActivity, RecentActivity } from "./PaymentActivity.tsx";
+import { ShareCollectionButton } from "./ShareCollection.tsx";
 import { RemindersPanel } from "./RemindersPanel.tsx";
 import type { ContributorView, OverviewView } from "./contributor-register.ts";
+import { withdrawBlock, type ExpectedView } from "./money-view.ts";
 
 export interface ObligationRow {
   obligation: Obligation;
@@ -69,7 +79,6 @@ export interface CollectionPermissions {
   canExport: boolean;
   canCheckIn: boolean;
   canConfigureCodes: boolean;
-  canAcknowledge: boolean;
   canViewContact: boolean;
   /** balance.view: settlement, withdrawals and the ledger. */
   canViewBalances: boolean;
@@ -143,10 +152,11 @@ export function CollectionDetailClient({
   checkInPeople,
   checkInTotals,
   overview,
+  expected,
+  identityVerified,
   contributorFirstPage,
   contributorTotal,
   referencesLocked,
-  loadedAt,
   permissions,
 }: {
   slug: string;
@@ -172,11 +182,14 @@ export function CollectionDetailClient({
   checkInTotals: { expected: number; inside: number; left: number; notArrived: number };
   /** Null when this officer may not see payments on this collection. */
   overview: OverviewView | null;
+  /** Who is expected to pay and what they still owe; null when this collection has no expected list. */
+  expected: ExpectedView | null;
+  /** Whether this officer's identity is verified (withdrawals need it); null when it could not be read. */
+  identityVerified: boolean | null;
   contributorFirstPage: ContributorView[];
   contributorTotal: number;
   /** Money has been confirmed: no new contributor references (Phase 7). */
   referencesLocked: boolean;
-  loadedAt: string;
   permissions: CollectionPermissions;
 }) {
   const isManaged = collection.participation_mode === "managed";
@@ -196,28 +209,61 @@ export function CollectionDetailClient({
    * an organiser has to open to find out whether it is for them.
    */
   const rollLabel = isEvent ? "Attendees" : collection.amount_model === "items" ? "Orders" : "Members";
+  // What the people on this collection are called, on the tab and in the figures.
+  const peopleTabLabel = isManaged ? rollLabel : isEvent ? "Attendees" : "Contributors";
+  const peopleLabel = isManaged && !isEvent ? "Members" : isEvent ? "Attendees" : "Contributors";
 
+  /**
+   * Three sections and a Settings screen. Overview is the dashboard (the four
+   * money figures, withdraw, who has paid, recent payments by name); People is
+   * who has paid, reminders, the list, check-in and exports; Activity is every
+   * payment and withdrawal with its fees. Share and Settings live in the
+   * header. There is no settlement or acknowledgement screen: a verified
+   * payment is successful at once, and T+1 availability is automatic.
+   */
   const tabs = [
     { key: "overview", label: "Overview" },
-    // Who has paid — one register for every type of collection, shown to
-    // officers the database lets read payments here.
-    ...(overview ? [{ key: "contributors", label: "Contributors" }] : []),
-    // Settlement, withdrawals and the ledger, for officers with balance.view.
-    ...(overview && permissions.canViewBalances && collection.status !== "draft"
-      ? [{ key: "money", label: "Money" }]
-      : []),
-    // Reminders go to a member roll, so only a managed, members-only collection has them.
-    ...(overview && isManaged && collection.audience_mode !== "public" && collection.status !== "draft"
-      ? [{ key: "reminders", label: "Reminders" }]
-      : []),
-    ...(isManaged ? [{ key: "members", label: rollLabel }] : []),
-    ...(isEvent ? [{ key: "checkin", label: "Check-in" }] : []),
-    { key: "export", label: "Exports" },
+    { key: "contributors", label: peopleTabLabel },
     { key: "activity", label: "Activity" },
-    { key: "settings", label: "Settings" },
   ] as const;
 
+  // The views inside Contributors, in the order a person reaches for them.
+  const remindable = Boolean(overview) && isManaged && collection.audience_mode !== "public" && !isRecurring && collection.status !== "draft";
+  const peopleViews = [
+    // Who has paid, who has not, and reminding them — a managed member list only.
+    ...(remindable ? [{ key: "status", label: "Who has paid" }] : []),
+    // Every successful payment, for every type of collection.
+    ...(overview ? [{ key: "payments", label: "Payments" }] : []),
+    ...(isManaged ? [{ key: "roll", label: `Manage ${rollLabel.toLowerCase()}` }] : []),
+    ...(isEvent ? [{ key: "checkin", label: "Check-in" }] : []),
+    { key: "export", label: "Export" },
+  ] as const;
+  type PeopleView = (typeof peopleViews)[number]["key"];
+
   const [tab, setTab] = useState<(typeof tabs)[number]["key"]>("overview");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [peopleView, setPeopleView] = useState<PeopleView>(peopleViews[0].key);
+
+  // The money behind the Overview's withdraw action and the Activity tab:
+  // loaded only for an officer who may see balances on a published collection.
+  const showMoney = Boolean(overview) && permissions.canViewBalances && collection.status !== "draft";
+  const { money, loadError: moneyError, reload: reloadMoney } = useCollectionMoney(slug, collection.slug, showMoney);
+  const [withdrawOpen, setWithdrawOpen] = useState(false);
+  const [withdrawMessage, setWithdrawMessage] = useState<string | null>(null);
+  const block =
+    overview && money
+      ? withdrawBlock({
+          availableKobo: overview.availableKobo ?? "0",
+          pendingKobo: overview.pendingKobo ?? "0",
+          totalRaisedKobo: overview.totalRaisedKobo,
+          identityVerified,
+          withdrawals: money.withdrawals,
+          nextReleaseAt: money.settlement.nextReleaseAt,
+          scheduledKobo: money.settlement.scheduledKobo,
+          awaitingProviderKobo: money.settlement.awaitingProviderKobo,
+        })
+      : null;
+  const activeWithdrawals = (money?.withdrawals ?? []).filter((w) => ["requested", "approved", "processing"].includes(w.status));
   const [pendingTarget, setPendingTarget] = useState<CollectionStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -242,7 +288,6 @@ export function CollectionDetailClient({
 
   const status = collection.status as CollectionStatus;
   const publicUrl = typeof window === "undefined" ? "" : `${window.location.origin}${collectionPath(communitySlug, collection.slug)}`;
-  const isLive = status === "active" || status === "paused" || status === "closed" || status === "scheduled";
   const isPublishDialog = pendingTarget === "active" && status === "draft";
 
   // Fetch the recipient preview when the publish dialog opens, so the host
@@ -310,55 +355,115 @@ export function CollectionDetailClient({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <Link href={`/c/${slug}/collections`} className="text-xs font-medium text-[var(--color-text-muted)] hover:underline">
+      <header className="flex flex-col gap-3">
+        <Link href={`/c/${slug}/collections`} className="self-start text-xs font-medium text-[var(--color-text-muted)] hover:underline">
           ← Collections
         </Link>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-semibold text-[var(--color-text)]">{collection.name}</h1>
-            <Badge tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Badge>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight text-[var(--color-text)]">{collection.name}</h1>
+              <Badge tone={STATUS_TONE[status]}>{STATUS_LABEL[status]}</Badge>
+            </div>
+            {collection.description && (
+              <p className="line-clamp-2 max-w-2xl text-sm text-[var(--color-text-muted)]">{collection.description}</p>
+            )}
+            <p className="text-xs text-[var(--color-text-faint)]">
+              {[
+                CATEGORY_LABEL[collection.category] ?? collection.category,
+                AMOUNT_MODEL_LABEL[collection.amount_model],
+                `Created ${formatDate(collection.created_at)}`,
+                collection.deadline_at ? `Closes ${formatDate(collection.deadline_at)}` : null,
+              ]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
           </div>
-          {permissions.canPublish && (
-            <div className="flex flex-wrap gap-2">
-              {(status === "active" || status === "scheduled") && (
-                <Button
-                  variant="secondary"
-                  disabled={isPending}
-                  onClick={() => setReminderOpen(true)}
-                >
-                  Send reminder
-                </Button>
-              )}
-              {(status === "active" || status === "scheduled" || status === "paused") && (
-                <Button
-                  variant="secondary"
-                  disabled={isPending}
-                  onClick={() => setAnnounceOpen(true)}
-                >
-                  Announce changes
-                </Button>
-              )}
-              {actionsFor(status).map((action) => (
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {permissions.canShare && (
+              <ShareCollectionButton
+                url={publicUrl}
+                name={collection.name}
+                description={collection.description}
+                disabledReason={
+                  status === "draft"
+                    ? "This collection is still a draft, so its link does not work yet. Publish it and the link starts working straight away."
+                    : null
+                }
+              />
+            )}
+            {permissions.canPublish &&
+              actionsFor(status).map((action) => (
                 <Button
                   key={action.target}
-                  variant={action.variant ?? "primary"}
+                  variant={action.variant ?? (permissions.canShare ? "secondary" : "primary")}
                   disabled={isPending}
                   onClick={() => openPendingDialog(action.target)}
                 >
                   {action.label}
                 </Button>
               ))}
-            </div>
-          )}
+            <Link
+              href={`/c/${slug}/collections/${collection.slug}/preview`}
+              className="inline-flex h-10 items-center gap-1.5 rounded-[var(--radius-md)] px-3 text-sm font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
+              title="See the page as a contributor sees it"
+            >
+              <Eye className="h-4 w-4" aria-hidden="true" />
+              <span className="sr-only sm:not-sr-only">Preview</span>
+            </Link>
+            <Button
+              variant={settingsOpen ? "primary" : "ghost"}
+              onClick={() => setSettingsOpen((open) => !open)}
+              aria-pressed={settingsOpen}
+              title="Collection settings"
+            >
+              <Settings className="h-4 w-4" aria-hidden />
+              <span className="sr-only sm:not-sr-only">Settings</span>
+            </Button>
+          </div>
         </div>
-        <p className="text-sm text-[var(--color-text-muted)]">
-          {CATEGORY_LABEL[collection.category] ?? collection.category} · {AMOUNT_MODEL_LABEL[collection.amount_model]}
-        </p>
-      </div>
+      </header>
 
       {error && <Banner tone="danger">{error}</Banner>}
 
+      {settingsOpen ? (
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h2 className="text-base font-semibold text-[var(--color-text)]">Collection settings</h2>
+            <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(false)}>
+              ← Back to the collection
+            </Button>
+          </div>
+          <p className="text-xs text-[var(--color-text-muted)]">
+            Changing a setting never changes a payment already made: amounts, fees and references on recorded payments
+            stay as they were.
+          </p>
+          {isManaged && (
+            <CodeSettingsPanel
+              slug={slug}
+              collection={collection}
+              settings={codeSettings}
+              tiers={tiers}
+              issuedCount={referenceCount}
+              rollCount={rollCounts.all}
+              canConfigure={permissions.canConfigureCodes}
+              canIssue={permissions.canAssign}
+              referencesLocked={referencesLocked}
+            />
+          )}
+          <SettingsPanel
+            slug={slug}
+            collection={collection}
+            tiers={tiers}
+            fields={fields}
+            items={items}
+            recurrence={recurrence}
+            cycles={cycles}
+            canEdit={permissions.canEdit}
+          />
+        </div>
+      ) : (
+      <>
       {/* Scrolls sideways on a phone rather than widening the page. */}
       <nav className="flex gap-1 overflow-x-auto border-b border-[var(--color-border)] [contain:inline-size]" aria-label="Collection sections">
         {tabs.map((option) => (
@@ -387,7 +492,67 @@ export function CollectionDetailClient({
             <FinancialOverview
               overview={overview}
               target={collection.target_amount_kobo === null ? null : String(collection.target_amount_kobo)}
+              expected={expected}
+              peopleLabel={peopleLabel}
+              pendingNote={
+                !money || !overview.pendingKobo || overview.pendingKobo === "0"
+                  ? null
+                  : money.settlement.scheduledKobo === "0" && money.settlement.awaitingProviderKobo !== "0"
+                    ? "Successfully received. T+1 has passed; becomes available automatically once the payment provider releases the funds"
+                    : money.settlement.nextReleaseAt
+                      ? `Successfully received. Becomes available automatically after T+1 — next from ${watText(money.settlement.nextReleaseAt)}`
+                      : null
+              }
+              withdrawAction={
+                !overview.canViewBalances ? null : !permissions.canRequestWithdrawal ? (
+                  <p className="text-xs text-[var(--color-text-muted)]">
+                    Ask an officer with withdrawal permission to withdraw.
+                  </p>
+                ) : (
+                  <>
+                    <Button
+                      className="w-full sm:w-auto sm:self-start"
+                      loading={!money && !moneyError}
+                      disabled={Boolean(moneyError)}
+                      onClick={() => {
+                        setWithdrawMessage(null);
+                        setWithdrawOpen(true);
+                      }}
+                    >
+                      Withdraw
+                    </Button>
+                    {block && <p className="text-xs leading-snug text-[var(--color-text-muted)]">{withdrawBlockText(block)}</p>}
+                  </>
+                )
+              }
             />
+          )}
+
+          {withdrawMessage && <Banner tone="success">{withdrawMessage}</Banner>}
+          {moneyError && (
+            <Banner tone="danger">
+              {moneyError}{" "}
+              <button type="button" className="underline" onClick={reloadMoney}>
+                Try again
+              </button>
+            </Banner>
+          )}
+
+          {money && activeWithdrawals.length > 0 && (
+            <Card>
+              <CardBody className="flex flex-col gap-2">
+                <h2 className="text-sm font-semibold text-[var(--color-text)]">Withdrawals in progress</h2>
+                <WithdrawalsList slug={slug} collectionSlug={collection.slug} withdrawals={activeWithdrawals} onChanged={reloadMoney} />
+              </CardBody>
+            </Card>
+          )}
+
+          {overview && status !== "draft" && (
+            <Card>
+              <CardBody>
+                <RecentActivity slug={slug} collectionSlug={collection.slug} onSeeAll={() => setTab("activity")} />
+              </CardBody>
+            </Card>
           )}
 
           {status === "draft" && (
@@ -404,281 +569,335 @@ export function CollectionDetailClient({
             </Banner>
           )}
 
-          {/* M7.5 part B: the same components the public page renders, from
-              this collection's own rows — not a summary that can drift. */}
-          <Link
-            href={`/c/${slug}/collections/${collection.slug}/preview`}
-            className="self-start text-sm font-medium text-[var(--color-primary)] hover:underline"
-          >
-            Preview as a contributor →
-          </Link>
+          {/* What the collection asked for when it was set up. Collapsed once it is live: the money and the people come first. */}
+          <details open={status === "draft" || !overview} className="group">
+            <summary className="cursor-pointer list-none text-sm font-semibold text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
+              Collection details <span className="text-xs font-normal text-[var(--color-text-muted)] group-open:hidden">· show</span>
+            </summary>
+            <div className="mt-3 flex flex-col gap-4">
+              {collection.cover_image_url && (
+                // An uploaded flyer on the storage host, not a bundled asset.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={collection.cover_image_url}
+                  alt=""
+                  className="max-h-64 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] object-cover"
+                />
+              )}
 
-          {isLive && (
-            <Card>
-              <CardBody className="flex flex-col gap-3">
-                <div>
-                  <p className="text-sm font-medium text-[var(--color-text)]">Share this collection</p>
-                  <p className="text-xs text-[var(--color-text-muted)]">
-                    One address, and it does not change when you rename the collection.
-                  </p>
-                </div>
-                <ShareRow url={publicUrl} name={collection.name} canShare={permissions.canShare} />
-              </CardBody>
-            </Card>
-          )}
+              <Card>
+                <CardBody>
+                  <dl className="divide-y divide-[var(--color-border)]">
+                    <Row label="Contribution" value={describeAmount(collection)} />
+                    <Row label="Who can pay" value={PARTICIPATION_LABEL[collection.participation_mode] ?? ""} />
+                    <Row label="Target" value={collection.target_amount_kobo ? naira(collection.target_amount_kobo) : "None"} />
+                    {/* The event is a separate fact from the collection's own dates:
+                        tickets sell for weeks, the dinner is one evening. */}
+                    {collection.event_starts_at && (
+                      <Row label="Event" value={formatDate(collection.event_starts_at)} />
+                    )}
+                    {collection.venue && <Row label="Venue" value={collection.venue} />}
+                    <Row label="Opens" value={collection.starts_at ? formatDate(collection.starts_at) : "Immediately"} />
+                    <Row label="Deadline" value={collection.deadline_at ? formatDate(collection.deadline_at) : "None"} />
+                    {recurrence && (
+                      <Row
+                        label="Repeats"
+                        value={`${recurrence.frequency}${recurrence.interval_count > 1 ? ` (every ${recurrence.interval_count})` : ""}`}
+                      />
+                    )}
+                    {recurrence && (
+                      <Row
+                        label="Periods opened"
+                        value={cycles.length === 0 ? "None yet" : cycles.map((cycle) => cycle.cycle_key).join(", ")}
+                      />
+                    )}
+                    <Row label="Visibility" value={collection.visibility === "public" ? "Listed publicly" : "Link only"} />
+                    {isManaged && <Row label="Members expected" value={String(rollCounts.all)} />}
+                  </dl>
+                </CardBody>
+              </Card>
 
-          {collection.cover_image_url && (
-            // An uploaded flyer on the storage host, not a bundled asset.
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={collection.cover_image_url}
-              alt=""
-              className="max-h-64 w-full rounded-[var(--radius-md)] border border-[var(--color-border)] object-cover"
-            />
-          )}
+              {collection.suggested_amounts_kobo.length > 0 && (
+                <Card>
+                  <CardBody className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-[var(--color-text)]">Suggested amounts</p>
+                    <p className="text-sm text-[var(--color-text-muted)]">
+                      {collection.suggested_amounts_kobo.map((amount) => naira(amount)).join(" · ")}
+                    </p>
+                  </CardBody>
+                </Card>
+              )}
 
-          <Card>
-            <CardBody>
-              <dl className="divide-y divide-[var(--color-border)]">
-                <Row label="Contribution" value={describeAmount(collection)} />
-                <Row label="Who can pay" value={PARTICIPATION_LABEL[collection.participation_mode] ?? ""} />
-                <Row label="Target" value={collection.target_amount_kobo ? naira(collection.target_amount_kobo) : "None"} />
-                {/* The event is a separate fact from the collection's own dates:
-                    tickets sell for weeks, the dinner is one evening. */}
-                {collection.event_starts_at && (
-                  <Row label="Event" value={formatDate(collection.event_starts_at)} />
-                )}
-                {collection.venue && <Row label="Venue" value={collection.venue} />}
-                <Row label="Opens" value={collection.starts_at ? formatDate(collection.starts_at) : "Immediately"} />
-                <Row label="Deadline" value={collection.deadline_at ? formatDate(collection.deadline_at) : "None"} />
-                {recurrence && (
-                  <Row
-                    label="Repeats"
-                    value={`${recurrence.frequency}${recurrence.interval_count > 1 ? ` (every ${recurrence.interval_count})` : ""}`}
-                  />
-                )}
-                {recurrence && (
-                  <Row
-                    label="Periods opened"
-                    value={cycles.length === 0 ? "None yet" : cycles.map((cycle) => cycle.cycle_key).join(", ")}
-                  />
-                )}
-                <Row label="Visibility" value={collection.visibility === "public" ? "Listed publicly" : "Link only"} />
-                {isManaged && <Row label="Members expected" value={String(rollCounts.all)} />}
-              </dl>
-            </CardBody>
-          </Card>
+              {items.length > 0 && (
+                <Card>
+                  <CardBody className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-[var(--color-text)]">Items</p>
+                    <ul className="flex flex-col gap-1">
+                      {items.map((item) => (
+                        <li key={item.id} className="flex justify-between gap-3 text-sm">
+                          <span className={item.hidden ? "text-[var(--color-text-faint)] line-through" : "text-[var(--color-text)]"}>
+                            {item.name}
+                            {item.hidden && " (hidden)"}
+                            {item.quantity_available !== null && (
+                              <span className="text-[var(--color-text-muted)]"> · {item.quantity_available} available</span>
+                            )}
+                          </span>
+                          <span className="text-[var(--color-text-muted)]">{naira(item.price_kobo)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardBody>
+                </Card>
+              )}
 
-          {collection.suggested_amounts_kobo.length > 0 && (
-            <Card>
-              <CardBody className="flex flex-col gap-2">
-                <p className="text-sm font-medium text-[var(--color-text)]">Suggested amounts</p>
-                <p className="text-sm text-[var(--color-text-muted)]">
-                  {collection.suggested_amounts_kobo.map((amount) => naira(amount)).join(" · ")}
-                </p>
-              </CardBody>
-            </Card>
-          )}
+              {collection.description && (
+                <Card>
+                  <CardBody className="flex flex-col gap-1">
+                    <p className="text-sm font-medium text-[var(--color-text)]">What this is for</p>
+                    <p className="whitespace-pre-line text-sm text-[var(--color-text-muted)]">{collection.description}</p>
+                  </CardBody>
+                </Card>
+              )}
 
-          {items.length > 0 && (
-            <Card>
-              <CardBody className="flex flex-col gap-2">
-                <p className="text-sm font-medium text-[var(--color-text)]">Items</p>
-                <ul className="flex flex-col gap-1">
-                  {items.map((item) => (
-                    <li key={item.id} className="flex justify-between gap-3 text-sm">
-                      <span className={item.hidden ? "text-[var(--color-text-faint)] line-through" : "text-[var(--color-text)]"}>
-                        {item.name}
-                        {item.hidden && " (hidden)"}
-                        {item.quantity_available !== null && (
-                          <span className="text-[var(--color-text-muted)]"> · {item.quantity_available} available</span>
-                        )}
-                      </span>
-                      <span className="text-[var(--color-text-muted)]">{naira(item.price_kobo)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </CardBody>
-            </Card>
-          )}
+              {tiers.length > 0 && (
+                <Card>
+                  <CardBody className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-[var(--color-text)]">Options</p>
+                    <ul className="flex flex-col gap-1">
+                      {tiers.map((tier) => (
+                        <li key={tier.id} className="flex justify-between gap-3 text-sm">
+                          <span className={tier.hidden ? "text-[var(--color-text-faint)] line-through" : "text-[var(--color-text)]"}>
+                            {tier.name}
+                            {tier.hidden && " (hidden)"}
+                          </span>
+                          <span className="text-[var(--color-text-muted)]">{naira(tier.price_kobo)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardBody>
+                </Card>
+              )}
 
-          {collection.description && (
-            <Card>
-              <CardBody className="flex flex-col gap-1">
-                <p className="text-sm font-medium text-[var(--color-text)]">What this is for</p>
-                <p className="whitespace-pre-line text-sm text-[var(--color-text-muted)]">{collection.description}</p>
-              </CardBody>
-            </Card>
-          )}
-
-          {tiers.length > 0 && (
-            <Card>
-              <CardBody className="flex flex-col gap-2">
-                <p className="text-sm font-medium text-[var(--color-text)]">Options</p>
-                <ul className="flex flex-col gap-1">
-                  {tiers.map((tier) => (
-                    <li key={tier.id} className="flex justify-between gap-3 text-sm">
-                      <span className={tier.hidden ? "text-[var(--color-text-faint)] line-through" : "text-[var(--color-text)]"}>
-                        {tier.name}
-                        {tier.hidden && " (hidden)"}
-                      </span>
-                      <span className="text-[var(--color-text-muted)]">{naira(tier.price_kobo)}</span>
-                    </li>
-                  ))}
-                </ul>
-              </CardBody>
-            </Card>
-          )}
-
-          {fields.length > 0 && (
-            <Card>
-              <CardBody className="flex flex-col gap-2">
-                <p className="text-sm font-medium text-[var(--color-text)]">Questions contributors are asked</p>
-                <ul className="flex flex-col gap-1 text-sm text-[var(--color-text-muted)]">
-                  {fields.map((field) => (
-                    <li key={field.id}>
-                      {field.label}
-                      {field.required && " (required)"}
-                    </li>
-                  ))}
-                </ul>
-              </CardBody>
-            </Card>
-          )}
+              {fields.length > 0 && (
+                <Card>
+                  <CardBody className="flex flex-col gap-2">
+                    <p className="text-sm font-medium text-[var(--color-text)]">Questions contributors are asked</p>
+                    <ul className="flex flex-col gap-1 text-sm text-[var(--color-text-muted)]">
+                      {fields.map((field) => (
+                        <li key={field.id}>
+                          {field.label}
+                          {field.required && " (required)"}
+                        </li>
+                      ))}
+                    </ul>
+                  </CardBody>
+                </Card>
+              )}
+            </div>
+          </details>
         </div>
       )}
 
-      {tab === "contributors" && overview && (
-        <ContributorsPanel
-          slug={slug}
-          collectionSlug={collection.slug}
-          fields={fields.map((field) => ({
-            key: field.key,
-            label: field.label,
-            type: field.type,
-            sort_order: field.sort_order,
-          }))}
-          firstPage={contributorFirstPage}
-          firstTotal={contributorTotal}
-          counts={{ contributions: overview.contributionCount, acknowledged: overview.acknowledgedCount }}
-          loadedAt={loadedAt}
-          flags={{
-            hasOptions: collection.amount_model === "tiers" || collection.amount_model === "items",
-            isEvent,
-            isRecurring,
-            isManaged,
-          }}
-          permissions={{
-            canAcknowledge: permissions.canAcknowledge,
-            canExport: permissions.canExport,
-            canViewContact: permissions.canViewContact,
-          }}
-        />
-      )}
+      {tab === "contributors" && (
+        <div className="flex flex-col gap-4">
+          {/* Talking to people: reminders and announcements, one place. */}
+          {permissions.canPublish && (status === "active" || status === "scheduled" || status === "paused") && (
+            <div className="flex flex-wrap items-center gap-2">
+              {(status === "active" || status === "scheduled") && (
+                <Button variant="secondary" size="sm" disabled={isPending} onClick={() => setReminderOpen(true)}>
+                  Send a reminder to everyone
+                </Button>
+              )}
+              <Button variant="secondary" size="sm" disabled={isPending} onClick={() => setAnnounceOpen(true)}>
+                Announce changes
+              </Button>
+            </div>
+          )}
 
-      {tab === "money" && overview && (
-        <MoneyPanel
-          slug={slug}
-          collectionSlug={collection.slug}
-          availableKobo={overview.availableKobo ?? "0"}
-          canRequestWithdrawal={permissions.canRequestWithdrawal}
-        />
-      )}
+          {peopleViews.length > 1 && (
+            <div className="flex flex-wrap gap-1" role="tablist" aria-label={`${peopleTabLabel} views`}>
+              {peopleViews.map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={peopleView === option.key}
+                  onClick={() => setPeopleView(option.key)}
+                  className={
+                    peopleView === option.key
+                      ? "rounded-full border border-[var(--color-primary)] bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary-fg)]"
+                      : "rounded-full border border-[var(--color-border)] px-3 py-1 text-xs font-medium text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
+                  }
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          )}
 
-      {tab === "reminders" && <RemindersPanel slug={slug} collectionSlug={collection.slug} />}
+          {peopleView === "status" && remindable && <RemindersPanel slug={slug} collectionSlug={collection.slug} />}
 
-      {tab === "members" && (
-        <ObligationsPanel
-          slug={slug}
-          collection={collection}
-          firstPage={roll}
-          initialCounts={rollCounts}
-          audienceGroups={audienceGroups}
-          audienceCounts={audienceCounts}
-          // The period being charged for: the most recent one still open. The
-          // rows arrive newest first, so the first unclosed one is that period.
-          openCycleKey={cycles.find((cycle) => cycle.closed_at === null)?.cycle_key ?? null}
-          tiers={tiers}
-          canAssign={permissions.canAssign}
-          canExempt={permissions.canExempt}
-        />
-      )}
+          {peopleView === "payments" && overview && (
+            <ContributorsPanel
+              slug={slug}
+              collectionSlug={collection.slug}
+              fields={fields.map((field) => ({
+                key: field.key,
+                label: field.label,
+                type: field.type,
+                sort_order: field.sort_order,
+              }))}
+              firstPage={contributorFirstPage}
+              firstTotal={contributorTotal}
+              counts={{ contributions: overview.contributionCount }}
+              flags={{
+                hasOptions: collection.amount_model === "tiers" || collection.amount_model === "items",
+                isEvent,
+                isRecurring,
+                isManaged,
+              }}
+              permissions={{
+                canExport: permissions.canExport,
+                canViewContact: permissions.canViewContact,
+              }}
+            />
+          )}
 
-      {tab === "checkin" && (
-        <CheckInPanel
-          slug={slug}
-          collectionSlug={collection.slug}
-          people={checkInPeople}
-          totals={checkInTotals}
-          canCheckIn={permissions.canCheckIn}
-        />
-      )}
+          {peopleView === "roll" && isManaged && (
+            <ObligationsPanel
+              slug={slug}
+              collection={collection}
+              firstPage={roll}
+              initialCounts={rollCounts}
+              audienceGroups={audienceGroups}
+              audienceCounts={audienceCounts}
+              // The period being charged for: the most recent one still open. The
+              // rows arrive newest first, so the first unclosed one is that period.
+              openCycleKey={cycles.find((cycle) => cycle.closed_at === null)?.cycle_key ?? null}
+              tiers={tiers}
+              canAssign={permissions.canAssign}
+              canExempt={permissions.canExempt}
+            />
+          )}
 
-      {tab === "export" && (
-        <ExportPanel
-          slug={slug}
-          collectionSlug={collection.slug}
-          customFields={exportCustomFields}
-          groups={exportGroups}
-          tiers={tiers}
-          cycles={cycles}
-          isEvent={isEvent}
-          isTiered={isTiered}
-          isRecurring={isRecurring}
-          canExport={permissions.canExport}
-        />
+          {peopleView === "checkin" && isEvent && (
+            <CheckInPanel
+              slug={slug}
+              collectionSlug={collection.slug}
+              people={checkInPeople}
+              totals={checkInTotals}
+              canCheckIn={permissions.canCheckIn}
+            />
+          )}
+
+          {peopleView === "export" && (
+            <div className="flex flex-col gap-2">
+              {overview && (
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  This exports who is expected to pay. To export the payments received, open Payments and use its Export
+                  button.
+                </p>
+              )}
+              <ExportPanel
+                slug={slug}
+                collectionSlug={collection.slug}
+                customFields={exportCustomFields}
+                groups={exportGroups}
+                tiers={tiers}
+                cycles={cycles}
+                isEvent={isEvent}
+                isTiered={isTiered}
+                isRecurring={isRecurring}
+                canExport={permissions.canExport}
+              />
+            </div>
+          )}
+        </div>
       )}
 
       {tab === "activity" && (
-        <Card>
-          <CardBody>
-            {activity.length === 0 ? (
-              <p className="text-sm text-[var(--color-text-muted)]">Nothing has happened to this collection yet.</p>
-            ) : (
-              <ul className="flex flex-col gap-3">
-                {activity.map((entry) => (
-                  <li key={entry.id} className="flex flex-wrap justify-between gap-2 text-sm">
-                    <span className="text-[var(--color-text)]">
-                      {entry.action.replace("collection.", "").replace(/_/g, " ")} — {entry.actor_name_snapshot}
-                      {entry.reason && (
-                        <span className="block text-xs text-[var(--color-text-muted)]">{entry.reason}</span>
-                      )}
-                    </span>
-                    <span className="text-xs text-[var(--color-text-muted)]">{formatDistanceToNow(entry.created_at)}</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardBody>
-        </Card>
+        <div className="flex flex-col gap-4">
+          {overview && status !== "draft" ? (
+            <Card>
+              <CardBody className="flex flex-col gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-[var(--color-text)]">Payments and withdrawals</h2>
+                  <p className="text-xs text-[var(--color-text-muted)]">
+                    Who paid, how much, and the fees. Open a row for its full breakdown and reference.
+                  </p>
+                </div>
+                <PaymentActivity slug={slug} collectionSlug={collection.slug} showWithdrawals={showMoney} />
+              </CardBody>
+            </Card>
+          ) : (
+            <p className="text-sm text-[var(--color-text-muted)]">
+              {status === "draft" ? "Payments appear here once the collection is published." : "You do not have permission to see payments on this collection."}
+            </p>
+          )}
+
+          {showMoney && (
+            <details className="group rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
+                Balance ledger
+                <span className="text-xs text-[var(--color-text-muted)] group-open:hidden">For accountants · show</span>
+                <span className="hidden text-xs text-[var(--color-text-muted)] group-open:inline">Hide</span>
+              </summary>
+              <div className="flex flex-col gap-3 border-t border-[var(--color-border)] p-4">
+                <p className="text-xs text-[var(--color-text-muted)]">
+                  Every movement between your balances, newest first. A successful payment lands in the pending balance
+                  and Kolekto moves it to the available balance automatically after T+1.
+                  {money && (money.reconciliationFailures.length === 0
+                    ? " ✓ Every figure traces to the ledger."
+                    : ` Kolekto is checking this collection's figures (${money.reconciliationFailures.join(", ")}).`)}
+                </p>
+                <LedgerActivity slug={slug} collectionSlug={collection.slug} />
+              </div>
+            </details>
+          )}
+
+          <details className="group rounded-[var(--radius-md)] border border-[var(--color-border)] bg-[var(--color-surface)]">
+            <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-4 py-3 text-sm font-medium text-[var(--color-text)] [&::-webkit-details-marker]:hidden">
+              Collection history
+              <span className="text-xs text-[var(--color-text-muted)] group-open:hidden">Show</span>
+              <span className="hidden text-xs text-[var(--color-text-muted)] group-open:inline">Hide</span>
+            </summary>
+            <div className="border-t border-[var(--color-border)] p-4">
+              {activity.length === 0 ? (
+                <p className="text-sm text-[var(--color-text-muted)]">Nothing has happened to this collection yet.</p>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {activity.map((entry) => (
+                    <li key={entry.id} className="flex flex-wrap justify-between gap-2 text-sm">
+                      <span className="text-[var(--color-text)]">
+                        {entry.action.replace("collection.", "").replace(/_/g, " ")} — {entry.actor_name_snapshot}
+                        {entry.reason && <span className="block text-xs text-[var(--color-text-muted)]">{entry.reason}</span>}
+                      </span>
+                      <span className="text-xs text-[var(--color-text-muted)]">{formatDistanceToNow(entry.created_at)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </details>
+        </div>
+      )}
+      </>
       )}
 
-      {tab === "settings" && (
-        <div className="flex flex-col gap-4">
-          {isManaged && (
-            <CodeSettingsPanel
-              slug={slug}
-              collection={collection}
-              settings={codeSettings}
-              tiers={tiers}
-              issuedCount={referenceCount}
-              rollCount={rollCounts.all}
-              canConfigure={permissions.canConfigureCodes}
-              canIssue={permissions.canAssign}
-              referencesLocked={referencesLocked}
-            />
-          )}
-          <SettingsPanel
+      {withdrawOpen && overview && (
+        <WithdrawDialog
           slug={slug}
-          collection={collection}
-          tiers={tiers}
-          fields={fields}
-          items={items}
-          recurrence={recurrence}
-          cycles={cycles}
-          canEdit={permissions.canEdit}
+          collectionSlug={collection.slug}
+          collectionName={collection.name}
+          availableKobo={overview.availableKobo ?? "0"}
+          block={block}
+          onClose={() => setWithdrawOpen(false)}
+          onDone={(message) => {
+            setWithdrawOpen(false);
+            setWithdrawMessage(message);
+            reloadMoney();
+          }}
         />
-        </div>
       )}
 
       {pendingTarget && (
@@ -916,51 +1135,6 @@ function PublishNotifyControls({
       </label>
       {mode === "all" && <AnnouncementReach preview={preview} />}
     </fieldset>
-  );
-}
-
-function ShareRow({ url, name, canShare }: { url: string; name: string; canShare: boolean }) {
-  const [copied, setCopied] = useState(false);
-  const message = `${name} — contribute here: ${url}`;
-
-  return (
-    <div className="flex flex-col gap-2">
-      <code className="block overflow-x-auto rounded-[var(--radius-sm)] bg-[var(--color-bg)] px-3 py-2 text-xs text-[var(--color-text)]">
-        {url}
-      </code>
-      {canShare && (
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => {
-              void navigator.clipboard.writeText(url).then(() => {
-                setCopied(true);
-                setTimeout(() => setCopied(false), 2000);
-              });
-            }}
-          >
-            <Copy className="h-4 w-4" aria-hidden="true" /> {copied ? "Copied" : "Copy link"}
-          </Button>
-          <a
-            href={`https://wa.me/?text=${encodeURIComponent(message)}`}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-3 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)]"
-          >
-            <Share2 className="h-4 w-4" aria-hidden="true" /> WhatsApp
-          </a>
-          <a
-            href={url}
-            target="_blank"
-            rel="noreferrer"
-            className="inline-flex h-8 items-center gap-1.5 rounded-[var(--radius-md)] border border-[var(--color-border-strong)] px-3 text-sm font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)]"
-          >
-            <ExternalLink className="h-4 w-4" aria-hidden="true" /> Open page
-          </a>
-        </div>
-      )}
-    </div>
   );
 }
 

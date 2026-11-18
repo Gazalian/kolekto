@@ -1,7 +1,7 @@
 # Payment integration — status and next steps
 
 **Date:** 2026-11-12  
-**Branch:** `feat/payment-receipts-alarms` (sessions 20–21, uncommitted; cut from `main`, which holds PR #33 merged 2026-11-14)  
+**Branch:** `feat/payment-receipts-alarms` (sessions 20–24 committed, session 25 uncommitted; cut from `main`, which holds PR #33 merged 2026-11-14)  
 **Last commits** (on `main` after the merge):
 
 - `b99660d` Merge pull request #33 from Gazalian/feat/payments-foundation
@@ -26,58 +26,59 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-17, session 24 (ledger settlement, withdrawals, reconciliation, reference lock, payment reminders on `feat/payment-receipts-alarms`; **uncommitted**, sessions 23 + 24 together)
+**Last updated:** 2026-11-17, session 26 (collection detail page redesign from the owner's brief)
 
 ### Where the work stands
 
-Branch **`feat/payment-receipts-alarms`**: two commits (sessions 20–22), then sessions 23 and 24 uncommitted on top. Not pushed, no PR. Nothing applied to staging or production. The local dev DB now has all seven 2026-11-17 migrations (owner ran into "Money and Reminders failing to load" on 2026-11-17; the cause was those six migrations not yet applied to the dev DB — ran `npx supabase migration up --local`, all additive, verified every new function returns rows for a real treasurer on a real collection).
+Branch **`feat/payment-receipts-alarms`**. Sessions 20–24 committed (`4a9f109`, `2744301`, `3e2bca6`, `27a4f2d`, `3e388d9`). **Sessions 25 and 26 are uncommitted.** Not pushed, no PR. Nothing applied to staging or production. Local dev DB and the itest DB have the three new 2026-11-17 read functions (`collection_expected_summary`, `collection_ledger_by_kind`, `collection_payment_activity`).
 
-Design, decisions, runbook, deployment and gaps: [`docs/product/COLLECTION-LEDGER-SETTLEMENT-WITHDRAWALS-REMINDERS.md`](../product/COLLECTION-LEDGER-SETTLEMENT-WITHDRAWALS-REMINDERS.md). Owner decisions: `financial-decisions.md` §17.
+The owner sent a second brief: "COMPLETE REDESIGN OF THE COLLECTION DETAIL PAGE" — four figures, payment activity by name with fees, a successful payment must look successful at once, no settlement or acknowledgement steps for the owner, share modal, withdraw dialog. Decisions recorded in `financial-decisions.md` §19; design record in `COLLECTION-LEDGER-SETTLEMENT-WITHDRAWALS-REMINDERS.md` §14.
 
-### What was built (session 24), and why
+### What was built (session 26), and why
 
 | Area | What | Where |
 | --- | --- | --- |
-| Settlement (D-09) | Versioned immutable schedule (T+1 05:00 Lagos); one settlement row per capture with scheduled vs actual release; release only after the provider settlement is recorded; discrepancies held and audited; worker release stage every 5 min where its role may. | `20261117100000`, `20261117100100`, `apps/worker/src/settlement-release.ts` |
-| Withdrawals | Request (locked balance check, hold journal, idempotent, last-4 only), owner approve / reject-with-reason, cancel, operator processing / paid / failed (failure releases hold). First withdrawal free; later refused until O-2 brackets. | `20261117100200` |
-| Reads + reconciliation | Settlement summary, paged ledger (platform legs hidden), per-collection and platform reconciliation. | `20261117100300` |
-| Reference lock | After any applied contribution: no switching codes on, no format change, no new tier prefix (DB-enforced, row-locked). Exact owner message in the UI. | `20261117100400`, `code-actions.ts`, `CodeSettingsPanel.tsx` |
-| Payment reminders | Organiser-sent to unpaid members only: in-app + email (opt-out, community notice, pause switch honoured), 24 h cooldown, history, append-only. Worker fan-out + email template. | `20261117100500`, worker processor / rules / templates |
-| Web | Money tab (settlement, withdrawals, ledger), Reminders tab, notification label. | `MoneyPanel.tsx`, `RemindersPanel.tsx`, `money-actions.ts`, `packages/db/src/collection-money.ts`, `lib/notification-display.ts` |
+| DB read | `app.collection_payment_activity(collection, filter, limit, offset)`: every payment attempt by contributor name with **payment status** (successful / pending / under_review / failed) kept separate from **withdrawal eligibility** (scheduled / awaiting_provider / held / released), per-payment fees (processing 1.5 %, Kolekto 0.5 %, who bore them, net credited — null unless successful), plus withdrawals (balance.view only, masked destination). transaction.view gate; FORBIDDEN / INVALID_FILTER; paged in SQL. Additive, read-only; rollback = drop the function. | `20261117130000_collection_payment_activity.sql`, pgTAP 62 (24 tests) |
+| DB client | `listCollectionPaymentActivity` (bigint money). | `packages/db/src/collection-money.ts` |
+| Header | Name, status, description, category · amount model · created · closes; **Share** (primary), status actions, Preview, Settings. | `CollectionDetailClient.tsx` |
+| Share | Modal: preview card, public link, Copy (clipboard + legacy fallback, live feedback), native share when the browser has it, WhatsApp / Telegram / X / Facebook / Email / Open. Draft shows "not ready to share". | `ShareCollection.tsx` |
+| Four figures | Total raised (gross, successful only) · Available balance + Withdraw · Pending balance (hint says T+1 or "awaiting the payment provider" from DB state) · Total withdrawn (paid only). Collapsed "How these figures fit together" bridge, every number from the DB. | `FinancialOverview.tsx` |
+| Activity | Payments and withdrawals with filters All / Successful / Pending / Failed / Withdrawals; row opens fee breakdown, eligibility, reference. Balance ledger and collection history kept, collapsed. Stale-response guard on filter switching. | `PaymentActivity.tsx` |
+| Removed from owner UI | Settlement details card; acknowledgement filters, checkboxes, bulk "acknowledge" dialog and badges. Audit rows and the export's acknowledged columns are kept. | `MoneyPanel.tsx`, `ContributorsPanel.tsx`, `page.tsx` |
+| Withdraw dialog | Amount parsed to kobo and blocked above available ("You can withdraw up to ₦X"), Withdraw all, transfer fee, you receive, confirm step; "Processing" until confirmed; separate text for "still in T+1" vs "T+1 passed, provider has not released yet". Server still re-checks under lock. | `MoneyPanel.tsx`, `money-view.ts` |
 
-### Verification (session 24)
+### Verification (session 26)
 
-- `itest:reset` replayed all **139** migrations cleanly; full pgTAP suite as `postgres`: **62/62 files pass** (new: 57 settlement 44, 58 withdrawals 52, 59 reference lock 19, 60 reminders 33; 02/03/18/49/51 guardrails updated on the record). The session-23 failures 32/34/38 pass after the reset.
-- Worker `npm test` **810/810**; web vitest **215/215**; web `tsc` clean; root `npm run typecheck` clean; eslint clean on changed web files; `npm run invariants` all seven hold.
-- **Not verified:** the Money and Reminders tabs in a browser (dev DB lacks the six migrations); a two-session withdrawal race test; reminder email actually delivered (bulk caps are zero); Playwright E2E; the `security-review` skill was not run.
+- pgTAP 62: 24/24 on itest (session 25: all 63 files passed). Migration applied to local dev + itest by hand, not via `itest:reset`.
+- Root `tsc --build` clean; web `tsc --noEmit` clean; web vitest **233/233**; eslint clean on the collection folder; `npm run invariants` all seven hold.
+- Browser (local dev, treasurer `register-qa@example.test`, open fundraiser, 3 successful + 2 failed payments): header + Share modal (copy feedback, public link returns 200 signed out); four figures (₦6,500 / ₦1,274 / ₦5,096 / ₦0); payment detail fee breakdown (₦1,300 − ₦19.50 − ₦6.50 = ₦1,274); Activity filters (Successful 3, Failed 2, Pending 0, Withdrawals 0 — correct for this data); balance ledger labels; Contributors with no acknowledgement UI; withdraw dialog over-limit message and confirm step (not submitted); 375 px with no horizontal overflow; no app errors in console or server log.
+- Local dev data changed for the check: one payment's provider settlement recorded by hand (`LOCAL-QA-STL-1`) and released; QA user's identity level set to verified and **restored to `none`**.
+- **Not verified:** submitting a withdrawal in the browser; pending / under-review / withdrawal rows in the browser (pgTAP 62 only); Playwright E2E; full pgTAP replay via `itest:reset`; the `security-review` skill (manual check only: function is SECURITY DEFINER, `search_path=''`, revoked from public, granted to authenticated, permission-gated, limit clamped 1–200).
 
 ### Things to flag
 
-- Nobody can withdraw until identity verification exists (`IDENTITY_VERIFICATION_REQUIRED`, DEC-04).
-- Reminder emails defer and age out after 72 h while bulk email caps are zero; in-app works.
-- The least-privilege worker role has no grant on `app.release_due_settlements`; release needs that grant or an operator call. Provider settlements must be recorded by operations (psql runbook in the product doc) until a settlement feed exists.
-- Officers with `balance.view` can still SELECT ledger tables directly (pre-existing), exposing platform fee legs (D-28).
-- Local dev DB QA officer `register-qa@example.test` from session 23 still exists.
+- **T+1 is automatic but not end-to-end yet.** `release_due_settlements` runs in the worker, but release also needs the provider's settlement confirmation, which is still recorded by hand (`record_provider_settlement`). Until a Paystack settlement sync exists (PA-04 / PA-10 unverified), past-T+1 money shows "awaiting the payment provider". The least-privilege worker role still lacks the release grant.
+- Withdrawal status "Reversed" from the brief does not exist in the model; Paystack transfer reversal arrives with Transfers (§18).
+- Nobody can withdraw until identity verification exists; no self-serve flow.
+- The Paystack cost is never shown (D-28); fees shown are Kolekto's processing + platform fees as frozen on the attempt.
 
-### Still open
+### Still open (in order)
 
-- Owner go-ahead to commit sessions 23 + 24, push, PR.
-- Apply the six migrations to the local dev DB and browser-check Money / Reminders tabs.
-- Two-session withdrawal concurrency test; Playwright E2E; security review.
-- Refunds (D-31), recurring-collection reminders, settlement feed from Paystack.
+1. Owner go-ahead to commit sessions 25 + 26, push, PR.
+2. Paystack settlement sync behind a flag, so T+1 release needs no operator (verify PA-04 / PA-10 against the sandbox first); grant the worker role the release function.
+3. Paystack Transfers behind a flag (decision §18), including transfer.reversed → "Reversed".
+4. Security review of the branch; Playwright E2E for the redesigned page; `itest:reset` replay.
 
 ### Paste-ready prompt for the next session
 
 ```
-Continue on branch feat/payment-receipts-alarms. Sessions 23 and 24 are UNCOMMITTED. First read docs/phase-4/payment-integration-status-2026-11-12.md, section "Latest report — read this first", then docs/product/COLLECTION-LEDGER-SETTLEMENT-WITHDRAWALS-REMINDERS.md.
+Continue on branch feat/payment-receipts-alarms. First read docs/phase-4/payment-integration-status-2026-11-12.md ("Latest report — read this first"), then docs/phase-4/financial-decisions.md §18–§19 and docs/product/COLLECTION-LEDGER-SETTLEMENT-WITHDRAWALS-REMINDERS.md §14.
 
-1. Ask the owner before committing. Check the diff for secrets. Suggested commits: session 23 (register), session 24 DB (six 20261117* migrations + tests 57–60 + guardrail test updates + itest.mjs), worker, web, docs.
-2. Apply the six 20261117* migrations to the LOCAL dev DB only (supabase migration up --local), then browser-check the Money and Reminders tabs and the reference-lock banner at 375 px.
-3. Run the security-review skill on the branch (payments, RLS, withdrawals).
-4. Add a two-session concurrency test for request_withdrawal.
-5. Ask the owner before pushing and opening a PR to main. Never apply to staging or production without explicit approval.
+1. If sessions 25 + 26 are still uncommitted, ask the owner before committing (check the diff for secrets; use caveman-commit).
+2. Run the security-review skill on the branch, then itest:reset and the full pgTAP suite, then a Playwright E2E for the collection page (share, filters, payment detail, withdraw dialog).
+3. Then, only with owner approval: Paystack settlement sync BEHIND A FLAG OFF BY DEFAULT — verify PA-04 / PA-10 against the sandbox before writing the adapter; record provider settlement idempotently (signature-verified, matched by reference and amount), then let release_due_settlements run; grant the worker role the release function in an additive migration.
 
-Do not take money anywhere but Paystack sandbox. Never log or echo a secret or webhook key. Never compute money in the browser. Keep contact columns off by default in exports.
+Never log or echo a secret key. Never compute money in the browser. Never apply to staging or production without explicit approval.
 ```
 
 ---

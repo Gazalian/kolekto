@@ -673,3 +673,39 @@ Built uncommitted on `feat/payment-receipts-alarms`; design and runbook in
   with no applied contribution; in-app to linked accounts, email to the roll
   address honouring opt-out, the community notice and `email_sending_enabled`;
   24-hour per-member cooldown; never automatic.
+
+## 18 · Decisions of 2026-11-17, later (owner)
+
+- **Paystack Transfers: build behind a flag, off by default.** Reverses the
+  "no Paystack Transfers, no saved bank accounts" half of §17 for *building*,
+  not for *operating*. Build verified withdrawal destinations (Paystack account
+  resolution, 48-hour cooling-off per D-08), transfer records, transfer
+  webhooks and automatic withdrawals end to end, tested against the fake
+  provider and Paystack sandbox only. Manual payout (§17) stays the live path
+  until the owner switches the flag on. Switching it on needs, at least:
+  PA-04 (subaccount settlement timing), PA-08 (transfer idempotency) and PA-09
+  (transfer timeout semantics) verified; O-1 (counsel, holding third-party
+  funds) answered; the Paystack account's transfer capability and balance
+  funding confirmed.
+- **Collection page: Overview | Contributors | Activity, Settings from the
+  header.** The money summary lives on Overview; there is no separate Money
+  tab. Built 2026-11-17 (see the status report).
+
+## 19 · Decisions of 2026-11-17, collection page brief (owner)
+
+- **Payment status is never derived from withdrawal eligibility.** A payment is
+  "Successful" from the moment its contribution is recorded (provider result
+  verified by the backend). T+1 and provider settlement only decide when its
+  net amount moves from the pending balance to the available balance. Every
+  organiser-facing list labels the two separately.
+- **Four headline figures:** Total raised (gross of successful payments),
+  Available balance, Pending balance, Total withdrawn. They are not slices of
+  one total; the fee bridge (gross → fees → credited → balances) is shown on
+  request, every line read from the database.
+- **No organiser-facing settlement or acknowledgement step.** Release to
+  available stays automatic and provider-gated (§17). Contribution
+  acknowledgement is removed from the collection page; its table and function
+  remain as an audit record and gate nothing.
+- **Fees are visible per payment** as the frozen Processing fee and Kolekto fee
+  lines, the bearer and the credited amount. Paystack's own cost stays internal
+  (D-28 unchanged).

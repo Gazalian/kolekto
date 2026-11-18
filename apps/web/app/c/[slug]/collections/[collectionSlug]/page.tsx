@@ -17,6 +17,7 @@ import {
   collectionDoorTotals,
   collectionHasContributorActivity,
   countCollectionAudience,
+  getCollectionExpectedSummary,
   getCollectionFinancialOverview,
   listCollectionContributors,
 } from "@kolekto/db";
@@ -33,6 +34,7 @@ import {
   type OverviewView,
 } from "./contributor-register.ts";
 import { DOOR_PAGE_SIZE, ROLL_PAGE_SIZE } from "./roll.ts";
+import type { ExpectedView } from "./money-view.ts";
 
 export async function generateMetadata({ params }: { params: Promise<{ collectionSlug: string }> }) {
   const { collectionSlug } = await params;
@@ -270,6 +272,43 @@ export default async function CollectionDetailPage({
     }
   }
 
+  // Who is expected to pay and what they still owe (20261117120000): a managed
+  // member list only. Counted by the database; not money received.
+  let expected: ExpectedView | null = null;
+  if (overview && collection.participation_mode === "managed" && collection.status !== "draft") {
+    try {
+      const summary = await getCollectionExpectedSummary(await requireCallerContext(), collection.id);
+      expected = summary.supported
+        ? {
+            supported: true,
+            expectedCount: summary.expectedCount,
+            paidCount: summary.paidCount,
+            partlyPaidCount: summary.partlyPaidCount,
+            unpaidCount: summary.unpaidCount,
+            exemptCount: summary.exemptCount,
+            outstandingKobo: summary.outstandingKobo.toString(),
+            outstandingComplete: summary.outstandingComplete,
+          }
+        : null;
+    } catch {
+      expected = null;
+    }
+  }
+
+  // Withdrawals need an identity-verified officer (PRD 10.1). Read here only
+  // to explain a refusal before the form opens; app.request_withdrawal checks
+  // it again. Unknown (null) when the row cannot be read.
+  let identityVerified: boolean | null = null;
+  if (hasPermission(access, "withdrawal.request")) {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (user) {
+      const { data: me } = await supabase.from("users").select("identity_level").eq("id", user.id).maybeSingle();
+      identityVerified = me ? (me as { identity_level: string }).identity_level === "identity_verified" : null;
+    }
+  }
+
   // Phase 7: once the provider has confirmed money here, reference settings
   // can no longer gain anything new. The database enforces it; this lets the
   // settings screen say so before anyone presses Save.
@@ -328,10 +367,11 @@ export default async function CollectionDetailPage({
       })}
       checkInTotals={doorTotals}
       overview={overview}
+      expected={expected}
+      identityVerified={identityVerified}
       contributorFirstPage={contributorPage.rows}
       contributorTotal={contributorPage.total}
       referencesLocked={referencesLocked}
-      loadedAt={new Date().toISOString()}
       permissions={{
         canEdit: hasPermission(access, "collection.draft"),
         canPublish: hasPermission(access, "collection.publish"),
@@ -341,7 +381,6 @@ export default async function CollectionDetailPage({
         canExport: hasPermission(access, "member.export"),
         canCheckIn: hasPermission(access, "attendance.check_in"),
         canConfigureCodes: hasPermission(access, "collection.configure_codes"),
-        canAcknowledge: hasPermission(access, "contribution.acknowledge"),
         canViewContact: hasPermission(access, "member.view_contact"),
         canViewBalances: hasPermission(access, "balance.view"),
         canRequestWithdrawal: hasPermission(access, "withdrawal.request"),

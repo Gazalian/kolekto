@@ -174,3 +174,108 @@ real money has moved.
 * Recurring collections have no reminders; refunds deferred (D-31).
 * Send-time email recheck does not re-check "still unpaid"; the email tells
   recent payers to ignore it.
+
+## 13. Collection page redesign (2026-11-17, session 25)
+
+The collection page is now **Overview | Contributors | Activity**, with a
+**Settings** button in the header (it replaces the tabs with the settings
+screen and a "Back to the collection" button). The Money and Reminders tabs
+are gone; their parts moved.
+
+| Where | What |
+|---|---|
+| Overview | Total collected · **Available to withdraw** (with **Withdraw**) · Pending settlement · Still expected (member lists) or Total withdrawn. Target progress. Members expected / Paid / Yet to pay (member lists) or Contributors / Payments / Acknowledged. Fees, after fees, on hold, being withdrawn. Withdrawals in progress (approve / reject / cancel). Recent activity (5 ledger rows). "How settlement works" (collapsed). Share link. Collection details (collapsed once live). |
+| Contributors | Send a reminder to everyone / Announce changes. Views: Who has paid (the reminders roster with bulk remind), Payments (the register), Manage members (the roll), Check-in (events), Export (roll export). |
+| Activity | Money movements with filters (All, Contributions, Settlement, Withdrawals, Fees, Refunds & disputes, Adjustments), each row opens to show its reference and buckets; full withdrawal history; collection history (audit log). |
+
+**Withdraw.** The button is never silently disabled. If the officer cannot
+withdraw, a dialog says why, first reason wins: identity not verified; a
+withdrawal already in progress; the free withdrawal used; funds still settling
+(with the next release time); nothing received; nothing available. These are
+explanations only (`money-view.ts`, unit-tested); `app.request_withdrawal`
+re-checks all of them and more. Otherwise the dialog shows the available
+balance, amount, destination, fee (free first withdrawal), what the organiser
+receives, and a confirmation step.
+
+**New database reads** (additive, read-only, `authenticated` execute):
+
+| Migration | Function | Permission |
+|---|---|---|
+| `20261117120000_collection_expected_summary.sql` | `app.collection_expected_summary(collection)` — expected / paid / partly paid / not paid / exempt counts and the amount still expected, for managed, member-audience, one-time collections. Obligation expects `expected − waived`; received is capped per obligation; audience members without an obligation expect the fixed amount (else `outstanding_complete = false`, shown as "At least"). Never part of a balance. | transaction.view |
+| `20261117120100_collection_ledger_by_kind.sql` | `app.collection_ledger_by_kind(collection, kind, limit, offset)` — `collection_ledger` with the kind filter applied before paging. Unknown kind → `INVALID_KIND`. | balance.view |
+
+Rollback: drop the two functions; redeploy the previous web build.
+
+pgTAP `supabase/tests/61_collection_expected_summary.sql` (17).
+
+## 14. Collection page redesign, payment activity and fee transparency (2026-11-17, session 26)
+
+Owner brief: a successful payment must look successful at once; T+1 decides
+only when money can be withdrawn; no settlement or acknowledgement step for
+the organiser; four money figures; who paid and how much in Activity; fees
+visible on every payment; a prominent Share button.
+
+**Payment status and withdrawal eligibility are separate, and already were in
+the data.** A payment is successful when `complete_payment_capture` writes its
+contribution (backend verification of the provider's result, webhook signature
+checked, idempotent). Its withdrawal eligibility is its
+`contribution_settlements` row: `scheduled_release_at` (T+1, 05:00 Lagos,
+D-09), provider confirmation, `released_at`. No schema change was needed. The
+"successful payments show as Pending" bug was presentation: Activity listed
+ledger journals and printed the bucket ("+₦4,900 Pending") next to "Payment
+received". Ledger rows now name the balance ("Pending balance"), and Activity
+lists payments instead (below).
+
+| Brief's field | Where it lives |
+|---|---|
+| `payment_status` | contribution exists → successful; else `payment_attempts.status` (pending / under review / failed) |
+| `payment_verified_at` | `contributions.captured_at` |
+| `withdrawal_eligibility_status` | `contribution_settlements.status` + provider confirmation (scheduled / awaiting_provider / held / released) |
+| `eligible_for_withdrawal_at` | `contribution_settlements.scheduled_release_at` |
+| `settlement_reference` | `contribution_settlements.provider_settlement_ref` |
+
+**New read** `20261117130000_collection_payment_activity.sql`:
+`app.collection_payment_activity(collection, filter, limit, offset)` — one row
+per payment attempt (payer name, amount, payment status, verified at, frozen
+fee lines, bearer, net, eligibility, eligible at, released at) and, with
+balance.view, per withdrawal (amount, fee, status, bank + last four digits).
+Filters all / successful / pending / failed / withdrawals, applied before
+paging. transaction.view. Never returns the provider's cost (D-28), contact
+details or full account numbers. pgTAP `62_collection_payment_activity.sql` (24).
+Rollback: drop the function.
+
+**Page** (`apps/web/app/c/[slug]/collections/[collectionSlug]/`):
+
+| Where | What |
+|---|---|
+| Header | Name, status, description (two lines), category · amount model · created · closes. **Share** (primary), status actions, Preview, Settings. |
+| Share dialog (`ShareCollection.tsx`) | Preview of title and description, the public link (`collectionPath`, works signed out) with Copy and "Copied" feedback, native share where the browser has it, WhatsApp, Telegram, X, Facebook, Email, Open. Draft: explains the link starts working on publish. |
+| Overview (`FinancialOverview.tsx`) | Exactly four figures: Total raised (gross, successful payments), Available balance (+ Withdraw), Pending balance, Total withdrawn. "How these figures fit together" (collapsed) bridges gross → fees → credited → pending / available / being withdrawn / on hold / withdrawn, every line from the database. People stats. Recent activity (6 rows, by name). Withdrawals in progress. |
+| Activity (`PaymentActivity.tsx`) | Payments and withdrawals with filters All / Successful / Pending / Failed / Withdrawals. Each payment row: payer, amount, fee, status badge; opens a breakdown (contribution, processing fee, Kolekto fee, total fees, who pays them, amount charged when the contributor pays, credited amount, withdrawal eligibility, reference, confirmed time). Balance ledger and collection history are collapsed below. |
+| Removed | "How settlement works" card, settlement filter name, the Acknowledge buttons / filters / badges in Payments (the table and `app.acknowledge_contributions` stay for audit; nothing used them to gate money). |
+| Withdraw | Available balance, amount (refused above available before sending; the database re-checks), "Withdraw all", bank details, transfer fee, amount received, confirm. "Can't withdraw yet" names the real reason: inside T+1, or past T+1 but the provider has not released the funds. |
+
+**Automatic T+1 — what is automatic and what is not.** The release
+(`app.release_due_settlements`, worker every 5 minutes, row locks + unique
+journal key, idempotent) needs no organiser or admin action. It releases a
+payment only when T+1 has passed AND the provider's settlement of that payment
+is recorded (§3, owner decision 2026-11-17), so Available never claims money
+Kolekto cannot fund. Two production dependencies remain and are not solved by
+this session:
+
+1. **Provider settlement is still recorded by hand** (`app.record_provider_settlement`
+   from an operator session). Automating it needs a Paystack settlement reader
+   (Settlements API → per-transaction amounts). Not built: PA-04 (subaccount
+   settlement timing) and PA-10 (can a settlement be decomposed into its
+   transactions) are unverified, and an adapter written against a guess would
+   be trusted. Until then a payment past T+1 shows "waiting for the payment
+   provider to release the funds", never a manual step for the organiser.
+2. **The least-privilege worker role cannot execute the release** (§10). In an
+   environment where releases should happen, grant it or run the worker with
+   the operator connection.
+
+**Fees.** Shown per payment from the contribution's frozen lines (D-16):
+Processing fee + Kolekto fee = total fees; host absorbs → credited = contribution
+− fees; contributor pays → charged = contribution + fees, credited = contribution.
+The Paystack fee Paystack reports is stored (`contributions.provider_fee_kobo`,
+D-11) but is Kolekto's cost and is never shown to organisers (D-28).

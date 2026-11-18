@@ -159,17 +159,27 @@ interface LedgerRow {
   total_count: string;
 }
 
+/** A kind-of-movement filter, applied by the database before paging (20261117120100). */
+export type LedgerKind = "all" | "contributions" | "fees" | "settlement" | "withdrawals" | "refunds" | "adjustments";
+
 export async function listCollectionLedger(
   caller: CallerContext,
-  input: { collectionId: string; limit: number; offset: number },
+  input: { collectionId: string; limit: number; offset: number; kind?: LedgerKind },
 ): Promise<CollectionLedgerPage> {
   const rows = await call(caller, (tx) =>
-    tx<LedgerRow[]>`
-      select journal_id, occurred_at, posted_at, source_type, reason, reference,
-             pending_change, available_change, withdrawing_change, withdrawn_change, other_change,
-             reverses_journal_id, total_count
-      from app.collection_ledger(${input.collectionId}, ${input.limit}, ${input.offset})
-    `,
+    input.kind
+      ? tx<LedgerRow[]>`
+          select journal_id, occurred_at, posted_at, source_type, reason, reference,
+                 pending_change, available_change, withdrawing_change, withdrawn_change, other_change,
+                 reverses_journal_id, total_count
+          from app.collection_ledger_by_kind(${input.collectionId}, ${input.kind}, ${input.limit}, ${input.offset})
+        `
+      : tx<LedgerRow[]>`
+          select journal_id, occurred_at, posted_at, source_type, reason, reference,
+                 pending_change, available_change, withdrawing_change, withdrawn_change, other_change,
+                 reverses_journal_id, total_count
+          from app.collection_ledger(${input.collectionId}, ${input.limit}, ${input.offset})
+        `,
   );
   return {
     rows: rows.map((r) => ({
@@ -490,4 +500,171 @@ export async function collectionHasContributorActivity(caller: CallerContext, co
     tx<{ active: boolean }[]>`select app.collection_has_contributor_activity(${collectionId}) as active`,
   );
   return row?.active === true;
+}
+
+// ── Who is expected to pay (20261117120000) ──────────────────────────────────
+
+export type ExpectedUnsupportedReason = "no_member_list" | "recurring_collection";
+
+/**
+ * Expected payers and the amount members are still EXPECTED to pay. Not money
+ * received and never part of a balance: shown beside the ledger figures.
+ */
+export interface CollectionExpectedSummary {
+  supported: boolean;
+  unsupportedReason: ExpectedUnsupportedReason | null;
+  expectedCount: number;
+  paidCount: number;
+  partlyPaidCount: number;
+  unpaidCount: number;
+  exemptCount: number;
+  expectedKobo: bigint;
+  receivedKobo: bigint;
+  outstandingKobo: bigint;
+  /** False when some expected members' amounts are unknown: outstanding is then a floor. */
+  outstandingComplete: boolean;
+}
+
+export async function getCollectionExpectedSummary(
+  caller: CallerContext,
+  collectionId: string,
+): Promise<CollectionExpectedSummary> {
+  const [r] = await call(caller, (tx) =>
+    tx<{
+      supported: boolean;
+      unsupported_reason: ExpectedUnsupportedReason | null;
+      expected_count: number;
+      paid_count: number;
+      partly_paid_count: number;
+      unpaid_count: number;
+      exempt_count: number;
+      expected_kobo: string;
+      received_kobo: string;
+      outstanding_kobo: string;
+      outstanding_complete: boolean;
+    }[]>`
+      select supported, unsupported_reason, expected_count, paid_count, partly_paid_count, unpaid_count,
+             exempt_count, expected_kobo::text, received_kobo::text, outstanding_kobo::text, outstanding_complete
+      from app.collection_expected_summary(${collectionId})
+    `,
+  );
+  if (!r) throw new Error("collection_expected_summary returned no row");
+  return {
+    supported: r.supported,
+    unsupportedReason: r.unsupported_reason,
+    expectedCount: r.expected_count,
+    paidCount: r.paid_count,
+    partlyPaidCount: r.partly_paid_count,
+    unpaidCount: r.unpaid_count,
+    exemptCount: r.exempt_count,
+    expectedKobo: BigInt(r.expected_kobo),
+    receivedKobo: BigInt(r.received_kobo),
+    outstandingKobo: BigInt(r.outstanding_kobo),
+    outstandingComplete: r.outstanding_complete,
+  };
+}
+
+// ── Payment activity (20261117130000) ────────────────────────────────────────
+
+/** What happened to the payment itself. Never changed by T+1. */
+export type ActivityPaymentStatus = "successful" | "pending" | "under_review" | "failed";
+/** When a successful payment's net can be withdrawn. Null for anything else. */
+export type ActivityEligibility = "scheduled" | "awaiting_provider" | "held" | "released";
+export type ActivityFilter = "all" | "successful" | "pending" | "failed" | "withdrawals";
+
+/**
+ * One payment attempt or one withdrawal. Fees are the frozen lines of a
+ * successful payment (D-16); null for anything that did not succeed. The
+ * provider's own cost to Kolekto is never here (D-28).
+ */
+export interface CollectionActivityRow {
+  kind: "payment" | "withdrawal";
+  id: string;
+  occurredAt: string;
+  name: string;
+  isMember: boolean;
+  reference: string;
+  paymentStatus: ActivityPaymentStatus | null;
+  verifiedAt: string | null;
+  amountKobo: bigint;
+  chargedKobo: bigint | null;
+  processingFeeKobo: bigint | null;
+  kolektoFeeKobo: bigint | null;
+  totalFeesKobo: bigint | null;
+  netKobo: bigint | null;
+  feeBearer: "contributor_pays" | "community_absorbs" | null;
+  eligibility: ActivityEligibility | null;
+  eligibleAt: string | null;
+  releasedAt: string | null;
+  withdrawalStatus: WithdrawalStatus | null;
+  destination: string | null;
+  completedAt: string | null;
+  detail: string | null;
+}
+
+export async function listCollectionPaymentActivity(
+  caller: CallerContext,
+  input: { collectionId: string; filter: ActivityFilter; limit: number; offset: number },
+): Promise<{ rows: CollectionActivityRow[]; total: number }> {
+  const rows = await call(caller, (tx) =>
+    tx<{
+      kind: "payment" | "withdrawal";
+      id: string;
+      occurred_at: Date;
+      name: string;
+      is_member: boolean;
+      reference: string;
+      payment_status: ActivityPaymentStatus | null;
+      verified_at: Date | null;
+      amount_kobo: string;
+      charged_kobo: string | null;
+      processing_fee_kobo: string | null;
+      kolekto_fee_kobo: string | null;
+      total_fees_kobo: string | null;
+      net_kobo: string | null;
+      fee_bearer: "contributor_pays" | "community_absorbs" | null;
+      eligibility: ActivityEligibility | null;
+      eligible_at: Date | null;
+      released_at: Date | null;
+      withdrawal_status: WithdrawalStatus | null;
+      destination: string | null;
+      completed_at: Date | null;
+      detail: string | null;
+      total_count: string;
+    }[]>`
+      select kind, id, occurred_at, name, is_member, reference, payment_status, verified_at,
+             amount_kobo::text, charged_kobo::text, processing_fee_kobo::text, kolekto_fee_kobo::text,
+             total_fees_kobo::text, net_kobo::text, fee_bearer, eligibility, eligible_at, released_at,
+             withdrawal_status, destination, completed_at, detail, total_count::text
+      from app.collection_payment_activity(${input.collectionId}, ${input.filter}, ${input.limit}, ${input.offset})
+    `,
+  );
+  const big = (value: string | null): bigint | null => (value === null ? null : BigInt(value));
+  return {
+    total: rows[0] ? Number(rows[0].total_count) : 0, // invariant-allow: total_count is a row count (bigint from count(*) over ()), not money
+    rows: rows.map((r) => ({
+      kind: r.kind,
+      id: r.id,
+      occurredAt: r.occurred_at.toISOString(),
+      name: r.name,
+      isMember: r.is_member,
+      reference: r.reference,
+      paymentStatus: r.payment_status,
+      verifiedAt: iso(r.verified_at),
+      amountKobo: BigInt(r.amount_kobo),
+      chargedKobo: big(r.charged_kobo),
+      processingFeeKobo: big(r.processing_fee_kobo),
+      kolektoFeeKobo: big(r.kolekto_fee_kobo),
+      totalFeesKobo: big(r.total_fees_kobo),
+      netKobo: big(r.net_kobo),
+      feeBearer: r.fee_bearer,
+      eligibility: r.eligibility,
+      eligibleAt: iso(r.eligible_at),
+      releasedAt: iso(r.released_at),
+      withdrawalStatus: r.withdrawal_status,
+      destination: r.destination,
+      completedAt: iso(r.completed_at),
+      detail: r.detail,
+    })),
+  };
 }

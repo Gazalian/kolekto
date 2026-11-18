@@ -1,11 +1,10 @@
 "use client";
 
 import { Badge, Banner, Button, Card, CardBody, Dialog } from "@kolekto/ui";
-import { CheckCheck, Download, Search } from "lucide-react";
+import { Download, Search } from "lucide-react";
 import { useMemo, useState, useTransition } from "react";
 import { formatDate } from "../../../../../lib/collection-display.ts";
 import {
-  acknowledgeContributionsAction,
   contributorDetailAction,
   exportContributorsAction,
   listContributorsAction,
@@ -22,7 +21,11 @@ import {
   type ContributorView,
 } from "./contributor-register.ts";
 
-type Filter = "all" | "acknowledged" | "unacknowledged";
+/**
+ * The register's server filter. Acknowledging a payment is no longer part of
+ * the workflow (a verified payment is successful without it), so only "all".
+ */
+type Filter = "all";
 
 /**
  * The contributor register (design §2.3–2.6).
@@ -30,7 +33,7 @@ type Filter = "all" | "acknowledged" | "unacknowledged";
  * A list of people who have successfully paid — not a transaction log. Failed
  * and pending attempts never reach it. The default row carries only what an
  * organiser reads at a glance: who, how much, what they chose, the first
- * answers, when, and whether it has been acknowledged. Everything else is in
+ * answers, when, and that it succeeded. Everything else is in
  * the details dialog, and contact details only there or in an export the
  * organiser chose them for.
  *
@@ -44,7 +47,6 @@ export function ContributorsPanel({
   firstPage,
   firstTotal,
   counts,
-  loadedAt,
   flags,
   permissions,
 }: {
@@ -53,26 +55,19 @@ export function ContributorsPanel({
   fields: ContributorFieldDef[];
   firstPage: ContributorView[];
   firstTotal: number;
-  counts: { contributions: number; acknowledged: number };
-  /** When the page was rendered: "acknowledge all" stops here. */
-  loadedAt: string;
+  counts: { contributions: number };
   flags: { hasOptions: boolean; isEvent: boolean; isRecurring: boolean; isManaged: boolean };
-  permissions: { canAcknowledge: boolean; canExport: boolean; canViewContact: boolean };
+  permissions: { canExport: boolean; canViewContact: boolean };
 }) {
   const [rows, setRows] = useState<ContributorView[]>(firstPage);
   const [total, setTotal] = useState(firstTotal);
-  const [filter, setFilter] = useState<Filter>("all");
+  const filter: Filter = "all";
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [acknowledgedCount, setAcknowledgedCount] = useState(counts.acknowledged);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
   const [message, setMessage] = useState<{ tone: "danger" | "success" | "info"; text: string } | null>(null);
   const [detail, setDetail] = useState<ContributorView | null>(null);
-  const [confirmAll, setConfirmAll] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
-
-  const unacknowledgedCount = Math.max(0, counts.contributions - acknowledgedCount);
 
   function load(next: { filter: Filter; search: string; append: boolean }): void {
     setMessage(null);
@@ -88,83 +83,13 @@ export function ContributorsPanel({
       }
       setRows(next.append ? [...rows, ...result.rows] : result.rows);
       setTotal(result.total ?? 0);
-      if (!next.append) setSelected(new Set());
     });
-  }
-
-  function chooseFilter(next: Filter): void {
-    setFilter(next);
-    load({ filter: next, search, append: false });
   }
 
   function submitSearch(): void {
     const trimmed = searchInput.trim();
     setSearch(trimmed);
     load({ filter, search: trimmed, append: false });
-  }
-
-  function markAcknowledged(ids: ReadonlySet<string> | "all", at: string): void {
-    setRows((current) =>
-      current
-        .map((row) =>
-          (ids === "all" ? !row.acknowledgedAt : ids.has(row.id)) && !row.acknowledgedAt
-            ? { ...row, acknowledgedAt: at, acknowledgedByName: "You" }
-            : row,
-        )
-        // Under "Not acknowledged", an acknowledged row has left the filter.
-        .filter((row) => filter !== "unacknowledged" || !row.acknowledgedAt),
-    );
-  }
-
-  function acknowledge(ids: string[]): void {
-    setMessage(null);
-    startTransition(async () => {
-      const result = await acknowledgeContributionsAction(slug, collectionSlug, { contributionIds: ids });
-      if (result.error) {
-        setMessage({ tone: "danger", text: result.error });
-        return;
-      }
-      const count = result.count ?? 0;
-      setAcknowledgedCount((value) => value + count);
-      if (filter === "unacknowledged") setTotal((value) => Math.max(0, value - count));
-      markAcknowledged(new Set(ids), new Date().toISOString());
-      setSelected(new Set());
-      if (detail && ids.includes(detail.id)) {
-        setDetail({ ...detail, acknowledgedAt: detail.acknowledgedAt ?? new Date().toISOString(), acknowledgedByName: detail.acknowledgedByName ?? "You" });
-      }
-      setMessage({
-        tone: "success",
-        text: count === 0 ? "Those were already acknowledged." : `Acknowledged ${count} ${count === 1 ? "contribution" : "contributions"}.`,
-      });
-    });
-  }
-
-  function acknowledgeAll(): void {
-    setConfirmAll(false);
-    setMessage(null);
-    startTransition(async () => {
-      const result = await acknowledgeContributionsAction(slug, collectionSlug, { all: true, asOf: loadedAt });
-      if (result.error) {
-        setMessage({ tone: "danger", text: result.error });
-        return;
-      }
-      const count = result.count ?? 0;
-      setAcknowledgedCount((value) => value + count);
-      // Reload rather than guess which rows changed: the server decided.
-      const reloaded = await listContributorsAction(slug, collectionSlug, { search, filter, offset: 0 });
-      if (reloaded.rows) {
-        setRows(reloaded.rows);
-        setTotal(reloaded.total ?? 0);
-      }
-      setSelected(new Set());
-      setMessage({
-        tone: "success",
-        text:
-          count === 0
-            ? "Everything up to when you opened this page was already acknowledged."
-            : `Acknowledged ${count} ${count === 1 ? "contribution" : "contributions"}. Payments that arrived after you opened this page were left for you to see first.`,
-      });
-    });
   }
 
   function openDetail(row: ContributorView): void {
@@ -174,18 +99,6 @@ export function ContributorsPanel({
       if (result.row) setDetail(result.row);
     });
   }
-
-  function toggle(id: string, on: boolean): void {
-    setSelected((current) => {
-      const next = new Set(current);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  }
-
-  const selectableIds = rows.filter((row) => !row.acknowledgedAt).map((row) => row.id);
-  const allPageSelected = selectableIds.length > 0 && selectableIds.every((id) => selected.has(id));
 
   if (counts.contributions === 0) {
     return (
@@ -204,21 +117,11 @@ export function ContributorsPanel({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Filter contributors">
-          <FilterChip active={filter === "all"} onClick={() => chooseFilter("all")} label="All" count={counts.contributions} />
-          <FilterChip
-            active={filter === "unacknowledged"}
-            onClick={() => chooseFilter("unacknowledged")}
-            label="Not acknowledged"
-            count={unacknowledgedCount}
-          />
-          <FilterChip
-            active={filter === "acknowledged"}
-            onClick={() => chooseFilter("acknowledged")}
-            label="Acknowledged"
-            count={acknowledgedCount}
-          />
-        </div>
+        <p className="text-sm text-[var(--color-text-muted)]">
+          <span className="font-semibold tabular-nums text-[var(--color-text)]">{counts.contributions.toLocaleString()}</span>{" "}
+          successful {counts.contributions === 1 ? "payment" : "payments"}, each counted the moment the payment provider
+          confirms it.
+        </p>
         {permissions.canExport && (
           <Button variant="secondary" size="sm" onClick={() => setExportOpen(true)}>
             <Download className="h-4 w-4" aria-hidden="true" /> Export
@@ -254,34 +157,6 @@ export function ContributorsPanel({
         </Button>
       </form>
 
-      {permissions.canAcknowledge && (selected.size > 0 || unacknowledgedCount > 0) && (
-        <div className="flex flex-wrap items-center gap-2 rounded-[var(--radius-md)] bg-[var(--color-bg)] px-3 py-2">
-          {selectableIds.length > 0 && (
-            <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">
-              <input
-                type="checkbox"
-                className="h-4 w-4"
-                checked={allPageSelected}
-                onChange={(event) => setSelected(event.target.checked ? new Set(selectableIds) : new Set())}
-              />
-              Select shown
-            </label>
-          )}
-          <div className="ml-auto flex flex-wrap gap-2">
-            {selected.size > 0 && (
-              <Button size="sm" loading={isPending} onClick={() => acknowledge([...selected])}>
-                <CheckCheck className="h-4 w-4" aria-hidden="true" /> Acknowledge {selected.size}
-              </Button>
-            )}
-            {unacknowledgedCount > 0 && (
-              <Button size="sm" variant="ghost" disabled={isPending} onClick={() => setConfirmAll(true)}>
-                Acknowledge all
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-
       {message && <Banner tone={message.tone}>{message.text}</Banner>}
 
       <Card>
@@ -297,9 +172,6 @@ export function ContributorsPanel({
                   key={row.id}
                   row={row}
                   fields={fields}
-                  selectable={permissions.canAcknowledge && !row.acknowledgedAt}
-                  selected={selected.has(row.id)}
-                  onToggle={(on) => toggle(row.id, on)}
                   onOpen={() => openDetail(row)}
                 />
               ))}
@@ -320,29 +192,6 @@ export function ContributorsPanel({
       </div>
 
       <Dialog
-        open={confirmAll}
-        onClose={() => setConfirmAll(false)}
-        title="Acknowledge all?"
-        description="Marks every payment you have not yet acknowledged as seen and recorded."
-      >
-        <div className="flex flex-col gap-4">
-          <p className="text-sm text-[var(--color-text-muted)]">
-            {unacknowledgedCount.toLocaleString()} {unacknowledgedCount === 1 ? "payment" : "payments"} will be marked
-            acknowledged. Payments that arrive after you opened this page are left for you to see first. This does not
-            change any payment, balance or withdrawal.
-          </p>
-          <div className="flex justify-end gap-2">
-            <Button variant="secondary" onClick={() => setConfirmAll(false)}>
-              Cancel
-            </Button>
-            <Button loading={isPending} onClick={acknowledgeAll}>
-              Acknowledge all
-            </Button>
-          </div>
-        </div>
-      </Dialog>
-
-      <Dialog
         open={detail !== null}
         onClose={() => setDetail(null)}
         title={detail?.name ?? "Contribution"}
@@ -353,10 +202,7 @@ export function ContributorsPanel({
           <ContributorDetail
             row={detail}
             fields={fields}
-            canAcknowledge={permissions.canAcknowledge}
             canViewContact={permissions.canViewContact}
-            busy={isPending}
-            onAcknowledge={() => acknowledge([detail.id])}
           />
         )}
       </Dialog>
@@ -378,36 +224,13 @@ export function ContributorsPanel({
   );
 }
 
-function FilterChip({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count: number }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={
-        active
-          ? "rounded-full border border-[var(--color-primary)] bg-[var(--color-primary)] px-3 py-1 text-xs font-medium text-[var(--color-primary-fg)]"
-          : "rounded-full border border-[var(--color-border-strong)] bg-[var(--color-surface)] px-3 py-1 text-xs font-medium text-[var(--color-text)] hover:bg-[var(--color-bg)]"
-      }
-    >
-      {label} <span className="tabular-nums opacity-80">{count.toLocaleString()}</span>
-    </button>
-  );
-}
-
 function ContributorRowItem({
   row,
   fields,
-  selectable,
-  selected,
-  onToggle,
   onOpen,
 }: {
   row: ContributorView;
   fields: ContributorFieldDef[];
-  selectable: boolean;
-  selected: boolean;
-  onToggle: (on: boolean) => void;
   onOpen: () => void;
 }) {
   const options = describeLines(row.lines);
@@ -417,17 +240,6 @@ function ContributorRowItem({
 
   return (
     <li className="flex items-start gap-3 px-3 py-3 sm:px-4">
-      <div className="w-4 pt-1">
-        {selectable && (
-          <input
-            type="checkbox"
-            className="h-4 w-4"
-            aria-label={`Select ${row.name}`}
-            checked={selected}
-            onChange={(event) => onToggle(event.target.checked)}
-          />
-        )}
-      </div>
       <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-start justify-between gap-3 text-left">
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="flex flex-wrap items-center gap-2">
@@ -448,7 +260,7 @@ function ContributorRowItem({
         </span>
         <span className="flex shrink-0 flex-col items-end gap-1">
           <span className="text-sm font-semibold tabular-nums text-[var(--color-text)]">{nairaText(row.amountKobo)}</span>
-          {row.acknowledgedAt ? <Badge tone="success">Acknowledged</Badge> : <Badge>Not acknowledged</Badge>}
+          <Badge tone="success">Successful</Badge>
         </span>
       </button>
     </li>
@@ -458,17 +270,11 @@ function ContributorRowItem({
 function ContributorDetail({
   row,
   fields,
-  canAcknowledge,
   canViewContact,
-  busy,
-  onAcknowledge,
 }: {
   row: ContributorView;
   fields: ContributorFieldDef[];
-  canAcknowledge: boolean;
   canViewContact: boolean;
-  busy: boolean;
-  onAcknowledge: () => void;
 }) {
   const answers = answerEntries(fields, row.answers, { includeEmpty: true });
   const options = describeLines(row.lines);
@@ -527,20 +333,10 @@ function ContributorDetail({
         </dl>
       </section>
 
-      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--color-border)] pt-3">
-        {row.acknowledgedAt ? (
-          <p className="text-xs text-[var(--color-text-muted)]">
-            Acknowledged {row.acknowledgedByName ? `by ${row.acknowledgedByName} ` : ""}on {formatDate(row.acknowledgedAt)}
-          </p>
-        ) : (
-          <p className="text-xs text-[var(--color-text-muted)]">Not acknowledged yet</p>
-        )}
-        {canAcknowledge && !row.acknowledgedAt && (
-          <Button size="sm" loading={busy} onClick={onAcknowledge}>
-            Acknowledge
-          </Button>
-        )}
-      </div>
+      <p className="border-t border-[var(--color-border)] pt-3 text-xs text-[var(--color-text-muted)]">
+        Successful: confirmed by the payment provider and recorded by Kolekto. Fees and when the money can be withdrawn
+        are in the Activity tab.
+      </p>
     </div>
   );
 }
@@ -600,7 +396,7 @@ function ExportDialog({
   }
 
   const scope = [
-    filter === "acknowledged" ? "acknowledged only" : filter === "unacknowledged" ? "not acknowledged only" : "everyone",
+    "everyone",
     search ? `matching “${search}”` : null,
   ]
     .filter(Boolean)

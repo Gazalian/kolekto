@@ -7,12 +7,17 @@ import {
   getCollectionSettlementSummary,
   getPaymentReminderSummary,
   listCollectionLedger,
+  listCollectionPaymentActivity,
   listCollectionWithdrawals,
+  type ActivityEligibility,
+  type ActivityFilter,
+  type ActivityPaymentStatus,
   listPaymentReminderRoster,
   requestWithdrawal,
   sendPaymentReminders,
   type ReminderBlockedReason,
   type ReminderFilter,
+  type LedgerKind,
   type ReminderUnsupportedReason,
   type WithdrawalStatus,
 } from "@kolekto/db";
@@ -35,6 +40,8 @@ import { createClient } from "../../../../../lib/supabase/server.ts";
  */
 
 const LEDGER_PAGE_SIZE = 25;
+/** The Activity tab's filters. Anything else from the browser is treated as "all". */
+const LEDGER_KINDS: readonly LedgerKind[] = ["all", "contributions", "fees", "settlement", "withdrawals", "refunds", "adjustments"];
 const REMINDER_PAGE_SIZE = 50;
 
 async function resolve(slug: string, collectionSlug: string) {
@@ -58,7 +65,7 @@ function messageFor(error: unknown, fallback: string): string {
     case "FORBIDDEN":
       return "You do not have permission to do that on this collection.";
     case "INSUFFICIENT_AVAILABLE_BALANCE":
-      return "That is more than the available balance. Only settled money can be withdrawn; pending payments become available after settlement.";
+      return "That is more than your available balance. Payments still in the pending balance become available automatically after the T+1 period.";
     case "IDENTITY_VERIFICATION_REQUIRED":
       return "Withdrawals need an identity-verified officer. Complete identity verification first.";
     case "WITHDRAWAL_FEE_NOT_CONFIGURED":
@@ -154,11 +161,12 @@ function ruleText(s: { scheduleDayOffset: number; scheduleReleaseTime: string; s
   return `A payment becomes available at ${time} ${zone} on ${day}${s.requiresProviderConfirmation ? ", once the payment provider has settled it" : ""}.`;
 }
 
-async function ledgerPage(collectionId: string, offset: number) {
+async function ledgerPage(collectionId: string, offset: number, kind?: string) {
   const page = await listCollectionLedger(await requireCallerContext(), {
     collectionId,
     limit: LEDGER_PAGE_SIZE,
     offset: Math.max(0, Math.floor(offset)),
+    ...(kind && kind !== "all" && (LEDGER_KINDS as readonly string[]).includes(kind) ? { kind: kind as LedgerKind } : {}),
   });
   return {
     total: page.total,
@@ -239,11 +247,12 @@ export async function ledgerPageAction(
   slug: string,
   collectionSlug: string,
   offset: number,
+  kind?: string,
 ): Promise<{ error?: string; rows?: LedgerEntryView[]; total?: number }> {
   const resolved = await resolve(slug, collectionSlug);
   if ("error" in resolved) return { error: resolved.error };
   try {
-    return await ledgerPage(resolved.collectionId, offset);
+    return await ledgerPage(resolved.collectionId, offset, kind);
   } catch (error) {
     return { error: messageFor(error, "The ledger could not be loaded.") };
   }
@@ -298,6 +307,93 @@ export async function decideWithdrawalAction(
     return { status };
   } catch (error) {
     return { error: messageFor(error, "That could not be saved.") };
+  }
+}
+
+// ── Payment activity ─────────────────────────────────────────────────────────
+
+const ACTIVITY_PAGE_SIZE = 25;
+/** Anything else from the browser is treated as "all". */
+const ACTIVITY_FILTERS: readonly ActivityFilter[] = ["all", "successful", "pending", "failed", "withdrawals"];
+
+/** One payment or withdrawal, kobo as decimal strings (null where it does not apply). */
+export interface ActivityRowView {
+  kind: "payment" | "withdrawal";
+  id: string;
+  occurredAt: string;
+  name: string;
+  isMember: boolean;
+  reference: string;
+  paymentStatus: ActivityPaymentStatus | null;
+  verifiedAt: string | null;
+  amountKobo: string;
+  chargedKobo: string | null;
+  processingFeeKobo: string | null;
+  kolektoFeeKobo: string | null;
+  totalFeesKobo: string | null;
+  netKobo: string | null;
+  feeBearer: "contributor_pays" | "community_absorbs" | null;
+  eligibility: ActivityEligibility | null;
+  eligibleAt: string | null;
+  releasedAt: string | null;
+  withdrawalStatus: WithdrawalStatus | null;
+  destination: string | null;
+  completedAt: string | null;
+  detail: string | null;
+}
+
+const str = (value: bigint | null): string | null => (value === null ? null : value.toString());
+
+/**
+ * Who paid, how much, the payment's status and — separately — when its money
+ * can be withdrawn. Needs transaction.view; withdrawals only with balance.view
+ * (app.collection_payment_activity decides both).
+ */
+export async function activityPageAction(
+  slug: string,
+  collectionSlug: string,
+  input: { filter: string; offset: number; limit?: number },
+): Promise<{ error?: string; rows?: ActivityRowView[]; total?: number }> {
+  const resolved = await resolve(slug, collectionSlug);
+  if ("error" in resolved) return { error: resolved.error };
+  const filter = (ACTIVITY_FILTERS as readonly string[]).includes(input.filter) ? (input.filter as ActivityFilter) : "all";
+  const limit = Math.min(Math.max(Math.floor(input.limit ?? ACTIVITY_PAGE_SIZE), 1), 50);
+  try {
+    const page = await listCollectionPaymentActivity(await requireCallerContext(), {
+      collectionId: resolved.collectionId,
+      filter,
+      limit,
+      offset: Math.max(0, Math.floor(input.offset)),
+    });
+    return {
+      total: page.total,
+      rows: page.rows.map((r) => ({
+        kind: r.kind,
+        id: r.id,
+        occurredAt: r.occurredAt,
+        name: r.name,
+        isMember: r.isMember,
+        reference: r.reference,
+        paymentStatus: r.paymentStatus,
+        verifiedAt: r.verifiedAt,
+        amountKobo: r.amountKobo.toString(),
+        chargedKobo: str(r.chargedKobo),
+        processingFeeKobo: str(r.processingFeeKobo),
+        kolektoFeeKobo: str(r.kolektoFeeKobo),
+        totalFeesKobo: str(r.totalFeesKobo),
+        netKobo: str(r.netKobo),
+        feeBearer: r.feeBearer,
+        eligibility: r.eligibility,
+        eligibleAt: r.eligibleAt,
+        releasedAt: r.releasedAt,
+        withdrawalStatus: r.withdrawalStatus,
+        destination: r.destination,
+        completedAt: r.completedAt,
+        detail: r.detail,
+      })),
+    };
+  } catch (error) {
+    return { error: messageFor(error, "The activity for this collection could not be loaded.") };
   }
 }
 
