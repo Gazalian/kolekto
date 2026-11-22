@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { futureEventStart, openPeopleView, openRoll } from "./helpers/collection-detail.ts";
 import { expectPaymentReview } from "./helpers/payments.ts";
 import { chooseFeeBearer, configureReferences, fillTier, openWizard, walkWizard } from "./helpers/wizard.ts";
 
@@ -266,7 +267,7 @@ test("a ticketed event carries its date and venue, and the venue can still chang
     fill: {
       event: async (p) => {
         await p.getByLabel("What is the event called?").fill("Annual Dinner 2026");
-        await p.getByLabel("When does it start?").fill("2026-12-20T18:00");
+        await p.getByLabel("When does it start?").fill(futureEventStart().input);
         await p.getByLabel("Where is it?").fill("Ostrich Hall, Ilorin");
       },
       tickets: async (p) => {
@@ -275,7 +276,7 @@ test("a ticketed event carries its date and venue, and the venue can still chang
       },
       review: async (p) => {
         // §23: an event is reviewed by looking at the event.
-        await expect(p.getByText("2026-12-20 at 18:00 · Ostrich Hall, Ilorin")).toBeVisible();
+        await expect(p.getByText(`${futureEventStart().date} at 18:00 · Ostrich Hall, Ilorin`)).toBeVisible();
       },
     },
   });
@@ -350,7 +351,7 @@ test("a recurring charge owes per period, and no period opens by itself", async 
 
   // Nothing is owed yet: publishing a recurring charge opens no period, and an
   // open period is what an obligation belongs to (§38).
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await expect(page.getByText(/no period is open/i)).toBeVisible();
   await expect(page.getByRole("button", { name: "Add members" })).toBeDisabled();
 
@@ -358,7 +359,7 @@ test("a recurring charge owes per period, and no period opens by itself", async 
   await page.getByRole("button", { name: "Open the next period" }).click();
   await expect(page.getByText("Opened 2026-10.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await expect(page.getByText("You are working on")).toBeVisible();
   await page.getByRole("button", { name: /Add 1 obligation for 2026-10/ }).click();
 
@@ -370,7 +371,7 @@ test("a recurring charge owes per period, and no period opens by itself", async 
   await page.getByRole("button", { name: "Open the next period" }).click();
   await expect(page.getByText("Opened 2026-11.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await page.getByRole("button", { name: /Add 1 obligation for 2026-11/ }).click();
   await expect(page.getByText("2 expected")).toBeVisible();
 });
@@ -612,7 +613,7 @@ test("a ticket buyer can take more than one type, and name an attendee per ticke
     fill: {
       event: async (p) => {
         await p.getByLabel("What is the event called?").fill("Founders Gala 2026");
-        await p.getByLabel("When does it start?").fill("2026-12-20T18:00");
+        await p.getByLabel("When does it start?").fill(futureEventStart().input);
         await p.getByLabel("Where is it?").fill("Ostrich Hall, Ilorin");
         // §18: how many names are needed is a question about SELLING tickets,
         // so the ticketing flow asks it on its own step rather than here.
@@ -906,7 +907,7 @@ test("an event's door: find a guest, check them in, check them out", async ({ pa
   await page.waitForLoadState("networkidle");
 
   // Put the guest on the list.
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await page.getByRole("button", { name: "Add members" }).click();
   const assign = page.getByRole("dialog");
   await assign.getByRole("checkbox").first().check();
@@ -915,10 +916,10 @@ test("an event's door: find a guest, check them in, check them out", async ({ pa
 
   // This is a dues collection, not an event, so it has no door — the tab
   // belongs to ticketed events only.
-  await expect(page.getByRole("button", { name: "Check-in" })).toHaveCount(0);
+  await expect(page.getByRole("tab", { name: "Check-in" })).toHaveCount(0);
 
   // Export is where the roll leaves the system, and it is here for every type.
-  await page.getByRole("button", { name: "Exports" }).click();
+  await openPeopleView(page, "Members", "Export");
   await expect(page.getByRole("heading", { name: "What do you want to export?" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Download CSV" })).toBeEnabled();
   await expect(page.getByRole("button", { name: "Download PDF" })).toBeEnabled();
@@ -952,7 +953,7 @@ test("a ticketed event has a door, and it opens and closes", async ({ page }) =>
     fill: {
       event: async (p) => {
         await p.getByLabel("What is the event called?").fill("Founders Night 2026");
-        await p.getByLabel("When does it start?").fill("2026-12-20T18:00");
+        await p.getByLabel("When does it start?").fill(futureEventStart().input);
         await p.getByLabel("Where is it?").fill("Ostrich Hall, Ilorin");
       },
       tickets: async (p) => {
@@ -969,7 +970,7 @@ test("a ticketed event has a door, and it opens and closes", async ({ page }) =>
   await page.waitForLoadState("networkidle");
 
   // On an event the roll is a guest list, and the tab says so (M7.6 part C).
-  await page.getByRole("button", { name: "Attendees" }).click();
+  await openRoll(page, "Attendees");
   await page.getByRole("button", { name: "Add members" }).click();
   const assign = page.getByRole("dialog");
   await assign.getByRole("checkbox").first().check();
@@ -980,7 +981,7 @@ test("a ticketed event has a door, and it opens and closes", async ({ page }) =>
   await expect(page.getByRole("cell", { name: "₦10,000" })).toBeVisible();
 
   // The door.
-  await page.getByRole("button", { name: "Check-in" }).click();
+  await openPeopleView(page, "Attendees", "Check-in");
   // Scoped to the guest’s own row: the counters above it use the same
   // words, and an assertion that cannot say which one it found is not one.
   const guest = page.getByRole("listitem").filter({ hasText: "Bola Attendee" });

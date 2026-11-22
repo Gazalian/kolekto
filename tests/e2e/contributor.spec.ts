@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { openRoll } from "./helpers/collection-detail.ts";
 import { expectPaymentReview } from "./helpers/payments.ts";
 import { openWizard, walkWizard, type StepFiller } from "./helpers/wizard.ts";
 import type { SectionKind } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
@@ -170,7 +171,7 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
   await page.waitForLoadState("networkidle");
 
   // Everyone eligible is expected to pay: the officer decides that, explicitly.
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await page.getByRole("button", { name: /Add 3 obligations/ }).click();
   await expect(page.getByText("3 expected")).toBeVisible();
 
@@ -404,7 +405,7 @@ test("a recurring charge shows the period it is asking about", async ({ page, br
   await page.getByRole("button", { name: "Open the next period" }).click();
   await expect(page.getByText("Opened 2026-10.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await page.getByRole("button", { name: /Add 1 obligation for 2026-10/ }).click();
   await expect(page.getByText("1 expected")).toBeVisible();
 

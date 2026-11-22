@@ -25,7 +25,7 @@ describe("redactLogFields — by field name", () => {
       accessToken: "abc",
       refresh_token: "abc",
       apiKey: "abc",
-      PAYSTACK_SECRET_KEY: "sk_test_abc",
+      PAYSTACK_SECRET_KEY: "sk_test_abc", // invariant-allow: a log field name under redaction test, not a Paystack call
       withdrawalOtpSecret: "s".repeat(64),
       authorization: "Bearer abc",
       cookie: "sb-access-token=abc",
