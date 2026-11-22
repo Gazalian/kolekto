@@ -3,6 +3,11 @@
 import {
   DatabaseError,
   decideWithdrawal,
+  getWithdrawalOtpState,
+  requestWithdrawalOtp,
+  verifyWithdrawalOtp,
+  type WithdrawalOtpVerifyOutcome,
+  type WithdrawalStage,
   getCollectionReconciliation,
   getCollectionSettlementSummary,
   getPaymentReminderSummary,
@@ -21,9 +26,11 @@ import {
   type ReminderUnsupportedReason,
   type WithdrawalStatus,
 } from "@kolekto/db";
-import { fromNaira, MoneyError } from "@kolekto/domain";
+import { ConfigError, loadWithdrawalOtpSecret } from "@kolekto/config";
+import { fromNaira, hashWithdrawalOtp, MoneyError, normaliseWithdrawalOtpInput } from "@kolekto/domain";
 import { revalidatePath } from "next/cache";
 import { requireCallerContext } from "../../../../../lib/caller.ts";
+import { logEvent } from "../../../../../lib/server-log.ts";
 import { createClient } from "../../../../../lib/supabase/server.ts";
 
 /**
@@ -66,10 +73,12 @@ function messageFor(error: unknown, fallback: string): string {
       return "You do not have permission to do that on this collection.";
     case "INSUFFICIENT_AVAILABLE_BALANCE":
       return "That is more than your available balance. Payments still in the pending balance become available automatically after the T+1 period.";
-    case "IDENTITY_VERIFICATION_REQUIRED":
-      return "Withdrawals need an identity-verified officer. Complete identity verification first.";
-    case "WITHDRAWAL_FEE_NOT_CONFIGURED":
-      return "This collection's free first withdrawal has been used, and further withdrawals are not available yet.";
+    case "BANK_ACCOUNT_NOT_FOUND":
+      return "Choose one of your saved bank accounts.";
+    case "BANK_ACCOUNT_NOT_VERIFIED":
+      return "That bank account is not verified for payouts. Choose another, or check it under Account settings.";
+    case "BANK_ACCOUNT_COOLING_OFF":
+      return "That bank account was added recently. For your security it can receive withdrawals 48 hours after it was added.";
     case "DAILY_WITHDRAWAL_LIMIT":
       return "This would pass the ₦1,000,000 daily withdrawal limit for unverified communities. Try a smaller amount or wait until tomorrow.";
     case "INVALID_AMOUNT":
@@ -80,7 +89,24 @@ function messageFor(error: unknown, fallback: string): string {
       return error.message;
     case "WITHDRAWAL_NOT_PENDING":
     case "WITHDRAWAL_NOT_CANCELLABLE":
+    case "WITHDRAWAL_NOT_AWAITING_VERIFICATION":
       return "That withdrawal has already moved on. Reload to see where it is.";
+    case "EMAIL_NOT_VERIFIED":
+      return "Confirm your email address first: the withdrawal code is sent there.";
+    case "WITHDRAWAL_AWAITING_MEMBER_VERIFICATION":
+      return "The member who requested this withdrawal has not confirmed it with their emailed code yet. You can approve it once they have.";
+    case "WITHDRAWAL_BANK_ACCOUNT_CHANGED":
+      return "The destination bank account is no longer a verified account of the requester. Reject this request; they can request again to a verified account.";
+    case "WITHDRAWAL_ALREADY_VERIFIED":
+      return "This request is already verified. It is waiting for review by an authorised community administrator.";
+    case "OTP_RESEND_TOO_SOON":
+      return "A new code can be requested one minute after the last one.";
+    case "OTP_TOO_MANY_CODES":
+      return "Too many codes were requested for this withdrawal. Cancel it and request again.";
+    case "OTP_RATE_LIMITED":
+      return "Too many codes requested. Try again later.";
+    case "OTP_CHALLENGE_MISMATCH":
+      return "That code does not belong to this withdrawal. Request a new code.";
     case "REMINDERS_NOT_SUPPORTED":
       return error.message;
     case "COLLECTION_NOT_ACTIVE":
@@ -144,6 +170,21 @@ export interface WithdrawalView {
   failureReason: string | null;
   canDecide: boolean;
   canCancel: boolean;
+  payoutMethod: "paystack_transfer" | "manual";
+  transferReference: string | null;
+  reversedAt: string | null;
+  reversalReason: string | null;
+  stage: WithdrawalStage;
+  memberVerifiedAt: string | null;
+  isMine: boolean;
+  canReject: boolean;
+  approvedByName: string | null;
+  approvedAt: string | null;
+  ownerSelfApproved: boolean;
+  availableBeforeKobo: string | null;
+  accountStatus: string | null;
+  accountCoolingOff: boolean;
+  transferEscalated: boolean;
 }
 
 export interface MoneyView {
@@ -233,6 +274,21 @@ export async function loadMoneyAction(slug: string, collectionSlug: string): Pro
           failureReason: w.failureReason,
           canDecide: w.canDecide,
           canCancel: w.canCancel,
+          payoutMethod: w.payoutMethod,
+          transferReference: w.transferReference,
+          reversedAt: w.reversedAt,
+          reversalReason: w.reversalReason,
+          stage: w.stage,
+          memberVerifiedAt: w.memberVerifiedAt,
+          isMine: w.isMine,
+          canReject: w.canReject,
+          approvedByName: w.approvedByName,
+          approvedAt: w.approvedAt,
+          ownerSelfApproved: w.ownerSelfApproved,
+          availableBeforeKobo: w.availableBeforeKobo === null ? null : w.availableBeforeKobo.toString(),
+          accountStatus: w.accountStatus,
+          accountCoolingOff: w.accountCoolingOff,
+          transferEscalated: w.transferEscalated,
         })),
         ledger: ledger.rows,
         ledgerTotal: ledger.total,
@@ -261,8 +317,8 @@ export async function ledgerPageAction(
 export async function requestWithdrawalAction(
   slug: string,
   collectionSlug: string,
-  input: { amount: string; accountName: string; accountNumber: string; bankName: string; idempotencyKey: string },
-): Promise<{ error?: string; reference?: string; status?: WithdrawalStatus }> {
+  input: { amount: string; bankAccountId: string; idempotencyKey: string },
+): Promise<{ error?: string; withdrawalId?: string; reference?: string; status?: WithdrawalStatus }> {
   const resolved = await resolve(slug, collectionSlug);
   if ("error" in resolved) return { error: resolved.error };
   let amountKobo: bigint;
@@ -273,18 +329,18 @@ export async function requestWithdrawalAction(
     throw error;
   }
   if (amountKobo <= 0n) return { error: "Enter an amount above zero." };
-  if (!/^[0-9]{10}$/.test(input.accountNumber.trim())) return { error: "Enter the 10-digit account number." };
+  if (typeof input.bankAccountId !== "string" || input.bankAccountId.length === 0) return { error: "Choose a bank account." };
   try {
     const result = await requestWithdrawal(await requireCallerContext(), {
       collectionId: resolved.collectionId,
       amountKobo,
-      accountName: input.accountName.trim().slice(0, 120),
-      accountNumber: input.accountNumber.trim(),
-      bankName: input.bankName.trim().slice(0, 80),
+      // Ownership, verification and cooling-off are checked by the database
+      // against the signed-in officer; an id from the browser grants nothing.
+      bankAccountId: input.bankAccountId,
       idempotencyKey: input.idempotencyKey.slice(0, 120),
     });
     revalidatePath(`/c/${slug}/collections/${collectionSlug}`);
-    return { reference: result.reference, status: result.status };
+    return { withdrawalId: result.withdrawalId, reference: result.reference, status: result.status };
   } catch (error) {
     return { error: messageFor(error, "The withdrawal could not be requested.") };
   }
@@ -307,6 +363,111 @@ export async function decideWithdrawalAction(
     return { status };
   } catch (error) {
     return { error: messageFor(error, "That could not be saved.") };
+  }
+}
+
+// ── Member one-time code (owner decision 2026-11-19) ─────────────────────────
+//
+// The requesting member confirms their request with the 6-digit code the
+// worker emailed. The code is hashed HERE (HMAC with a server secret, bound to
+// the challenge id the database reports for this withdrawal) and only the hash
+// reaches the database, which checks requester, expiry, attempts and single
+// use atomically. Verifying is NOT approval and NOT payment.
+
+export interface WithdrawalOtpView {
+  status: string | null;
+  sentAt: string | null;
+  expiresAt: string | null;
+  attemptsRemaining: number | null;
+  resendAvailableAt: string;
+  emailHint: string | null;
+  memberVerified: boolean;
+  stage: string;
+}
+
+export async function withdrawalOtpStateAction(withdrawalId: string): Promise<{ error?: string; otp?: WithdrawalOtpView }> {
+  try {
+    const s = await getWithdrawalOtpState(await requireCallerContext(), withdrawalId);
+    return {
+      otp: {
+        status: s.challengeStatus,
+        sentAt: s.sentAt,
+        expiresAt: s.expiresAt,
+        attemptsRemaining: s.attemptsRemaining,
+        resendAvailableAt: s.resendAvailableAt,
+        emailHint: s.emailHint,
+        memberVerified: s.memberVerified,
+        stage: s.stage,
+      },
+    };
+  } catch (error) {
+    return { error: messageFor(error, "The code status could not be loaded.") };
+  }
+}
+
+// Log lines for the member's code (session 39): identifiers, outcome and
+// counts only, through the redacting logger. Never the code, its hash or the
+// secret. The code is also not logged by Next's dev-mode Server Function
+// logging any more (next.config.ts `logging.serverFunctions: false`).
+function otpFailureReason(error: unknown): string {
+  if (error instanceof DatabaseError) return error.code;
+  if (error instanceof ConfigError) return "unconfigured";
+  return error instanceof Error ? error.name : "unknown";
+}
+
+export async function resendWithdrawalOtpAction(withdrawalId: string): Promise<{ error?: string; resendAvailableAt?: string }> {
+  try {
+    const r = await requestWithdrawalOtp(await requireCallerContext(), withdrawalId);
+    logEvent("info", "withdrawal_otp_resend", { withdrawalId, challengeId: r.challengeId, result: "requested" });
+    return { resendAvailableAt: r.resendAvailableAt };
+  } catch (error) {
+    logEvent("warn", "withdrawal_otp_resend", { withdrawalId, result: "refused", reason: otpFailureReason(error) });
+    return { error: messageFor(error, "A new code could not be requested.") };
+  }
+}
+
+export async function verifyWithdrawalOtpAction(
+  slug: string,
+  collectionSlug: string,
+  input: { withdrawalId: string; code: string },
+): Promise<{ error?: string; outcome?: WithdrawalOtpVerifyOutcome; attemptsRemaining?: number | null }> {
+  const withdrawalId = String(input.withdrawalId ?? "");
+  const code = normaliseWithdrawalOtpInput(String(input.code ?? ""));
+  if (code === null) {
+    logEvent("info", "withdrawal_otp_verify", { withdrawalId, outcome: "invalid_format" });
+    return { error: "Enter the 6-digit code from the email." };
+  }
+  let challengeId: string | null = null;
+  try {
+    const caller = await requireCallerContext();
+    const state = await getWithdrawalOtpState(caller, withdrawalId);
+    challengeId = state.challengeId;
+    if (state.challengeId === null) {
+      logEvent("info", "withdrawal_otp_verify", { withdrawalId, outcome: "no_challenge" });
+      return { error: "No code has been sent for this withdrawal yet. Request a new code." };
+    }
+    const result = await verifyWithdrawalOtp(caller, {
+      withdrawalId,
+      challengeId: state.challengeId,
+      codeHash: hashWithdrawalOtp(loadWithdrawalOtpSecret(), state.challengeId, code),
+    });
+    logEvent(result.outcome === "verified" ? "info" : "warn", "withdrawal_otp_verify", {
+      withdrawalId,
+      challengeId: state.challengeId,
+      outcome: result.outcome,
+      attemptsRemaining: result.attemptsRemaining,
+    });
+    if (result.outcome === "verified") revalidatePath(`/c/${slug}/collections/${collectionSlug}`);
+    return { outcome: result.outcome, attemptsRemaining: result.attemptsRemaining };
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      // Operational, not the member's fault: say so in the server log (the
+      // reason category only — never the variable's value) and nothing is counted.
+      logEvent("error", "withdrawal_otp_verify", { withdrawalId, challengeId, outcome: "error", reason: "unconfigured" });
+      return { error: "Codes cannot be checked right now. Nothing was counted against your attempts. Try again later." };
+    }
+    logEvent("warn", "withdrawal_otp_verify", { withdrawalId, challengeId, outcome: "error", reason: otpFailureReason(error) });
+    return { error: messageFor(error, "The code could not be checked.") };
   }
 }
 

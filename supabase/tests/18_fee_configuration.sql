@@ -300,9 +300,20 @@ select set_eq(
             or table_name like '%refund%' or table_name like '%wallet%') $$,
   -- withdrawal_fee_schedules / withdrawal_fee_brackets are the fee configuration
   -- from 20260924100000 (prices, not money movement).
+  -- withdrawal_transfers (20261118100100): one Paystack transfer per
+  -- withdrawal, decided by 63_bank_accounts_and_transfers.sql. Saved bank
+  -- accounts live in user_bank_accounts (owner decision 2026-11-18), which
+  -- is deliberately not named like a withdrawal_accounts table.
+  -- 20261119120000 (owner decisions 2026-11-19): the member's one-time code
+  -- challenges, the transfer check policy and check log, and the Paystack
+  -- approval-URL decision log, decided by 69 / 70.
   $$ values ('withdrawals'), ('contribution_settlements'), ('settlement_schedules'),
-            ('withdrawal_fee_schedules'), ('withdrawal_fee_brackets') $$,
-  'money out has exactly the approved tables: withdrawals, contribution_settlements, settlement_schedules (2026-11-17), plus the 2026-09 withdrawal fee configuration'
+            ('withdrawal_fee_schedules'), ('withdrawal_fee_brackets'), ('withdrawal_transfers'),
+            ('withdrawal_otp_challenges'), ('withdrawal_transfer_check_policies'), ('withdrawal_transfer_checks'),
+            ('withdrawal_transfer_approval_requests'),
+            -- 20261120100000: designated second approvers for an owner's own request.
+            ('community_withdrawal_approvers') $$,
+  'money out has exactly the approved tables: withdrawals, contribution_settlements, settlement_schedules (2026-11-17), withdrawal_transfers (2026-11-18), the 2026-11-19 code / check / approval tables, plus the 2026-09 withdrawal fee configuration'
 );
 
 -- D-02/ADR 0015: there is no community wallet, under any name, ever.
@@ -321,6 +332,24 @@ select set_eq(
        ('complete_withdrawal'), ('decide_withdrawal'), ('fail_withdrawal'), ('guard_contribution_settlement'),
        ('guard_withdrawal'), ('mark_withdrawal_processing'), ('record_provider_settlement'),
        ('release_due_settlements'), ('release_withdrawal_hold'), ('request_withdrawal'),
+       -- 20261118100100: saved-account requests and Paystack transfers.
+       ('request_withdrawal_to_account'), ('claim_withdrawal_transfers'), ('record_withdrawal_transfer_state'),
+       ('settle_withdrawal_transfer'), ('withdrawal_transfers_to_check'), ('guard_withdrawal_transfer'),
+       ('assert_withdrawal_not_transferred'),
+       -- 20261119100000: operator catch-up for pre-2026-11-18 verified charges.
+       ('approve_verified_charge_settlements'),
+       -- 20261119120000: member code, owner approval gate, transfer leases / checks / release, approval URL.
+       ('claim_withdrawal_otp_deliveries'), ('close_withdrawal_otp_challenges'), ('guard_withdrawal_otp_challenge'),
+       ('open_withdrawal_otp_challenge'), ('record_withdrawal_otp_delivery'), ('record_withdrawal_otp_issued'),
+       ('request_withdrawal_otp'), ('verify_withdrawal_otp'), ('withdrawal_otp_state'), ('withdrawal_stage'),
+       -- 20261120100000: no self-approval; designated second approver.
+       ('withdrawal_approval_basis'), ('set_withdrawal_approver'), ('withdrawal_approvers'), ('guard_withdrawal_approver'),
+       -- 20261120140000 (session 39): owner management screen; active-account decider basis.
+       ('withdrawal_decider_basis'), ('replace_withdrawal_approver'), ('withdrawal_approver_candidates'),
+       ('withdrawal_approver_history'),
+       ('claim_withdrawal_transfers_to_check'), ('mark_withdrawal_transfer_initiating'),
+       ('record_withdrawal_transfer_check'), ('release_withdrawal_transfer_claim'),
+       ('release_withdrawal_transfer_never_sent'), ('withdrawal_transfers_needing_attention'),
        ('schedule_contribution_settlement'), ('settlement_due_at'), ('settlement_schedule_version_at') $$,
   'the app.* functions that settle, withdraw or pay out are exactly the approved set, and none refunds'
 );

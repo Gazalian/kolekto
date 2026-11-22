@@ -15,6 +15,16 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
+-- 20261118100100 added a verified-charge schedule (no provider confirmation)
+-- effective 2026-11-18. This file tests the provider-confirmed rule with
+-- captures dated relative to now(), so it pins that rule for its own
+-- captures inside this rolled-back transaction, whatever today is.
+insert into public.settlement_schedules
+  (version, effective_from, timezone, release_day_offset, release_time, requires_provider_confirmation, notes)
+-- The pin must also start after the newest migration schedule (the verified-
+-- charge rule starts 2026-11-17 23:00 UTC); a bare now() - 3 days lost to it
+-- whenever the test ran before 2026-11-20 23:00 UTC (session 40).
+values ('test-pin-provider-confirmed', greatest(now() - interval '3 days', (select max(s.effective_from) from public.settlement_schedules s) + interval '1 second'), 'Africa/Lagos', 1, time '05:00', true, 'test only');
 select plan(44);
 
 -- ── D-09 vectors (2026-11-16 is a Monday) ───────────────────────────────────

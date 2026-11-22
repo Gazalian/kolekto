@@ -20,6 +20,7 @@ import {
   getCollectionExpectedSummary,
   getCollectionFinancialOverview,
   listCollectionContributors,
+  listMyBankAccounts,
 } from "@kolekto/db";
 import { requireCallerContext } from "../../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../../lib/permissions.ts";
@@ -34,7 +35,7 @@ import {
   type OverviewView,
 } from "./contributor-register.ts";
 import { DOOR_PAGE_SIZE, ROLL_PAGE_SIZE } from "./roll.ts";
-import type { ExpectedView } from "./money-view.ts";
+import type { ExpectedView, PayoutAccountView } from "./money-view.ts";
 
 export async function generateMetadata({ params }: { params: Promise<{ collectionSlug: string }> }) {
   const { collectionSlug } = await params;
@@ -295,17 +296,29 @@ export default async function CollectionDetailPage({
     }
   }
 
-  // Withdrawals need an identity-verified officer (PRD 10.1). Read here only
-  // to explain a refusal before the form opens; app.request_withdrawal checks
-  // it again. Unknown (null) when the row cannot be read.
-  let identityVerified: boolean | null = null;
+  // Withdrawals go to the officer's own saved bank account, verified by a
+  // Paystack name match (owner decision Q3, 2026-11-18). Masked; read here to
+  // offer them in the withdraw dialog. app.request_withdrawal_to_account
+  // checks ownership, status and cooling-off again. Null when unreadable.
+  let payoutAccounts: PayoutAccountView[] | null = null;
+  // Only to explain a blocked withdraw button ("being reviewed" vs "add an account").
+  let payoutAccountsUnderReview = false;
   if (hasPermission(access, "withdrawal.request")) {
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (user) {
-      const { data: me } = await supabase.from("users").select("identity_level").eq("id", user.id).maybeSingle();
-      identityVerified = me ? (me as { identity_level: string }).identity_level === "identity_verified" : null;
+    try {
+      const myAccounts = await listMyBankAccounts(await requireCallerContext());
+      payoutAccountsUnderReview = myAccounts.some((a) => a.status === "needs_review");
+      payoutAccounts = myAccounts
+        .filter((a) => a.status === "verified")
+        .map((a) => ({
+          id: a.id,
+          bankName: a.bankName,
+          accountLast4: a.accountLast4,
+          accountName: a.accountName,
+          isDefault: a.isDefault,
+          usableFrom: a.usableFrom,
+        }));
+    } catch {
+      payoutAccounts = null;
     }
   }
 
@@ -368,7 +381,8 @@ export default async function CollectionDetailPage({
       checkInTotals={doorTotals}
       overview={overview}
       expected={expected}
-      identityVerified={identityVerified}
+      payoutAccounts={payoutAccounts}
+      payoutAccountsUnderReview={payoutAccountsUnderReview}
       contributorFirstPage={contributorPage.rows}
       contributorTotal={contributorPage.total}
       referencesLocked={referencesLocked}

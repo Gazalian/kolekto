@@ -13,6 +13,20 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
+-- 20261118100100 added a verified-charge schedule (no provider confirmation)
+-- effective 2026-11-18. This file tests the provider-confirmed rule with
+-- captures dated relative to now(), so it pins that rule for its own
+-- captures inside this rolled-back transaction, whatever today is.
+insert into public.settlement_schedules
+  (version, effective_from, timezone, release_day_offset, release_time, requires_provider_confirmation, notes)
+-- The pin must also start after the newest migration schedule (the verified-
+-- charge rule starts 2026-11-17 23:00 UTC); a bare now() - 3 days lost to it
+-- whenever the test ran before 2026-11-20 23:00 UTC (session 40).
+values ('test-pin-provider-confirmed', greatest(now() - interval '3 days', (select max(s.effective_from) from public.settlement_schedules s) + interval '1 second'), 'Africa/Lagos', 1, time '05:00', true, 'test only');
+-- 20261118100100 revoked app.request_withdrawal (typed destination) from
+-- clients; this file still uses it to create withdrawals, so the grant is
+-- restored inside this rolled-back transaction only.
+grant execute on function app.request_withdrawal(uuid, bigint, text, text, text, text) to authenticated;
 select plan(24);
 
 insert into auth.users (id, instance_id, aud, role, email) values

@@ -292,6 +292,28 @@ export function loadSessionSecret(): string {
   return secret;
 }
 
+/**
+ * The key for the withdrawal one-time code HMAC (owner decision 2026-11-19).
+ * Needed by the web server (to hash what the member typed) and the worker
+ * (to hash the code it emails). Never in the database, never in the browser.
+ */
+export function loadWithdrawalOtpSecret(): string {
+  if (typeof window !== "undefined") {
+    throw new ConfigError(
+      "loadWithdrawalOtpSecret() was called in a browser context. The withdrawal code key must never reach the " +
+        "client. This is a bug, not a configuration problem.",
+    );
+  }
+  const secret = required("KOLEKTO_WITHDRAWAL_OTP_SECRET");
+  if (secret.length < 32) {
+    throw new ConfigError(
+      "KOLEKTO_WITHDRAWAL_OTP_SECRET is shorter than 32 characters. Generate one with: " +
+        "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"",
+    );
+  }
+  return secret;
+}
+
 /** Reset the cache. Tests only. */
 export function resetConfigCache(): void {
   cached = undefined;

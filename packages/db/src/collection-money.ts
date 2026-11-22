@@ -202,7 +202,19 @@ export async function listCollectionLedger(
 
 // ── Withdrawals ──────────────────────────────────────────────────────────────
 
-export type WithdrawalStatus = "requested" | "approved" | "processing" | "paid" | "failed" | "rejected" | "cancelled";
+export type WithdrawalStatus =
+  | "requested"
+  | "approved"
+  | "processing"
+  | "paid"
+  | "failed"
+  | "rejected"
+  | "cancelled"
+  /** Paid, then returned by the bank (transfer.reversed): the money is available again. */
+  | "reversed";
+
+/** How a withdrawal is paid out: by operations by hand, or by a Paystack transfer (2026-11-18). */
+export type PayoutMethod = "manual" | "paystack_transfer";
 
 export interface CollectionWithdrawal {
   id: string;
@@ -227,7 +239,41 @@ export interface CollectionWithdrawal {
   failureReason: string | null;
   canDecide: boolean;
   canCancel: boolean;
+  payoutMethod: PayoutMethod;
+  /** Kolekto's transfer reference (ktr_…) when paid by Paystack transfer. */
+  transferReference: string | null;
+  transferStatus: string | null;
+  reversedAt: string | null;
+  reversalReason: string | null;
+  /**
+   * Where the request stands in the two-approval flow (owner decision
+   * 2026-11-19): awaiting_member_verification → awaiting_owner_approval →
+   * ready_for_transfer → processing → paid / failed / …
+   */
+  stage: WithdrawalStage;
+  /** When the requesting member confirmed the request with their emailed code. */
+  memberVerifiedAt: string | null;
+  /** The caller requested this withdrawal (may enter / resend its code). */
+  isMine: boolean;
+  /** An authorised reviewer (an owner, or for an owner's request a designated second approver; never the requester) may reject while requested. `canDecide` = may approve. */
+  canReject: boolean;
+  approvedByName: string | null;
+  /** Historical only: an owner approved their own request before 20261120100000 forbade self-approval. */
+  ownerSelfApproved: boolean;
+  /** The collection's available balance read under the lock, before this hold. */
+  availableBeforeKobo: bigint | null;
+  /** The destination account's current state (verified / needs_review / …). */
+  accountStatus: string | null;
+  accountCoolingOff: boolean;
+  /** Paystack has not confirmed an outcome within the policy window: operations are on it. */
+  transferEscalated: boolean;
 }
+
+export type WithdrawalStage =
+  | "awaiting_member_verification"
+  | "awaiting_owner_approval"
+  | "ready_for_transfer"
+  | Exclude<WithdrawalStatus, "requested" | "approved">;
 
 interface WithdrawalRow {
   id: string;
@@ -251,6 +297,21 @@ interface WithdrawalRow {
   failure_reason: string | null;
   can_decide: boolean;
   can_cancel: boolean;
+  payout_method: PayoutMethod;
+  transfer_reference: string | null;
+  transfer_status: string | null;
+  reversed_at: Date | null;
+  reversal_reason: string | null;
+  stage: WithdrawalStage;
+  member_verified_at: Date | null;
+  is_mine: boolean;
+  can_reject: boolean;
+  approved_by_name: string | null;
+  owner_self_approved: boolean;
+  available_before_kobo: string | null;
+  account_status: string | null;
+  account_cooling_off: boolean;
+  transfer_escalated: boolean;
 }
 
 export async function listCollectionWithdrawals(caller: CallerContext, collectionId: string): Promise<CollectionWithdrawal[]> {
@@ -277,6 +338,21 @@ export async function listCollectionWithdrawals(caller: CallerContext, collectio
     failureReason: r.failure_reason,
     canDecide: r.can_decide,
     canCancel: r.can_cancel,
+    payoutMethod: r.payout_method,
+    transferReference: r.transfer_reference,
+    transferStatus: r.transfer_status,
+    reversedAt: iso(r.reversed_at),
+    reversalReason: r.reversal_reason,
+    stage: r.stage,
+    memberVerifiedAt: iso(r.member_verified_at),
+    isMine: r.is_mine,
+    canReject: r.can_reject,
+    approvedByName: r.approved_by_name,
+    ownerSelfApproved: r.owner_self_approved,
+    availableBeforeKobo: r.available_before_kobo === null ? null : BigInt(r.available_before_kobo),
+    accountStatus: r.account_status,
+    accountCoolingOff: r.account_cooling_off,
+    transferEscalated: r.transfer_escalated,
   }));
 }
 
@@ -290,30 +366,34 @@ export interface WithdrawalRequestResult {
 }
 
 /**
- * Request a withdrawal. The database locks the collection's available
- * balance, re-reads it, applies every rule (identity, first-free, fee
- * schedule, daily limit) and holds the money in the same transaction.
+ * Request a withdrawal from one collection to one of the caller's own saved,
+ * verified bank accounts (20261118100100). The database checks the account
+ * is the caller's, verified and past its cooling-off, locks the
+ * collection's available balance, re-reads it, applies the daily limit and
+ * holds the money in the same transaction. No withdrawal fee.
+ *
+ * Since 20261119120000 every request starts `requested` and opens the
+ * member's one-time code challenge (the worker emails the code); then the
+ * an authorised reviewer approves (an owner; for an owner's own request, a
+ * designated second approver; never the requester). Neither step is payment.
  */
 export async function requestWithdrawal(
   caller: CallerContext,
   input: {
     collectionId: string;
     amountKobo: bigint;
-    accountName: string;
-    accountNumber: string;
-    bankName: string;
+    bankAccountId: string;
     idempotencyKey: string;
   },
 ): Promise<WithdrawalRequestResult> {
   const [row] = await call(caller, (tx) =>
     tx<{ withdrawal_id: string; reference: string; status: WithdrawalStatus; fee_kobo: string; reused: boolean }[]>`
-      select * from app.request_withdrawal(
-        ${input.collectionId}, ${input.amountKobo.toString()}::bigint,
-        ${input.accountName}, ${input.accountNumber}, ${input.bankName}, ${input.idempotencyKey}
+      select * from app.request_withdrawal_to_account(
+        ${input.collectionId}, ${input.amountKobo.toString()}::bigint, ${input.bankAccountId}, ${input.idempotencyKey}
       )
     `,
   );
-  if (!row) throw new Error("request_withdrawal returned no row");
+  if (!row) throw new Error("request_withdrawal_to_account returned no row");
   return {
     withdrawalId: row.withdrawal_id,
     reference: row.reference,

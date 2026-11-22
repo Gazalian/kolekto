@@ -22,9 +22,17 @@ import "server-only";
  *      `confirmPayment(reference)` — the same code the redirect and the
  *      sweep call, so three triggers converge on one capture path and
  *      capture is idempotent on the attempt.
- *   6. Transfer / unsupported events are acknowledged (200) without acting:
- *      the transfer, refund and dispute subsystems are deferred (M8.10+),
- *      and Paystack retries anything that is not 2xx.
+ *   6. A transfer event (transfer.success / failed / reversed) is routed by
+ *      Kolekto's own transfer reference (ktr_…) to
+ *      `confirmWithdrawalTransfer`, which re-reads the transfer from
+ *      Paystack's verify endpoint and applies THAT — the body is a trigger,
+ *      never evidence. Settling is idempotent in the database, and the
+ *      worker's check stage reaches the same function, so a lost webhook
+ *      only delays a payout's final state. A transfer without a Kolekto
+ *      reference (e.g. made by hand on the dashboard) is acknowledged and
+ *      ignored.
+ *   7. Unsupported events (refunds, disputes) are acknowledged (200) without
+ *      acting, since Paystack retries anything that is not 2xx.
  *
  * ── WHAT IS LOGGED ──────────────────────────────────────────────────────────
  *
@@ -40,11 +48,13 @@ import "server-only";
  * only runs it against raw bytes and routes the outcome.
  */
 
+import { isTransferReference, parseTransferWebhook } from "@kolekto/adapters";
 import { isPaymentReference } from "@kolekto/domain";
-import { confirmPayment } from "@kolekto/payments";
+import { confirmPayment, confirmWithdrawalTransfer } from "@kolekto/payments";
 
 import { getPaymentContext } from "../../../../lib/payments/provider-factory.ts";
 import { getPaystackPaymentProvider } from "../../../../lib/payments/paystack.ts";
+import { getTransferContext } from "../../../../lib/payments/transfers.ts";
 
 const MAX_BODY_BYTES = 256 * 1024;
 const ACCEPTED_CONTENT_TYPES = new Set(["application/json"]);
@@ -102,13 +112,11 @@ export async function POST(request: Request): Promise<Response> {
 
   const subject = provider.parseWebhookSubject(rawBody);
 
-  // Transfer and unsupported events: the transfer, refund and dispute
-  // subsystems are deferred. Acknowledge so Paystack stops retrying, but
-  // do not act. Once those subsystems land, a financial_events table (per
-  // the audit §4.6) stores the body for the worker to process.
-  if (subject.kind !== "transaction") {
-    return ack(subject.kind === "transfer" ? "transfer_ignored" : "unsupported_event");
-  }
+  if (subject.kind === "transfer") return handleTransferEvent(rawBody);
+
+  // Refunds and disputes are not modelled yet. Acknowledge so Paystack
+  // stops retrying, but do not act.
+  if (subject.kind !== "transaction") return ack("unsupported_event");
 
   // Our own reference format. Anything else is a webhook for a payment we
   // did not initiate; the DB would refuse it as UNKNOWN_PAYMENT_REFERENCE,
@@ -162,6 +170,42 @@ export async function POST(request: Request): Promise<Response> {
       // sweep covers it as a backstop. Nothing is marked failed on the
       // attempt by this path.
       return problem(500, `capture_error`);
+  }
+}
+
+/**
+ * A withdrawal payout's webhook. The event name in the body is ignored on
+ * purpose: only Paystack's verify answer moves money or state.
+ */
+async function handleTransferEvent(rawBody: Uint8Array): Promise<Response> {
+  const parsed = parseTransferWebhook(rawBody);
+  if (parsed === null || !isTransferReference(parsed.reference)) return ack("transfer_not_kolekto");
+
+  const transfers = getTransferContext();
+  if (transfers === null) return problem(503, "transfers_unavailable");
+
+  let outcome: Awaited<ReturnType<typeof confirmWithdrawalTransfer>>;
+  try {
+    outcome = await confirmWithdrawalTransfer(transfers, parsed.reference);
+  } catch {
+    // Nothing from the error is echoed. 5xx so Paystack retries; the
+    // worker's check stage is the backstop.
+    return problem(500, "transfer_error");
+  }
+  switch (outcome) {
+    case "provider_unavailable":
+      return problem(503, "verify_unavailable");
+    case "not_found":
+    case "unknown_reference":
+      // Paystack or Kolekto has no such transfer. Do not make Paystack retry an orphan.
+      return ack("unknown_reference");
+    case "error":
+      return problem(500, "transfer_error");
+    default:
+      // paid / failed / reversed (or already_*), pending / awaiting_otp /
+      // unknown, and amount_mismatch / conflict, which the database has
+      // audited for operations. Nothing a retry would change.
+      return ack(`transfer_${outcome}`);
   }
 }
 

@@ -28,3 +28,6 @@ export * from "./email-webhook-provider.ts";
 export * from "./ses-email-provider.ts";
 export * from "./ses-sns-webhook-provider.ts";
 export * from "./fake-ses-webhook-provider.ts";
+export * from "./transfer-provider.ts";
+export * from "./paystack-transfer-provider.ts";
+export * from "./fake-transfer-provider.ts";

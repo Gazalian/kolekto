@@ -20,4 +20,5 @@ so the reasoning survives.
 | [0012](0012-collections-stop-at-the-money-boundary.md) | Collections stop at the money boundary, and say so | Accepted |
 | [0013](0013-collection-types-are-configuration-not-a-type-column.md) | A collection's type is its configuration, not a label on it | Accepted |
 | [0014](0014-contributor-identification.md) | A contributor identifies themselves inside one collection, and is never a user | Accepted |
-| [0015](0015-subaccount-custody-and-collection-level-ownership.md) | Subaccount custody with Kolekto-controlled settlement; financial ownership at the collection | Accepted |
+| [0015](0015-subaccount-custody-and-collection-level-ownership.md) | Subaccount custody with Kolekto-controlled settlement; financial ownership at the collection | Custody superseded in part by [0016](0016-member-code-owner-approval-paystack-server-approval.md); collection ownership stands |
+| [0016](0016-member-code-owner-approval-paystack-server-approval.md) | Kolekto-held balance with two-party withdrawal authorisation (member code + owner approval) and Paystack server approval | Accepted |

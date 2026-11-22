@@ -18,6 +18,15 @@ const nextConfig: NextConfig = {
   // `NEXT_DIST_DIR=.next-e2e` so its build/start never touch `.next`, the
   // directory a concurrently running `next dev` owns.
   distDir: process.env.NEXT_DIST_DIR || ".next",
+  // Next's dev server logs every Server Function call WITH ITS ARGUMENTS
+  // (`logging.serverFunctions`, default true; dev only — action-handler.js
+  // checks NODE_ENV === 'development'). That printed the member's 6-digit
+  // withdrawal code from `verifyWithdrawalOtpAction(…, { code })` in sessions
+  // 35 and 38, and would print anything else a form passes to an action.
+  // Off. Server actions log their own redacted lines (lib/server-log.ts).
+  logging: {
+    serverFunctions: false,
+  },
   // Baseline response headers, set before any page takes money.
   //
   //   · No framing by anyone, this origin included (the app frames nothing of

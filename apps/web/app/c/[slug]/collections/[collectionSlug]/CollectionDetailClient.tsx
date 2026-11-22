@@ -58,7 +58,7 @@ import { PaymentActivity, RecentActivity } from "./PaymentActivity.tsx";
 import { ShareCollectionButton } from "./ShareCollection.tsx";
 import { RemindersPanel } from "./RemindersPanel.tsx";
 import type { ContributorView, OverviewView } from "./contributor-register.ts";
-import { withdrawBlock, type ExpectedView } from "./money-view.ts";
+import { hasUsablePayoutAccount, payoutAccountWaiting, withdrawBlock, type ExpectedView, type PayoutAccountView } from "./money-view.ts";
 
 export interface ObligationRow {
   obligation: Obligation;
@@ -153,7 +153,8 @@ export function CollectionDetailClient({
   checkInTotals,
   overview,
   expected,
-  identityVerified,
+  payoutAccounts,
+  payoutAccountsUnderReview,
   contributorFirstPage,
   contributorTotal,
   referencesLocked,
@@ -184,8 +185,10 @@ export function CollectionDetailClient({
   overview: OverviewView | null;
   /** Who is expected to pay and what they still owe; null when this collection has no expected list. */
   expected: ExpectedView | null;
-  /** Whether this officer's identity is verified (withdrawals need it); null when it could not be read. */
-  identityVerified: boolean | null;
+  /** This officer's verified payout accounts (masked); null when they could not be read. */
+  payoutAccounts: PayoutAccountView[] | null;
+  /** Whether this officer has a saved account Kolekto is reviewing (explains a blocked withdrawal). */
+  payoutAccountsUnderReview: boolean;
   contributorFirstPage: ContributorView[];
   contributorTotal: number;
   /** Money has been confirmed: no new contributor references (Phase 7). */
@@ -250,13 +253,16 @@ export function CollectionDetailClient({
   const { money, loadError: moneyError, reload: reloadMoney } = useCollectionMoney(slug, collection.slug, showMoney);
   const [withdrawOpen, setWithdrawOpen] = useState(false);
   const [withdrawMessage, setWithdrawMessage] = useState<string | null>(null);
+  // Read once: whether a cooling-off has ended is only an explanation here.
+  const [nowMs] = useState(() => Date.now());
   const block =
     overview && money
       ? withdrawBlock({
           availableKobo: overview.availableKobo ?? "0",
           pendingKobo: overview.pendingKobo ?? "0",
           totalRaisedKobo: overview.totalRaisedKobo,
-          identityVerified,
+          hasPayoutAccount: hasUsablePayoutAccount(payoutAccounts, nowMs),
+          payoutAccountWaiting: payoutAccountWaiting(payoutAccounts, payoutAccountsUnderReview, nowMs),
           withdrawals: money.withdrawals,
           nextReleaseAt: money.settlement.nextReleaseAt,
           scheduledKobo: money.settlement.scheduledKobo,
@@ -498,7 +504,7 @@ export function CollectionDetailClient({
                 !money || !overview.pendingKobo || overview.pendingKobo === "0"
                   ? null
                   : money.settlement.scheduledKobo === "0" && money.settlement.awaitingProviderKobo !== "0"
-                    ? "Successfully received. T+1 has passed; becomes available automatically once the payment provider releases the funds"
+                    ? "Successfully received. T+1 has passed; waiting for a Kolekto check of the payment before it can be withdrawn"
                     : money.settlement.nextReleaseAt
                       ? `Successfully received. Becomes available automatically after T+1 — next from ${watText(money.settlement.nextReleaseAt)}`
                       : null
@@ -890,6 +896,7 @@ export function CollectionDetailClient({
           collectionSlug={collection.slug}
           collectionName={collection.name}
           availableKobo={overview.availableKobo ?? "0"}
+          payoutAccounts={payoutAccounts ?? []}
           block={block}
           onClose={() => setWithdrawOpen(false)}
           onDone={(message) => {

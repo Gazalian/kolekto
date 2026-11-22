@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { eligibilityText, headlineChange, PAYMENT_STATUS_LABEL, withdrawBlock, type WithdrawInputs } from "./money-view.ts";
+import { eligibilityText, headlineChange, PAYMENT_STATUS_LABEL, payoutAccountWaiting, withdrawBlock, type WithdrawInputs } from "./money-view.ts";
 
 const base: WithdrawInputs = {
   availableKobo: "500000",
   pendingKobo: "0",
   totalRaisedKobo: "500000",
-  identityVerified: true,
+  hasPayoutAccount: true,
   withdrawals: [],
   nextReleaseAt: null,
 };
@@ -57,12 +57,40 @@ describe("withdrawBlock", () => {
     });
   });
 
-  it("puts identity first, even with money available", () => {
-    expect(withdrawBlock({ ...base, identityVerified: false })).toEqual({ kind: "identity" });
+  it("asks for a payout account once there is money to withdraw", () => {
+    expect(withdrawBlock({ ...base, hasPayoutAccount: false })).toEqual({ kind: "no_payout_account" });
   });
 
-  it("does not block when identity could not be read (the database decides)", () => {
-    expect(withdrawBlock({ ...base, identityVerified: null })).toBeNull();
+  it("says why saved accounts cannot receive it yet: review, or the 48-hour cooling-off", () => {
+    expect(withdrawBlock({ ...base, hasPayoutAccount: false, payoutAccountWaiting: { kind: "under_review" } })).toEqual({
+      kind: "no_payout_account",
+      waiting: { kind: "under_review" },
+    });
+    const usableFrom = "2026-11-21T11:11:02.000Z";
+    expect(
+      withdrawBlock({ ...base, hasPayoutAccount: false, payoutAccountWaiting: { kind: "cooling_off", usableFrom } }),
+    ).toEqual({ kind: "no_payout_account", waiting: { kind: "cooling_off", usableFrom } });
+  });
+
+  it("payoutAccountWaiting: earliest cooling-off first, then review, else nothing", () => {
+    const now = Date.parse("2026-11-19T12:00:00.000Z");
+    const acct = (id: string, usableFrom: string) => ({ id, bankName: "B", accountLast4: "0001", accountName: "N", isDefault: false, usableFrom });
+    expect(
+      payoutAccountWaiting([acct("a", "2026-11-21T10:00:00.000Z"), acct("b", "2026-11-20T10:00:00.000Z")], true, now),
+    ).toEqual({ kind: "cooling_off", usableFrom: "2026-11-20T10:00:00.000Z" });
+    expect(payoutAccountWaiting([acct("a", "2026-11-18T10:00:00.000Z")], true, now)).toEqual({ kind: "under_review" });
+    expect(payoutAccountWaiting([], false, now)).toBeUndefined();
+    expect(payoutAccountWaiting(null, false, now)).toBeUndefined();
+  });
+
+  it("explains the balance before the missing account when there is nothing to withdraw", () => {
+    expect(withdrawBlock({ ...base, hasPayoutAccount: false, availableKobo: "0", totalRaisedKobo: "0" })).toEqual({
+      kind: "nothing_received",
+    });
+  });
+
+  it("does not block when the accounts could not be read (the database decides)", () => {
+    expect(withdrawBlock({ ...base, hasPayoutAccount: null })).toBeNull();
   });
 
   it("reports a withdrawal already in progress", () => {
@@ -72,12 +100,12 @@ describe("withdrawBlock", () => {
     });
   });
 
-  it("reports the free withdrawal as used once one was paid", () => {
-    expect(withdrawBlock({ ...base, withdrawals: [{ status: "paid", amountKobo: "200000" }] })).toEqual({ kind: "free_used" });
+  it("allows another withdrawal after a paid one (owner decision Q4: no free-first limit)", () => {
+    expect(withdrawBlock({ ...base, withdrawals: [{ status: "paid", amountKobo: "200000" }] })).toBeNull();
   });
 
-  it("a failed, rejected or cancelled withdrawal does not use the free one", () => {
-    for (const status of ["failed", "rejected", "cancelled"]) {
+  it("a finished withdrawal never blocks the next", () => {
+    for (const status of ["failed", "rejected", "cancelled", "reversed"]) {
       expect(withdrawBlock({ ...base, withdrawals: [{ status, amountKobo: "1" }] })).toBeNull();
     }
   });

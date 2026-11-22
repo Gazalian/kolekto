@@ -21,10 +21,23 @@
  *
  * A fourth stage releases T+1 settlements that are due and provider-confirmed
  * (settlement-release.ts), wherever this role may execute the release.
+ *
+ * A fifth stage pays approved withdrawals through Paystack Transfers and
+ * finishes transfers in flight (withdrawal-transfers.ts). Sending is behind
+ * PAYSTACK_TRANSFERS_ENABLED (off by default); finishing in-flight transfers
+ * runs whenever a key and the operator functions are present. Since
+ * 20261119120000 it claims only withdrawals with the member's verified code
+ * AND the owner's approval, checks open transfers on a leased backoff
+ * schedule, reports escalated transfers, and runs a read-only reconciliation
+ * against Paystack's transfer list every 6 hours.
+ *
+ * A sixth stage emails withdrawal one-time codes (withdrawal-otp-delivery.ts),
+ * behind the same email pause switch as notifications.
  */
 
 import { createEmailProviderAsync, type EmailProvider } from "@kolekto/adapters";
-import { loadConfig, loadDatabaseUrl, loadEmailConfig } from "@kolekto/config";
+import { loadConfig, loadDatabaseUrl, loadEmailConfig, loadWithdrawalOtpSecret } from "@kolekto/config";
+import type { PaymentDb } from "@kolekto/db";
 import postgres from "postgres";
 
 import { processNotificationMessage } from "./notification-processor.js";
@@ -36,6 +49,32 @@ import {
   settlementReleaseAllowed,
   settlementReleaseLogLine,
 } from "./settlement-release.ts";
+import {
+  checkWithdrawalTransfers,
+  dispatchWithdrawalTransfers,
+  listWithdrawalTransfersNeedingAttention,
+  nextReconciliationDelayMs,
+  reconciliationLogLine,
+  runTransferReconciliation,
+  TRANSFER_ATTENTION_INTERVAL_MS,
+  TRANSFER_CHECK_BATCH,
+  TRANSFER_CHECK_INTERVAL_MS,
+  TRANSFER_DISPATCH_BATCH,
+  TRANSFER_DISPATCH_INTERVAL_MS,
+  TRANSFER_RECONCILIATION_INTERVAL_MS,
+  TRANSFER_RECONCILIATION_PROVIDER_GRACE_MS,
+  TRANSFER_RECONCILIATION_WINDOW_MS,
+  transferAttentionLogLine,
+  transferLogLine,
+  withdrawalTransfersAllowed,
+} from "./withdrawal-transfers.ts";
+import {
+  decideWithdrawalOtpDelivery,
+  deliverWithdrawalOtps,
+  withdrawalOtpFunctionsOk,
+  withdrawalOtpLogLine,
+} from "./withdrawal-otp-delivery.ts";
+import { isEmailSendingEnabled } from "./notification-sender-state.ts";
 import { getSendLimits } from "./notification-rate-limit.ts";
 import { runSenderTick } from "./notification-sender.ts";
 import { abandonBatch, FAULT_AT_HEADER, FAULT_CODE_HEADER, FAULT_READS_HEADER, handleQueueMessage, PARKED_AT_HEADER, PARKED_REASON_HEADER, PROCESSED_HEADER, type QueueMessage, type QueueOps } from "./queue-disposition.ts";
@@ -265,6 +304,39 @@ async function main() {
     console.error(JSON.stringify({ msg: "settlement_release_state", enabled: false, reason: "probe_failed", error: safeErrorSummary(err) }));
   }
   let lastSettlementRelease = 0;
+
+  // Withdrawal payouts (withdrawal-transfers.ts). Never fatal.
+  let transfers: Awaited<ReturnType<typeof withdrawalTransfersAllowed>>["context"] = null;
+  let transferDispatch = false;
+  try {
+    const { decision, context } = await withdrawalTransfersAllowed(sql);
+    transfers = context;
+    transferDispatch = decision.enabled && decision.dispatch;
+    console.log(JSON.stringify({ msg: "withdrawal_transfers_state", ...decision }));
+  } catch (err) {
+    console.error(JSON.stringify({ msg: "withdrawal_transfers_state", enabled: false, reason: "probe_failed", error: safeErrorSummary(err) }));
+  }
+  let lastTransferDispatch = 0;
+  let lastTransferCheck = 0;
+  let lastTransferAttention = 0;
+  let nextTransferReconciliationAt = 0;
+
+  // Withdrawal one-time codes (withdrawal-otp-delivery.ts). Never fatal.
+  let otpSecret: string | null = null;
+  let otpDelivery = false;
+  try {
+    try {
+      otpSecret = loadWithdrawalOtpSecret();
+    } catch {
+      otpSecret = null;
+    }
+    const decision = decideWithdrawalOtpDelivery({ functionsOk: await withdrawalOtpFunctionsOk(sql), hasEmail: provider !== null, secret: otpSecret });
+    otpDelivery = decision.enabled;
+    console.log(JSON.stringify({ msg: "withdrawal_otp_delivery_state", ...decision }));
+  } catch (err) {
+    console.error(JSON.stringify({ msg: "withdrawal_otp_delivery_state", enabled: false, reason: "probe_failed", error: safeErrorSummary(err) }));
+  }
+  const otpDb: PaymentDb = (fn) => sql.begin(fn) as ReturnType<typeof fn>;
   const pollFailures = new PollFailureTracker();
 
   process.on("SIGINT", () => { running = false; });
@@ -392,6 +464,75 @@ async function main() {
         if (line) console.log(JSON.stringify(line));
       } catch (err) {
         console.error(JSON.stringify({ msg: "settlement_release_error", error: safeErrorSummary(err) }));
+      }
+    }
+
+    // ── Withdrawal payouts ───────────────────────────────────────────────────
+    if (transfers && transferDispatch && Date.now() - lastTransferDispatch >= TRANSFER_DISPATCH_INTERVAL_MS) {
+      lastTransferDispatch = Date.now();
+      try {
+        const line = transferLogLine("dispatch", await dispatchWithdrawalTransfers(transfers, TRANSFER_DISPATCH_BATCH));
+        if (line) console.log(JSON.stringify(line));
+      } catch (err) {
+        console.error(JSON.stringify({ msg: "withdrawal_transfers_error", stage: "dispatch", error: safeErrorSummary(err) }));
+      }
+    }
+    if (transfers && Date.now() - lastTransferCheck >= TRANSFER_CHECK_INTERVAL_MS) {
+      lastTransferCheck = Date.now();
+      try {
+        const report = await checkWithdrawalTransfers(transfers, {
+          limit: TRANSFER_CHECK_BATCH,
+          mayInitiate: transferDispatch,
+        });
+        const line = transferLogLine("check", report);
+        if (line) console.log(JSON.stringify(line));
+      } catch (err) {
+        console.error(JSON.stringify({ msg: "withdrawal_transfers_error", stage: "check", error: safeErrorSummary(err) }));
+      }
+    }
+    if (transfers && Date.now() - lastTransferAttention >= TRANSFER_ATTENTION_INTERVAL_MS) {
+      lastTransferAttention = Date.now();
+      try {
+        const line = transferAttentionLogLine(await listWithdrawalTransfersNeedingAttention(transfers.db));
+        if (line) console.error(JSON.stringify(line));
+      } catch (err) {
+        console.error(JSON.stringify({ msg: "withdrawal_transfers_error", stage: "attention", error: safeErrorSummary(err) }));
+      }
+    }
+    if (transfers && Date.now() >= nextTransferReconciliationAt) {
+      nextTransferReconciliationAt = Date.now() + TRANSFER_RECONCILIATION_INTERVAL_MS;
+      try {
+        const now = new Date();
+        const result = await runTransferReconciliation(transfers, {
+          windowFrom: new Date(now.getTime() - TRANSFER_RECONCILIATION_WINDOW_MS),
+          windowTo: now,
+          now,
+          providerGraceMs: TRANSFER_RECONCILIATION_PROVIDER_GRACE_MS,
+        });
+        // A transfer still within its grace period is asked about again soon after it ends.
+        nextTransferReconciliationAt =
+          now.getTime() + nextReconciliationDelayMs(result, TRANSFER_RECONCILIATION_INTERVAL_MS, TRANSFER_RECONCILIATION_PROVIDER_GRACE_MS);
+        const line = reconciliationLogLine(result);
+        (line["severity"] === "critical" ? console.error : console.log)(JSON.stringify(line));
+      } catch (err) {
+        console.error(JSON.stringify({ msg: "withdrawal_transfers_error", stage: "reconciliation", error: safeErrorSummary(err) }));
+      }
+    }
+
+    // ── Withdrawal one-time codes ────────────────────────────────────────────
+    if (otpDelivery && provider && otpSecret !== null) {
+      try {
+        const line = withdrawalOtpLogLine(
+          await deliverWithdrawalOtps({
+            db: otpDb,
+            email: provider,
+            secret: otpSecret,
+            sendingEnabled: () => isEmailSendingEnabled(sql),
+          }),
+        );
+        if (line) console.log(JSON.stringify(line));
+      } catch (err) {
+        console.error(JSON.stringify({ msg: "withdrawal_otp_delivery_error", error: safeErrorSummary(err) }));
       }
     }
 

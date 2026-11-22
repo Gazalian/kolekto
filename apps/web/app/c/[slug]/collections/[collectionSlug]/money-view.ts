@@ -20,10 +20,46 @@ export interface ExpectedView {
   outstandingComplete: boolean;
 }
 
+/** A saved, verified payout account (masked) the withdraw dialog may offer. */
+export interface PayoutAccountView {
+  id: string;
+  bankName: string;
+  accountLast4: string;
+  accountName: string;
+  isDefault: boolean;
+  /** D-08 cooling-off: withdrawals can go to it from this moment. */
+  usableFrom: string;
+}
+
+/** Whether any account can receive a withdrawal now. Display only: the database re-checks. */
+export function hasUsablePayoutAccount(accounts: PayoutAccountView[] | null, nowMs: number): boolean | null {
+  if (accounts === null) return null;
+  return accounts.some((a) => Date.parse(a.usableFrom) <= nowMs);
+}
+
+/** Why the officer's saved accounts cannot receive a withdrawal yet, when they have some. */
+export type PayoutAccountWaiting = { kind: "under_review" } | { kind: "cooling_off"; usableFrom: string };
+
+/**
+ * Display only: a verified account still inside its D-08 cooling-off (earliest first) or, failing that,
+ * an account Kolekto is reviewing. Undefined when there is nothing to wait for.
+ */
+export function payoutAccountWaiting(
+  accounts: PayoutAccountView[] | null,
+  anyUnderReview: boolean,
+  nowMs: number,
+): PayoutAccountWaiting | undefined {
+  const cooling = (accounts ?? [])
+    .filter((a) => Date.parse(a.usableFrom) > nowMs)
+    .sort((a, b) => Date.parse(a.usableFrom) - Date.parse(b.usableFrom))[0];
+  if (cooling) return { kind: "cooling_off", usableFrom: cooling.usableFrom };
+  return anyUnderReview ? { kind: "under_review" } : undefined;
+}
+
 export type WithdrawBlock =
-  | { kind: "identity" }
+  /** No saved bank account that is verified and past its cooling-off (owner decision Q3, 2026-11-18). */
+  | { kind: "no_payout_account"; waiting?: PayoutAccountWaiting }
   | { kind: "in_progress"; amountKobo: string }
-  | { kind: "free_used" }
   /** Successful payments still inside T+1, or past it but not yet settled by the provider. */
   | { kind: "settling"; nextReleaseAt: string | null; awaitingProvider: boolean }
   | { kind: "nothing_received" }
@@ -33,8 +69,10 @@ export interface WithdrawInputs {
   availableKobo: string;
   pendingKobo: string;
   totalRaisedKobo: string;
-  /** Null when it could not be read: the database still decides. */
-  identityVerified: boolean | null;
+  /** Whether this officer has a verified, usable payout account. Null when it could not be read: the database still decides. */
+  hasPayoutAccount: boolean | null;
+  /** Saved accounts that will become usable (review or cooling-off), to explain the wait. */
+  payoutAccountWaiting?: PayoutAccountWaiting | undefined;
   withdrawals: { status: string; amountKobo: string }[];
   nextReleaseAt: string | null;
   /** Pending money still before its T+1 time ("0" when none). */
@@ -44,14 +82,11 @@ export interface WithdrawInputs {
 }
 
 const ACTIVE = new Set(["requested", "approved", "processing"]);
-const USES_FREE = new Set(["requested", "approved", "processing", "paid"]);
 
 /** Why this officer cannot withdraw right now, or null when the form may open. First reason wins. */
 export function withdrawBlock(input: WithdrawInputs): WithdrawBlock | null {
-  if (input.identityVerified === false) return { kind: "identity" };
   const active = input.withdrawals.find((w) => ACTIVE.has(w.status));
   if (active) return { kind: "in_progress", amountKobo: active.amountKobo };
-  if (input.withdrawals.some((w) => USES_FREE.has(w.status))) return { kind: "free_used" };
   if (input.availableKobo === "0") {
     if (input.pendingKobo !== "0") {
       // Only "waiting for the provider" when nothing is simply inside T+1:
@@ -61,6 +96,12 @@ export function withdrawBlock(input: WithdrawInputs): WithdrawBlock | null {
     }
     if (input.totalRaisedKobo === "0") return { kind: "nothing_received" };
     return { kind: "empty" };
+  }
+  // Last: with money to withdraw, the one thing left to do is add an account.
+  if (input.hasPayoutAccount === false) {
+    return input.payoutAccountWaiting
+      ? { kind: "no_payout_account", waiting: input.payoutAccountWaiting }
+      : { kind: "no_payout_account" };
   }
   return null;
 }
@@ -147,7 +188,7 @@ export const PAYMENT_STATUS_LABEL: Record<string, { label: string; tone: Tone }>
 
 /** A withdrawal's status in the words the organiser uses. Successful only after the payout is confirmed. */
 export const WITHDRAWAL_STATUS_LABEL: Record<
-  "requested" | "approved" | "processing" | "paid" | "failed" | "rejected" | "cancelled",
+  "requested" | "approved" | "processing" | "paid" | "failed" | "rejected" | "cancelled" | "reversed",
   { label: string; tone: Tone }
 > = {
   requested: { label: "Awaiting approval", tone: "warning" },
@@ -157,7 +198,84 @@ export const WITHDRAWAL_STATUS_LABEL: Record<
   failed: { label: "Failed — returned to balance", tone: "danger" },
   rejected: { label: "Rejected", tone: "neutral" },
   cancelled: { label: "Cancelled", tone: "neutral" },
+  reversed: { label: "Reversed — returned to balance", tone: "danger" },
 };
+
+/**
+ * The two-approval stage of a withdrawal (owner decision 2026-11-19), as the
+ * badge shows it. Past `ready_for_transfer` the status label applies.
+ */
+export function withdrawalStageLabel(
+  stage: string,
+  status: keyof typeof WITHDRAWAL_STATUS_LABEL,
+): { label: string; tone: Tone } {
+  switch (stage) {
+    case "awaiting_member_verification":
+      return { label: "Waiting for the requester's code", tone: "warning" };
+    case "awaiting_owner_approval":
+      return { label: "Waiting for administrator review", tone: "warning" };
+    case "ready_for_transfer":
+      return { label: "Approved — queued for transfer", tone: "info" };
+    default:
+      return WITHDRAWAL_STATUS_LABEL[status];
+  }
+}
+
+/** Same as app.request_withdrawal_otp's cooldown; the state's resend time is the latest challenge's creation + this. */
+export const WITHDRAWAL_OTP_RESEND_COOLDOWN_MS = 60_000;
+/** The worker polls every 2 s; a code not handed to the email provider within this is reported as not sent (yet). */
+export const WITHDRAWAL_OTP_SEND_STALL_MS = 60_000;
+/** An unsent code lapses in the database after 10 minutes; past that, looking again is pointless. */
+const WITHDRAWAL_OTP_VALIDITY_MS = 10 * 60_000;
+
+export type WithdrawalCodePhase =
+  | "loading"
+  | "sending" // challenge open, email provider has not accepted the message yet
+  | "stalled" // still not accepted after WITHDRAWAL_OTP_SEND_STALL_MS: worker or email down
+  | "sent" // provider accepted the message: enter the code
+  | "delivery_failed"
+  | "expired"
+  | "locked"
+  | "closed"; // superseded / cancelled / verified challenge
+
+/**
+ * Which state the member's code screen is in. "sent" only once the email
+ * provider has accepted the message (challenge status `sent`), never while the
+ * worker is still sending, so the screen never claims a code was sent before
+ * it was. A send that does not finish within a minute stops the spinner and
+ * offers a new code instead of waiting for ever.
+ */
+export function withdrawalCodePhase(
+  otp: { status: string | null; expiresAt: string | null; resendAvailableAt: string } | null,
+  nowMs: number,
+): { phase: WithdrawalCodePhase; canEnterCode: boolean; keepPolling: boolean } {
+  if (otp === null || otp.status === null) return { phase: "loading", canEnterCode: false, keepPolling: false };
+  const ageMs = nowMs - (Date.parse(otp.resendAvailableAt) - WITHDRAWAL_OTP_RESEND_COOLDOWN_MS);
+  const expired = otp.expiresAt !== null && Date.parse(otp.expiresAt) <= nowMs;
+  switch (otp.status) {
+    case "pending_delivery":
+    case "sending": {
+      if (expired) return { phase: "expired", canEnterCode: false, keepPolling: false };
+      const keepPolling = ageMs < WITHDRAWAL_OTP_VALIDITY_MS;
+      if (ageMs < WITHDRAWAL_OTP_SEND_STALL_MS) return { phase: "sending", canEnterCode: false, keepPolling };
+      // A code was issued (expiresAt set) but its delivery was never confirmed:
+      // the email may still have gone out, so entering it stays possible.
+      return { phase: "stalled", canEnterCode: otp.expiresAt !== null, keepPolling };
+    }
+    case "sent":
+      return expired
+        ? { phase: "expired", canEnterCode: false, keepPolling: false }
+        : { phase: "sent", canEnterCode: true, keepPolling: false };
+    case "delivery_failed":
+      return { phase: "delivery_failed", canEnterCode: false, keepPolling: false };
+    case "expired":
+      return { phase: "expired", canEnterCode: false, keepPolling: false };
+    case "locked":
+      return { phase: "locked", canEnterCode: false, keepPolling: false };
+    default:
+      return { phase: "closed", canEnterCode: false, keepPolling: false };
+  }
+}
 
 /**
  * When a SUCCESSFUL payment's money can be withdrawn — a separate fact from
@@ -168,7 +286,7 @@ export function eligibilityText(eligibility: string | null, at: string | null, f
     case "scheduled":
       return at ? `Available to withdraw from ${format(at)}` : "Available to withdraw after T+1";
     case "awaiting_provider":
-      return "Past T+1 — becomes available as soon as the payment provider releases the funds";
+      return "Past T+1 — waiting for a Kolekto check before it becomes available";
     case "held":
       return "Held while Kolekto checks the amount with the payment provider";
     case "released":

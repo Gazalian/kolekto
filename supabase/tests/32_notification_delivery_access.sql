@@ -170,8 +170,17 @@ select is_empty(
   'the policy that let every officer read every delivery row no longer exists'
 );
 
+-- Scope: the isolated test database also carries two policies created by the test harness itself
+-- (`npm run itest:worker-role`, scripts/itest/itest.mjs workerRoleSql), named
+-- kolekto_itest_worker_notification_deliveries_{select,insert} and granted TO kolekto_itest_worker only.
+-- That role and its policies exist only in the itest stack, never in a migration, so they are left out here.
+-- The exclusion is exact: a policy is skipped only when its sole role is kolekto_itest_worker AND its name
+-- carries the harness prefix. Any policy reaching public, anon, authenticated or any other role still fails.
 select bag_eq(
-  $$ select policyname::text from pg_policies where schemaname = 'public' and tablename = 'notification_deliveries' $$,
+  $$ select policyname::text from pg_policies
+     where schemaname = 'public' and tablename = 'notification_deliveries'
+       and not (roles = array['kolekto_itest_worker']::name[]
+                and policyname like 'kolekto\_itest\_worker\_notification\_deliveries\_%') $$,
   $$ values ('notification_deliveries_select_own_inbox') $$,
   'the only policy on notification_deliveries is a user''s own in-app inbox'
 );

@@ -17,7 +17,13 @@ export function AccountForm({ user }: { user: User }) {
       <section className="flex flex-col gap-4">
         <h2 className="text-lg font-medium text-[var(--color-text)]">Profile</h2>
         <form action={formAction} className="flex flex-col gap-4">
-          <TextField label="Full name" name="fullName" required defaultValue={user.full_name ?? ""} />
+          <TextField
+            label="Full name"
+            name="fullName"
+            required
+            defaultValue={user.full_name ?? ""}
+            hint="Use the name on your bank account. Changing it sends your saved bank accounts back to Kolekto for a check before they can receive withdrawals."
+          />
           <TextField label="Phone number" name="phoneE164" type="tel" defaultValue={user.phone_e164 ?? ""} />
           <TextField label="Email" type="email" value={user.email ?? ""} disabled />
           {state.error && <Banner tone="danger">{state.error}</Banner>}

@@ -2,6 +2,7 @@
 
 import { fromNaira, MoneyError } from "@kolekto/domain";
 import { Badge, Banner, Button, Dialog, Spinner, TextAreaField, TextField } from "@kolekto/ui";
+import Link from "next/link";
 import { useCallback, useEffect, useState, useTransition } from "react";
 import { formatDistanceToNow } from "../../../../../lib/format.ts";
 import { nairaText } from "./contributor-register.ts";
@@ -10,8 +11,12 @@ import {
   ledgerPageAction,
   loadMoneyAction,
   requestWithdrawalAction,
+  resendWithdrawalOtpAction,
+  verifyWithdrawalOtpAction,
+  withdrawalOtpStateAction,
   type LedgerEntryView,
   type MoneyView,
+  type WithdrawalOtpView,
   type WithdrawalView,
 } from "./money-actions.ts";
 import {
@@ -19,9 +24,15 @@ import {
   LEDGER_FILTERS,
   LEDGER_SOURCE_LABEL,
   type LedgerFilterKey,
+  type PayoutAccountView,
   type WithdrawBlock,
   WITHDRAWAL_STATUS_LABEL,
+  withdrawalCodePhase,
+  withdrawalStageLabel,
 } from "./money-view.ts";
+
+/** A server action that never answered (network drop, server restart) must end in a message, not a spinner. */
+const ACTION_UNREACHABLE = "Kolekto could not be reached. Check your connection and try again.";
 
 /**
  * The pieces of a collection's money — withdrawals and the balance ledger
@@ -68,7 +79,13 @@ export function useCollectionMoney(slug: string, collectionSlug: string, enabled
   const reload = useCallback(() => {
     if (!enabled) return;
     startTransition(async () => {
-      const result = await loadMoneyAction(slug, collectionSlug);
+      let result: Awaited<ReturnType<typeof loadMoneyAction>>;
+      try {
+        result = await loadMoneyAction(slug, collectionSlug);
+      } catch {
+        setLoadError(ACTION_UNREACHABLE);
+        return;
+      }
       if (result.error || !result.money) {
         setLoadError(result.error ?? "The money for this collection could not be loaded.");
         return;
@@ -86,15 +103,19 @@ export function useCollectionMoney(slug: string, collectionSlug: string, enabled
 
 export function withdrawBlockText(block: WithdrawBlock): string {
   switch (block.kind) {
-    case "identity":
-      return "Withdrawals need an identity-verified officer account, and yours is not verified yet. Contact Kolekto support to verify your identity.";
+    case "no_payout_account":
+      if (block.waiting?.kind === "cooling_off") {
+        return `Your bank account can receive withdrawals from ${watText(block.waiting.usableFrom)} (48 hours after it was added, for your security).`;
+      }
+      if (block.waiting?.kind === "under_review") {
+        return "Kolekto is checking your bank account (its name did not match your profile, or your profile name changed). You can withdraw once the check is done, or add another account under Account settings.";
+      }
+      return "Add your bank account under Account settings to withdraw. Kolekto checks the name on the account matches your profile, and a newly added account can receive withdrawals after 48 hours.";
     case "in_progress":
       return `A withdrawal of ${nairaText(block.amountKobo)} from this collection is already in progress. You can request another once it is finished.`;
-    case "free_used":
-      return "This collection's free withdrawal has been used. Further withdrawals open once withdrawal fees are published.";
     case "settling":
       return block.awaitingProvider
-        ? "Your payments have been received successfully. The T+1 period has passed, but the payment provider has not yet released these funds to Kolekto, so they cannot be paid out yet. They become available automatically as soon as it does."
+        ? "Your payments have been received successfully. The T+1 period has passed, but these payments are waiting for a Kolekto check before they can be paid out. They become available as soon as the check is done."
         : `Your payments have been received successfully. Some funds are still within the T+1 eligibility period and will become available automatically${
             block.nextReleaseAt ? ` (next from ${watText(block.nextReleaseAt)})` : ""
           }.`;
@@ -112,6 +133,7 @@ export function WithdrawDialog({
   collectionSlug,
   collectionName,
   availableKobo,
+  payoutAccounts,
   block,
   onClose,
   onDone,
@@ -120,17 +142,24 @@ export function WithdrawDialog({
   collectionSlug: string;
   collectionName: string;
   availableKobo: string;
+  payoutAccounts: PayoutAccountView[];
   block: WithdrawBlock | null;
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
-  const [step, setStep] = useState<"form" | "confirm">("form");
+  const [step, setStep] = useState<"form" | "confirm" | "code">("form");
+  const [requested, setRequested] = useState<{ id: string; reference: string } | null>(null);
   const [amount, setAmount] = useState("");
-  const [accountName, setAccountName] = useState("");
-  const [accountNumber, setAccountNumber] = useState("");
-  const [bankName, setBankName] = useState("");
+  const [now] = useState(() => Date.now());
+  const usable = payoutAccounts.filter((a) => Date.parse(a.usableFrom) <= now);
+  const waiting = payoutAccounts.filter((a) => Date.parse(a.usableFrom) > now);
+  const [bankAccountId, setBankAccountId] = useState<string>(
+    () => (usable.find((a) => a.isDefault) ?? usable[0])?.id ?? "",
+  );
+  const account = usable.find((a) => a.id === bankAccountId) ?? null;
   const [key] = useState(newKey);
   const [error, setError] = useState<string | null>(null);
+  const [unconfirmed, setUnconfirmed] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   // Parsed only to stop an amount above the available balance before it is
@@ -152,34 +181,40 @@ export function WithdrawDialog({
           : amountKobo > BigInt(availableKobo)
             ? `You can withdraw up to ${nairaText(availableKobo)}.`
             : null;
-  const formReady =
-    amountKobo !== null &&
-    amountProblem === null &&
-    accountName.trim().length >= 2 &&
-    /^[0-9]{10}$/.test(accountNumber.trim()) &&
-    bankName.trim().length >= 2;
+  const formReady = amountKobo !== null && amountProblem === null && account !== null;
   const shownAmount = amountKobo !== null ? nairaText(amountKobo.toString()) : "";
 
   function submit(): void {
     setError(null);
     startTransition(async () => {
-      const result = await requestWithdrawalAction(slug, collectionSlug, {
-        amount,
-        accountName,
-        accountNumber,
-        bankName,
-        idempotencyKey: key,
-      });
+      let result: Awaited<ReturnType<typeof requestWithdrawalAction>>;
+      try {
+        // Same key on every retry from this dialog: if the first attempt reached
+        // the server, the database returns that withdrawal instead of a second one.
+        result = await requestWithdrawalAction(slug, collectionSlug, {
+          amount,
+          bankAccountId,
+          idempotencyKey: key,
+        });
+      } catch {
+        setUnconfirmed(true);
+        setError(
+          "We could not confirm whether your request went through. Press Request withdrawal again: it will not create a second withdrawal or hold the money twice.",
+        );
+        return;
+      }
       if (result.error) {
         setError(result.error);
         setStep("form");
         return;
       }
-      onDone(
-        result.status === "approved"
-          ? `Withdrawal ${result.reference} is processing. Kolekto pays it out, usually within 24 hours, and marks it Successful once the transfer is confirmed.`
-          : `Withdrawal ${result.reference} is waiting for the community owner's approval.`,
-      );
+      if (result.withdrawalId && result.reference) {
+        // Next: the member confirms with the emailed code. Not approval, not payment.
+        setRequested({ id: result.withdrawalId, reference: result.reference });
+        setStep("code");
+        return;
+      }
+      onDone(`Withdrawal ${result.reference ?? ""} was requested.`);
     });
   }
 
@@ -195,6 +230,30 @@ export function WithdrawDialog({
             OK
           </Button>
         </div>
+      </Dialog>
+    );
+  }
+
+  if (step === "code" && requested) {
+    return (
+      <Dialog
+        open
+        onClose={() =>
+          onDone(`Withdrawal ${requested.reference} is waiting for your emailed code. Open it from the withdrawals list to enter the code.`)
+        }
+        title="Confirm with your code"
+      >
+        <WithdrawalCodeEntry
+          slug={slug}
+          collectionSlug={collectionSlug}
+          withdrawalId={requested.id}
+          reference={requested.reference}
+          onVerified={() =>
+            onDone(
+              `Withdrawal ${requested.reference} is verified. An authorised community administrator will now review it. It is not approved or paid yet.`,
+            )
+          }
+        />
       </Dialog>
     );
   }
@@ -227,18 +286,42 @@ export function WithdrawDialog({
               Withdraw all ({nairaText(availableKobo)})
             </button>
           </div>
-          <TextField label="Account name" value={accountName} onChange={(event) => setAccountName(event.target.value)} />
-          <TextField
-            label="Account number"
-            inputMode="numeric"
-            maxLength={10}
-            value={accountNumber}
-            onChange={(event) => setAccountNumber(event.target.value.replace(/\D/g, ""))}
-            hint="10 digits (NUBAN)"
-          />
-          <TextField label="Bank" value={bankName} onChange={(event) => setBankName(event.target.value)} />
+          <fieldset className="flex flex-col gap-2">
+            <legend className="mb-1 text-sm font-medium text-[var(--color-text)]">Pay to</legend>
+            {usable.length === 0 ? (
+              <p className="text-sm text-[var(--color-text-muted)]">
+                {waiting.length > 0
+                  ? `Your bank account can receive withdrawals from ${watText(waiting[0]!.usableFrom)} (48 hours after it was added, for your security).`
+                  : "You have no verified bank account yet."}{" "}
+                <Link href="/account#payout-accounts" className="font-medium text-[var(--color-primary)] hover:underline">
+                  Manage bank accounts
+                </Link>
+              </p>
+            ) : (
+              usable.map((a) => (
+                <label
+                  key={a.id}
+                  className="flex cursor-pointer items-start gap-2 rounded-[var(--radius-md)] border border-[var(--color-border)] p-2 text-sm has-[:checked]:border-[var(--color-primary)]"
+                >
+                  <input
+                    type="radio"
+                    name="payout-account"
+                    className="mt-1"
+                    checked={bankAccountId === a.id}
+                    onChange={() => setBankAccountId(a.id)}
+                  />
+                  <span>
+                    <span className="font-medium text-[var(--color-text)]">{a.accountName}</span>
+                    <span className="block text-xs text-[var(--color-text-muted)]">
+                      {a.bankName} ••••{a.accountLast4}
+                    </span>
+                  </span>
+                </label>
+              ))
+            )}
+          </fieldset>
           <dl className="divide-y divide-[var(--color-border)] rounded-[var(--radius-md)] border border-[var(--color-border)] text-sm">
-            <ConfirmRow label="Transfer fee" value="Free — first withdrawal from this collection" />
+            <ConfirmRow label="Transfer fee" value="Free — Kolekto pays the bank transfer fee" />
             <ConfirmRow label="You receive" value={shownAmount || "—"} />
           </dl>
           {error && <Banner tone="danger">{error}</Banner>}
@@ -256,29 +339,328 @@ export function WithdrawDialog({
           <dl className="divide-y divide-[var(--color-border)] rounded-[var(--radius-md)] border border-[var(--color-border)]">
             <ConfirmRow label="From" value={collectionName} />
             <ConfirmRow label="Amount" value={shownAmount} />
-            <ConfirmRow label="Transfer fee" value="Free — first withdrawal from this collection" />
+            <ConfirmRow label="Transfer fee" value="Free — Kolekto pays the bank transfer fee" />
             <ConfirmRow label="You receive" value={shownAmount} />
             <ConfirmRow
               label="To"
-              value={`${accountName.trim()}, ${bankName.trim()} (account ending ${accountNumber.trim().slice(-4)})`}
+              value={account ? `${account.accountName}, ${account.bankName} (account ending ${account.accountLast4})` : "—"}
             />
           </dl>
           <p className="text-xs text-[var(--color-text-muted)]">
-            The amount is held from your available balance straight away. Kolekto pays it out, usually within 24 hours
-            (a request by another officer first needs the community owner&apos;s approval). It shows as Successful only
-            once the transfer is confirmed; if it fails, the money returns to your available balance. Check the account
-            details: a payout to a wrong account may not be recoverable.
+            The amount is held from your available balance straight away. Then: (1) we email you a 6-digit code to
+            verify it was you; (2) an authorised community administrator reviews it — never the person who requested
+            it (a withdrawal an owner requests is reviewed by their designated second approver); (3) it is sent to
+            your own bank account above. Withdrawals over ₦1,000,000 are also checked by Kolekto first. It shows as Successful only
+            once the bank transfer is confirmed; if it is rejected, cancelled, fails or the bank returns it, the money
+            goes back to this collection&apos;s available balance.
           </p>
+          {isPending && <p className="text-xs text-[var(--color-text-muted)]">Processing withdrawal request…</p>}
+          {error && <Banner tone="danger">{error}</Banner>}
           <div className="flex flex-wrap gap-2">
             <Button loading={isPending} onClick={submit}>
               Request withdrawal
             </Button>
-            <Button variant="ghost" onClick={() => setStep("form")} disabled={isPending}>
+            {/* After an unanswered attempt the amount and account are locked: a retry must be the same request. */}
+            <Button variant="ghost" onClick={() => setStep("form")} disabled={isPending || unconfirmed}>
               Go back
             </Button>
           </div>
         </div>
       )}
+    </Dialog>
+  );
+}
+
+// ── Member one-time code ─────────────────────────────────────────────────────
+
+/**
+ * The requesting member enters the 6-digit code emailed to them. States:
+ * sending, enter code, incorrect, expired, too many attempts, resend,
+ * verified (waiting for administrator review). The code verifies the request; it
+ * never approves or pays it.
+ */
+export function WithdrawalCodeEntry({
+  slug,
+  collectionSlug,
+  withdrawalId,
+  reference,
+  onVerified,
+}: {
+  slug: string;
+  collectionSlug: string;
+  withdrawalId: string;
+  reference: string;
+  onVerified: () => void;
+}) {
+  const [otp, setOtp] = useState<WithdrawalOtpView | null>(null);
+  const [code, setCode] = useState("");
+  const [note, setNote] = useState<{ tone: "danger" | "info" | "success"; text: string } | null>(null);
+  const [verified, setVerified] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [isPending, startTransition] = useTransition();
+
+  // Status reads run outside the transition, so a background look does not
+  // put the member's own buttons into a loading state.
+  const refresh = useCallback(async () => {
+    try {
+      const result = await withdrawalOtpStateAction(withdrawalId);
+      if (result.error || !result.otp) {
+        setLoadError(result.error ?? "The code status could not be loaded.");
+        return;
+      }
+      setLoadError(null);
+      setOtp(result.otp);
+      setNow(Date.now());
+      if (result.otp.memberVerified) setVerified(true);
+    } catch {
+      setLoadError(ACTION_UNREACHABLE);
+    }
+  }, [withdrawalId]);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+  const { phase, canEnterCode, keepPolling } = withdrawalCodePhase(otp, now);
+  // While the email is on its way, look again every few seconds (bounded by
+  // the code's validity); keep the clock for "resend in" and the stall check.
+  useEffect(() => {
+    const t = setInterval(() => {
+      setNow(Date.now());
+      if (keepPolling) void refresh();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [keepPolling, refresh]);
+
+  function verify(): void {
+    setNote(null);
+    startTransition(async () => {
+      let result: Awaited<ReturnType<typeof verifyWithdrawalOtpAction>>;
+      try {
+        result = await verifyWithdrawalOtpAction(slug, collectionSlug, { withdrawalId, code });
+      } catch {
+        setNote({ tone: "danger", text: ACTION_UNREACHABLE });
+        return;
+      }
+      if (result.error) {
+        setNote({ tone: "danger", text: result.error });
+        return;
+      }
+      switch (result.outcome) {
+        case "verified":
+        case "already_verified":
+          setVerified(true);
+          return;
+        case "incorrect":
+          setNote({
+            tone: "danger",
+            text: `That code is not right. ${result.attemptsRemaining ?? 0} attempt${result.attemptsRemaining === 1 ? "" : "s"} left.`,
+          });
+          break;
+        case "locked":
+          setNote({ tone: "danger", text: "Too many wrong attempts. Request a new code." });
+          break;
+        case "expired":
+          setNote({ tone: "danger", text: "That code has expired. Request a new code." });
+          break;
+        case "superseded":
+          setNote({ tone: "danger", text: "A newer code was sent. Use the code from the latest email." });
+          break;
+        case "not_sent":
+          setNote({ tone: "info", text: "The code is still being sent. Check your email in a moment." });
+          break;
+        case "withdrawal_closed":
+          setNote({ tone: "danger", text: "This withdrawal is no longer waiting for a code (it was cancelled or rejected)." });
+          break;
+      }
+      setCode("");
+      await refresh();
+    });
+  }
+
+  function resend(): void {
+    setNote(null);
+    startTransition(async () => {
+      try {
+        const result = await resendWithdrawalOtpAction(withdrawalId);
+        if (result.error) setNote({ tone: "danger", text: result.error });
+        else setNote({ tone: "info", text: "A new code was requested. Earlier codes no longer work." });
+      } catch {
+        setNote({ tone: "danger", text: ACTION_UNREACHABLE });
+      }
+      await refresh();
+    });
+  }
+
+  if (verified) {
+    return (
+      <div className="flex flex-col gap-3 text-sm">
+        <Banner tone="success">
+          Withdrawal {reference} is verified. An authorised community administrator will now review it — it is not
+          approved or paid yet.
+        </Banner>
+        <Button onClick={onVerified} className="self-start">
+          Done
+        </Button>
+      </div>
+    );
+  }
+
+  const resendIn = otp ? Math.max(0, Math.ceil((Date.parse(otp.resendAvailableAt) - now) / 1000)) : 0;
+  const email = otp?.emailHint ?? "your email";
+
+  if (phase === "loading" && loadError) {
+    return (
+      <div className="flex flex-col gap-3 text-sm">
+        <Banner tone="danger">{loadError}</Banner>
+        <p className="text-xs text-[var(--color-text-muted)]">
+          Withdrawal {reference} was created and its amount is held. Nothing is approved or paid.
+        </p>
+        <Button variant="secondary" onClick={() => void refresh()} className="self-start">
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3 text-sm text-[var(--color-text)]">
+      <p className="text-xs text-[var(--color-text-muted)]">
+        Your withdrawal request {reference} has been submitted. Verify your request using the code sent to your email.
+        Once verified, an authorised community administrator will review it.
+      </p>
+      <p>
+        {phase === "loading"
+          ? "Loading…"
+          : phase === "sending"
+            ? `Sending a verification code to ${email}…`
+            : phase === "stalled"
+              ? canEnterCode
+                ? `Sending the code to ${email} is taking longer than usual. If the email has arrived, enter the code; otherwise request a new one.`
+                : `Unable to send the verification code to ${email} yet. Request a new code in a moment. Your request is kept and nothing is approved or paid.`
+              : phase === "delivery_failed"
+                ? "Unable to send the verification code. Request a new code. Your request is kept and nothing is approved or paid."
+                : phase === "locked"
+                  ? "Too many wrong attempts for this code. Request a new code."
+                  : phase === "expired"
+                    ? "This code has expired. Request a new code."
+                    : phase === "closed"
+                      ? "This code is no longer valid. Request a new code if the withdrawal is still open."
+                      : `Verification code sent to ${email}. Enter the 6-digit code from that email.`}
+      </p>
+      {loadError && <Banner tone="danger">{loadError}</Banner>}
+      {canEnterCode && (
+        <>
+          <TextField
+            label="Code"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            maxLength={7}
+            value={code}
+            onChange={(event) => setCode(event.target.value)}
+            hint={
+              otp?.expiresAt
+                ? `Valid until ${watText(otp.expiresAt)}${otp.attemptsRemaining !== null ? ` · ${otp.attemptsRemaining} attempts left` : ""}`
+                : "Check your email for the code."
+            }
+          />
+          <Button loading={isPending} disabled={code.replace(/[\s-]/g, "").length !== 6} onClick={verify} className="self-start">
+            Confirm code
+          </Button>
+        </>
+      )}
+      {phase === "sending" && <Spinner />}
+      {note && <Banner tone={note.tone}>{note.text}</Banner>}
+      <button
+        type="button"
+        className="self-start text-xs font-medium text-[var(--color-primary)] hover:underline disabled:text-[var(--color-text-muted)] disabled:no-underline"
+        disabled={isPending || resendIn > 0}
+        onClick={resend}
+      >
+        {resendIn > 0 ? `Request a new code in ${resendIn}s` : "Request a new code"}
+      </button>
+      <p className="text-xs text-[var(--color-text-muted)]">
+        This code only verifies that you made this request. It does not approve or pay the withdrawal: an authorised
+        community administrator must still review it. Kolekto never asks for this code by phone or chat.
+      </p>
+    </div>
+  );
+}
+
+// ── Administrator review (owner, or designated second approver) ──────────────
+
+function OwnerReview({
+  w,
+  isPending,
+  onApprove,
+  onReject,
+  onClose,
+}: {
+  w: WithdrawalView;
+  isPending: boolean;
+  onApprove: () => void;
+  onReject: () => void;
+  onClose: () => void;
+}) {
+  const before = w.availableBeforeKobo;
+  const after = before === null ? null : (BigInt(before) - BigInt(w.amountKobo) - BigInt(w.feeKobo)).toString();
+  const flags: string[] = [];
+  if (w.isMine) flags.push("This is your own request. You cannot approve or reject your own withdrawal; another authorised administrator reviews it");
+  if (w.isFirst) flags.push("First withdrawal from this collection");
+  if (w.requiresManualReview) flags.push("Over ₦1,000,000: Kolekto checks it before payout");
+  if (w.accountStatus && w.accountStatus !== "verified") flags.push(`Destination account is now ${w.accountStatus.replace("_", " ")}`);
+  if (w.accountCoolingOff) flags.push("Destination account is still in its 48-hour cooling-off period");
+  return (
+    <Dialog open onClose={onClose} title={`Review withdrawal ${w.reference}`}>
+      <div className="flex flex-col gap-3 text-sm text-[var(--color-text)]">
+        {(w.canDecide || w.canReject) && (
+          <p>You have a withdrawal request awaiting your review. Confirm the request details before approving or rejecting it.</p>
+        )}
+        <dl className="divide-y divide-[var(--color-border)] rounded-[var(--radius-md)] border border-[var(--color-border)]">
+          <ConfirmRow label="Requested by" value={w.requestedByName ?? "An officer"} />
+          <ConfirmRow label="Requested" value={watText(w.requestedAt)} />
+          <ConfirmRow label="Amount" value={nairaText(w.amountKobo)} />
+          <ConfirmRow label="Available before" value={before === null ? "—" : nairaText(before)} />
+          <ConfirmRow label="Available after" value={after === null ? "—" : nairaText(after)} />
+          <ConfirmRow label="To" value={`${w.accountName}, ${w.bankName} ••••${w.accountLast4}`} />
+          <ConfirmRow
+            label="Requester's code"
+            value={w.memberVerifiedAt ? `Confirmed ${watText(w.memberVerifiedAt)}` : "Not confirmed yet"}
+          />
+        </dl>
+        <p className="text-xs text-[var(--color-text-muted)]">
+          The money goes only to the requester&apos;s own verified bank account shown above. It cannot be changed here.
+        </p>
+        {flags.length > 0 && (
+          <Banner tone="info">
+            <ul className="list-disc pl-4">
+              {flags.map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+          </Banner>
+        )}
+        {!w.canDecide && w.canReject && (
+          <p className="text-xs text-[var(--color-text-muted)]">
+            You can approve once the requester has confirmed with their emailed code. You can reject at any time.
+          </p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {w.canDecide && (
+            <Button loading={isPending} onClick={onApprove}>
+              Approve withdrawal
+            </Button>
+          )}
+          {w.canReject && (
+            <Button variant="secondary" onClick={onReject}>
+              Reject
+            </Button>
+          )}
+          <Button variant="ghost" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+      </div>
     </Dialog>
   );
 }
@@ -308,17 +690,28 @@ export function WithdrawalsList({
   const [message, setMessage] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<WithdrawalView | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [reviewing, setReviewing] = useState<WithdrawalView | null>(null);
+  const [entering, setEntering] = useState<WithdrawalView | null>(null);
   const [isPending, startTransition] = useTransition();
 
   function decide(w: WithdrawalView, decision: "approve" | "reject" | "cancel", reason?: string): void {
     setMessage(null);
     startTransition(async () => {
-      const result = await decideWithdrawalAction(slug, collectionSlug, {
-        withdrawalId: w.id,
-        decision,
-        ...(reason ? { reason } : {}),
-      });
+      let result: Awaited<ReturnType<typeof decideWithdrawalAction>>;
+      try {
+        result = await decideWithdrawalAction(slug, collectionSlug, {
+          withdrawalId: w.id,
+          decision,
+          ...(reason ? { reason } : {}),
+        });
+      } catch {
+        // The decision may or may not have been saved: reload to show where it is.
+        setMessage(`${ACTION_UNREACHABLE} Reload to see whether the decision was saved.`);
+        onChanged();
+        return;
+      }
       setRejecting(null);
+      setReviewing(null);
       setRejectReason("");
       if (result.error) setMessage(result.error);
       else onChanged();
@@ -342,32 +735,54 @@ export function WithdrawalsList({
                   <span className="ml-1 text-xs font-normal text-[var(--color-text-muted)]">+ {nairaText(w.feeKobo)} fee</span>
                 )}
               </p>
-              <Badge tone={STATUS[w.status].tone}>{STATUS[w.status].label}</Badge>
+              <Badge tone={withdrawalStageLabel(w.stage, w.status).tone}>{withdrawalStageLabel(w.stage, w.status).label}</Badge>
             </div>
             <p className="text-xs text-[var(--color-text-muted)]">
               <span className="font-mono">{w.reference}</span> · {w.accountName} · {w.bankName} ••••{w.accountLast4} ·{" "}
               {w.requestedByName ?? "An officer"} · {formatDistanceToNow(w.requestedAt)}
               {w.requiresManualReview && " · checked by Kolekto before payout"}
             </p>
+            {w.approvedAt && (
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Approved by {w.approvedByName ?? "an authorised administrator"} {watText(w.approvedAt)}
+                {w.ownerSelfApproved && " (own request — recorded before independent approval was required)"}
+              </p>
+            )}
+            {w.transferEscalated && (
+              <p className="text-xs text-[var(--color-warning)]">
+                The bank transfer has not been confirmed yet. Kolekto is checking it; the money stays reserved.
+              </p>
+            )}
             {w.paidAt && (
               <p className="text-xs text-[var(--color-text-muted)]">
                 Paid {watText(w.paidAt)}
                 {w.payoutReference && <span className="font-mono"> · {w.payoutReference}</span>}
               </p>
             )}
+            {!w.paidAt && w.transferReference && (
+              <p className="text-xs text-[var(--color-text-muted)]">
+                Bank transfer <span className="font-mono">{w.transferReference}</span>
+              </p>
+            )}
+            {w.reversedAt && (
+              <p className="text-xs text-[var(--color-danger)]">
+                Returned by the bank {watText(w.reversedAt)}
+                {w.reversalReason && ` — ${w.reversalReason}`}. The amount is back in the available balance.
+              </p>
+            )}
             {w.failureReason && <p className="text-xs text-[var(--color-danger)]">{w.failureReason}</p>}
             {w.decisionReason && <p className="text-xs text-[var(--color-text-muted)]">“{w.decisionReason}”</p>}
-            {(w.canDecide || w.canCancel) && (
+            {(w.canReject || w.canCancel || (w.isMine && w.stage === "awaiting_member_verification")) && (
               <div className="flex flex-wrap gap-2">
-                {w.canDecide && (
-                  <>
-                    <Button size="sm" loading={isPending} onClick={() => decide(w, "approve")}>
-                      Approve
-                    </Button>
-                    <Button size="sm" variant="secondary" onClick={() => setRejecting(w)}>
-                      Reject
-                    </Button>
-                  </>
+                {w.isMine && w.stage === "awaiting_member_verification" && (
+                  <Button size="sm" onClick={() => setEntering(w)}>
+                    Enter code
+                  </Button>
+                )}
+                {w.canReject && (
+                  <Button size="sm" variant={w.canDecide ? "primary" : "secondary"} onClick={() => setReviewing(w)}>
+                    Review
+                  </Button>
                 )}
                 {w.canCancel && (
                   <Button size="sm" variant="ghost" loading={isPending} onClick={() => decide(w, "cancel")}>
@@ -379,6 +794,34 @@ export function WithdrawalsList({
           </li>
         ))}
       </ul>
+
+      {reviewing && (
+        <OwnerReview
+          w={reviewing}
+          isPending={isPending}
+          onApprove={() => decide(reviewing, "approve")}
+          onReject={() => {
+            setRejecting(reviewing);
+            setReviewing(null);
+          }}
+          onClose={() => setReviewing(null)}
+        />
+      )}
+
+      {entering && (
+        <Dialog open onClose={() => setEntering(null)} title={`Confirm withdrawal ${entering.reference}`}>
+          <WithdrawalCodeEntry
+            slug={slug}
+            collectionSlug={collectionSlug}
+            withdrawalId={entering.id}
+            reference={entering.reference}
+            onVerified={() => {
+              setEntering(null);
+              onChanged();
+            }}
+          />
+        </Dialog>
+      )}
 
       {rejecting && (
         <Dialog open onClose={() => setRejecting(null)} title={`Reject ${rejecting.reference}?`}>

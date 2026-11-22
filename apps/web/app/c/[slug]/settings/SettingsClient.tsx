@@ -12,6 +12,8 @@ import {
   revokeOfficerInvitationAction,
   updateCommunityProfileAction,
 } from "./actions.ts";
+import type { ApproverPanelState } from "./approver-view.ts";
+import { WithdrawalApprovers } from "./WithdrawalApprovers.tsx";
 
 interface OfficerTermWithUser extends OfficerTerm {
   users: { full_name: string } | null;
@@ -29,6 +31,10 @@ interface Props {
   /** Null when the caller cannot see it or the database lacks the M13.3 migration. */
   noticeStatus: CommunityNoticeStatus | null;
   currentUserId: string;
+  /** The caller holds an owner term (display only; the database enforces). */
+  isOwner: boolean;
+  /** Owner only: the second-approver section's state; null when not loaded. */
+  approvers: ApproverPanelState | null;
 }
 
 export function SettingsClient(props: Props) {
@@ -182,11 +188,24 @@ function ProfileTab({ slug, community, canEditProfile }: Props) {
   );
 }
 
-function TeamTab({ slug, community, officers, invitations, canInviteOfficers, canRemoveOwner, currentUserId }: Props) {
+function TeamTab({ slug, community, officers, invitations, canInviteOfficers, canRemoveOwner, currentUserId, isOwner, approvers }: Props) {
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteRole, setInviteRole] = useState<OfficerRole | "">("");
 
   return (
     <div className="flex flex-col gap-8">
+      {isOwner && (
+        <WithdrawalApprovers
+          slug={slug}
+          communityId={community.id}
+          state={approvers}
+          onInviteAdmin={() => {
+            setInviteRole("admin");
+            setInviteOpen(true);
+          }}
+        />
+      )}
+
       <section className="flex flex-col gap-3">
         <h2 className="text-sm font-semibold text-[var(--color-text)]">Officers</h2>
         <div className="flex flex-col divide-y divide-[var(--color-border)] rounded-[var(--radius-lg)] border border-[var(--color-border)]">
@@ -206,7 +225,14 @@ function TeamTab({ slug, community, officers, invitations, canInviteOfficers, ca
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-[var(--color-text)]">Pending invitations</h2>
-            <Button size="sm" variant="secondary" onClick={() => setInviteOpen(true)}>
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setInviteRole("");
+                setInviteOpen(true);
+              }}
+            >
               Invite officer
             </Button>
           </div>
@@ -223,7 +249,14 @@ function TeamTab({ slug, community, officers, invitations, canInviteOfficers, ca
       )}
 
       {canInviteOfficers && (
-        <InviteOfficerDialog open={inviteOpen} onClose={() => setInviteOpen(false)} slug={slug} communityId={community.id} />
+        <InviteOfficerDialog
+          key={inviteRole}
+          open={inviteOpen}
+          onClose={() => setInviteOpen(false)}
+          slug={slug}
+          communityId={community.id}
+          defaultRole={inviteRole}
+        />
       )}
     </div>
   );
@@ -300,7 +333,19 @@ function InvitationRow({ slug, invitation }: { slug: string; invitation: Officer
   );
 }
 
-function InviteOfficerDialog({ open, onClose, slug, communityId }: { open: boolean; onClose: () => void; slug: string; communityId: string }) {
+function InviteOfficerDialog({
+  open,
+  onClose,
+  slug,
+  communityId,
+  defaultRole = "",
+}: {
+  open: boolean;
+  onClose: () => void;
+  slug: string;
+  communityId: string;
+  defaultRole?: OfficerRole | "";
+}) {
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [link, setLink] = useState<string | null>(null);
@@ -327,7 +372,7 @@ function InviteOfficerDialog({ open, onClose, slug, communityId }: { open: boole
             })
           }
         >
-          <SelectField label="Role" name="role" required defaultValue="">
+          <SelectField label="Role" name="role" required defaultValue={defaultRole}>
             <option value="" disabled>
               Choose a role
             </option>

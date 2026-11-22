@@ -72,6 +72,12 @@ Phase 4. The ledger built in M8.1 is deliberately shaped to survive either
 answer — see ADR 0015 §4 for why the chart of accounts does not change if
 PA-04 turns out to be false.
 
+> **Superseded in part, 2026-11-19 (§22 A, [ADR 0016](../adr/0016-member-code-owner-approval-paystack-server-approval.md)).**
+> The owner chose not to build on organiser subaccounts. Funds stay in Kolekto's Paystack balance, attributed
+> to collections in the ledger, and are paid out by Kolekto-controlled transfers (`balance_and_withdraw` in the
+> naming above). PA-04 is therefore **not applicable**. The text above is kept as the record of the earlier
+> decision. D-01a below is unchanged.
+
 **D-01a. What DEC-03 still asks is not answered here.** Whether Kolekto may
 lawfully hold or control the timing of third-party funds, and whether doing so
 requires a licence, remains **OPEN** (§12, O-1) and is counsel's, not
@@ -709,3 +715,131 @@ Built uncommitted on `feat/payment-receipts-alarms`; design and runbook in
 - **Fees are visible per payment** as the frozen Processing fee and Kolekto fee
   lines, the bearer and the credited amount. Paystack's own cost stays internal
   (D-28 unchanged).
+
+## 20 · Decisions of 2026-11-18, withdrawals and transfers brief (owner)
+
+Answered before building (audit: `docs/phase-4/withdrawals-transfers-audit-2026-11-18.md` §10).
+
+- **Q1 — Fees: keep D-28.** Contributors keep seeing "Processing fee 1.5 %" and
+  "Kolekto fee 0.5 %" as frozen on the attempt; Paystack's actual charge is
+  booked to `provider_fee_expense`. The brief's relabelling is not applied, so
+  no new fee schedule version and no change to what anyone pays.
+- **Q2 — Settlement: verified charge + T+1.** From 2026-11-18 00:00 WAT
+  (schedule `2026-11-18-t1-0500-lagos-verified-charge`) a captured payment's
+  net moves pending → available at 05:00 Africa/Lagos on the next calendar
+  day, with no provider settlement record required. Captures before that keep
+  the provider-confirmed rule they were scheduled under. Because funds are not
+  confirmed settled, every transfer first checks that the Paystack balance
+  covers it; a shortfall leaves the transfer waiting, never fails it.
+- **Q3 — Who may withdraw: a name-matched saved bank account.** Replaces the
+  `identity_verified` gate for withdrawals. Paystack account resolution must
+  match the profile name (shared ≥ 2 names, one side's names all on the
+  other); a mismatch goes to Kolekto review. D-08's 48-hour cooling-off applies
+  to any account added after the first.
+- **Q4 — Transfer fee: Kolekto absorbs; no withdrawal-count limit.** The fee
+  Paystack reports is booked to `transfer_fee_expense` against the Paystack
+  balance; the organiser receives the full amount. The "first withdrawal free,
+  later ones blocked until O-2" rule is lifted: `withdrawal_fee_kobo` is 0.
+
+- **Profile name change → re-review (decided after the audit, §14 there).**
+  Any change to the profile name (ignoring case and spacing) moves the user's
+  verified bank accounts back to review. Approved withdrawals to them wait;
+  an operator approves the account again or fails the withdrawal
+  (`20261118100200`).
+
+§18 still governs operation: automatic transfers run only with
+`PAYSTACK_TRANSFERS_ENABLED=true`, and with a live key also
+`PAYSTACK_LIVE_TRANSFERS_APPROVED=true`. Both are unset everywhere today.
+
+## 21 · Decision of 2026-11-19, settlement backlog (owner)
+
+Payments captured before 2026-11-18 were scheduled under
+`2026-11-t1-0500-lagos`, which releases only after a provider settlement is
+recorded with `app.record_provider_settlement`. Nothing records those (no
+Paystack settlement sync), so they stayed pending after their 05:00 WAT time.
+§20 Q2 had kept them on that rule.
+
+- **Decision: audited catch-up.** An operator may approve, per payment, that a
+  verified Paystack charge captured under the provider-confirmed rule is
+  released on its T+1 time without a provider settlement record, the same rule
+  §20 Q2 applies to every capture from 2026-11-18.
+- **Only verified charges.** Attempt `completed`, non-fake provider, a provider
+  transaction mapped `succeeded` for exactly the amount charged, Paystack fee
+  basis `reported`. Fake-provider (seed) payments are never approved.
+- **Not a provider confirmation.** The approval is its own write-once column
+  (`verified_charge_approved_at`), audited per payment
+  (`settlement.verified_charge_approved`). `provider_confirmed_at` keeps meaning
+  "Paystack reported a settlement", so platform reconciliation is unchanged.
+- **Dry run first.** `app.approve_verified_charge_settlements(false)` lists;
+  `(true)` approves; the release stays `app.release_due_settlements`.
+- **No stored amount changes.** Approved payments move pending → available for
+  exactly their recorded net.
+
+Migration `20261119100000_settlement_verified_charge_catchup.sql`, pgTAP 65.
+
+## 22 · Decisions of 2026-11-19, withdrawal authorisation (owner)
+
+Owner brief "Member OTP, Mandatory Community Owner Approval, Paystack Server Approval and Transfer
+Reliability Fixes". Implementation and evidence:
+`docs/phase-4/withdrawal-otp-owner-approval-2026-11-19.md`; ADR 0016; migration
+`20261119120000_withdrawal_otp_owner_approval_transfer_reliability.sql`; pgTAP 69, 70.
+
+- **A — Ownership stays at the collection.** Collection-level balances, attribution and withdrawals,
+  community-based access control, Kolekto-controlled Paystack transfers and the existing ledger are kept.
+  Organiser subaccounts are not built. **PA-04 is not applicable**; D-01 and ADR 0015 are superseded in
+  part (custody), not in their collection-ownership half (§2 stands).
+- **B — O-1 deferred.** The legal question stays open and unresolved, and still blocks real-money
+  operation. It was not investigated.
+- **C — F8 working assumption.** Paystack's charge on a collection is taken as 1 % capped at ₦2,000. The
+  fee Paystack reports remains authoritative when available (`provider_fee_expense`, D-28). This is the
+  provider's cost, not the contributor-facing processing or Kolekto fee; nothing a contributor pays changes.
+- **D — Destination.** A withdrawal goes to the **requesting member's own** verified, name-matched saved bank
+  account, outside cooling-off and not under review. It need not belong to the owner or the collection's
+  creator. An account change after the request blocks approval and transfer.
+- **E — Owner approval is mandatory.** The community owner approves every withdrawal as its own recorded
+  decision. A treasurer's `withdrawal.approve` does not satisfy it; initiating a withdrawal does not
+  authorise approving it. The member's code and the owner's approval are independent conditions, both
+  required before Kolekto claims the transfer and before it answers Paystack's approval request with 200.
+  An owner's own request is approved by that owner as a separate step after their own code, recorded as
+  `owner_self_approved` — **pending the owner's confirmation** (implementation doc §10).
+  **Amended 2026-11-20 (owner brief, session 35; migration `20261120100000`):** nobody approves their own
+  withdrawal. An owner's own request is approved by a **second approver the owner explicitly designated**,
+  who must hold a current admin or owner term; the treasurer role never grants this. The basis
+  (`owner` / `second_approver`) is recorded write-once in `approved_as` and audited, and Paystack's approval
+  request is refused (`self_approved` / `approver_not_authorised`) if it does not hold.
+- **Member code (Option A).** Kolekto emails the requester a 6-digit code: 10 minutes, 5 attempts, single
+  use, bound to one withdrawal and one member, only an HMAC stored (key `KOLEKTO_WITHDRAWAL_OTP_SECRET`,
+  outside the database), resend after 60 s, at most 5 per request and 10 per member per hour. It confirms the
+  request; it is not approval and not payment.
+- **Paystack server approval replaces the per-transfer dashboard OTP — when configured.** Kolekto's
+  approval URL answers 200 only for a transfer that matches a fully authorised, still-reserved withdrawal, and
+  400 otherwise; it never approves on a reference alone. Enabling it, and turning off dashboard OTP, are
+  dashboard changes that need the owner's separate approval; neither was made. Until then every transfer
+  parks at Paystack's `otp` and is escalated after 2 hours.
+- **PA-08 / PA-09.** A hold is never released after a single NOT FOUND; open transfers are leased; checks
+  follow a versioned backoff policy (immediate, 2, 5, 10, 30 min, 1 h, 2 h, 4 h, then 6-hourly) and escalate to
+  manual reconciliation after 24 h, 2 h at `otp` or 40 checks, without releasing funds or sending again; a
+  read-only reconciliation against Paystack's transfer list is stored with per-item resolution.
+
+No stored amount changes. No contributor-facing fee changes. §18's switches still govern operation:
+`PAYSTACK_TRANSFERS_ENABLED` and, for a live key, `PAYSTACK_LIVE_TRANSFERS_APPROVED`, both unset everywhere.
+
+## 23 · Status note of 2026-11-20 (session 41) — no new decision
+
+Session 41 was a review; it made **no financial decision** and changed no rule, amount or schedule. It records
+where the decisions above stand in the code, so the gaps are not lost:
+
+- **O-1 stays open and is a separate LIVE blocker** (risk register SR-01). Nothing in sessions 27–41 changes it.
+- **D-06 is implemented more strictly than written.** Every withdrawal over ₦1,000,000 is
+  `requires_manual_review` and is never transferred; the ₦1M–₦5M "security checks" band is not distinguished, and no
+  operator path clears manual review. Fail-safe, but large withdrawals stay held until **O-3** is answered (SR-11).
+- **D-07** (₦1,000,000 per day for unverified communities) is enforced in the database and serialised per
+  community (advisory lock).
+- **D-08** cooling-off applies to accounts after the first (§20 Q3); there is still no alert to the member when an
+  account is added or changed (SR-10).
+- **§22 E** second approver: the owner screen exists and is verified; a designation takes effect immediately and
+  notifies nobody (SR-09) — an owner decision whether to add a waiting period and notices before LIVE.
+- **§18 switches:** documented in `.env.example` (both unset).
+
+Detail: [`docs/security/risk-register-2026-11-20.md`](../security/risk-register-2026-11-20.md),
+[`staging-readiness-2026-11-20.md`](staging-readiness-2026-11-20.md).

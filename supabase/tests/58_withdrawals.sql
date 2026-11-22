@@ -14,6 +14,18 @@
 
 begin;
 set local search_path to extensions, public, app, pg_catalog;
+-- 20261118100100 added a verified-charge schedule (no provider confirmation)
+-- effective 2026-11-18. This file tests the provider-confirmed rule with
+-- captures dated relative to now(), so it pins that rule for its own
+-- captures inside this rolled-back transaction, whatever today is.
+insert into public.settlement_schedules
+  (version, effective_from, timezone, release_day_offset, release_time, requires_provider_confirmation, notes)
+values ('test-pin-provider-confirmed', now() - interval '3 days', 'Africa/Lagos', 1, time '05:00', true, 'test only');
+-- 20261118100100 revoked app.request_withdrawal (typed destination) from
+-- clients; this file still exercises its lifecycle, so the grant is restored
+-- inside this rolled-back transaction only. 63_bank_accounts_and_transfers.sql
+-- asserts clients cannot call it.
+grant execute on function app.request_withdrawal(uuid, bigint, text, text, text, text) to authenticated;
 select plan(52);
 
 -- ── Fixtures ────────────────────────────────────────────────────────────────
