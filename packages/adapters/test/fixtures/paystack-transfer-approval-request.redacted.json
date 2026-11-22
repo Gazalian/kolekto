@@ -1,0 +1,80 @@
+{
+  "event": "transferrequest.approval-required",
+  "data": {
+    "integration": 100000,
+    "domain": "test",
+    "user": null,
+    "source_ip": "203.0.113.10",
+    "details": {
+      "headers": {
+        "x-forwarded-for": "203.0.113.10, 198.51.100.20",
+        "x-forwarded-proto": "https",
+        "x-forwarded-port": "443",
+        "x-pstk-authorizer-headers": "{}",
+        "tag": "00000000-0000-4000-8000-000000000000",
+        "accept": "application/json",
+        "accept-encoding": "gzip",
+        "accept-language": "*",
+        "content-type": "application/json",
+        "sec-fetch-mode": "cors",
+        "user-agent": "node",
+        "x-geo-city": "REDACTED",
+        "x-geo-region": "REDACTED"
+      },
+      "body": {
+        "source": "balance",
+        "amount": "10000",
+        "recipient": "RCP_fixture0000001",
+        "reference": "ktr_000000000000000000000f17",
+        "reason": "Kolekto payout KWD-0000000000000000",
+        "currency": "NGN"
+      },
+      "query": {},
+      "endpoint": "/transfer"
+    },
+    "transfers": [
+      {
+        "amount": 10000,
+        "createdAt": "2026-11-20T10:45:10.000Z",
+        "currency": "NGN",
+        "domain": "test",
+        "failures": null,
+        "id": 1,
+        "integration": 100000,
+        "reason": "Kolekto payout KWD-0000000000000000",
+        "reference": "ktr_000000000000000000000f17",
+        "source": "balance",
+        "source_details": null,
+        "status": "received",
+        "titan_code": null,
+        "transfer_code": "TRF_fixture00000001",
+        "transferred_at": null,
+        "updatedAt": "2026-11-20T10:45:10.000Z",
+        "recipient": {
+          "id": 2,
+          "integration": 100000,
+          "domain": "test",
+          "type": "nuban",
+          "currency": "NGN",
+          "name": "SYNTHETIC ACCOUNT HOLDER",
+          "details": {
+            "account_number": "0000000000",
+            "account_name": "SYNTHETIC ACCOUNT HOLDER",
+            "bank_code": "999992",
+            "bank_name": "Synthetic Test Bank"
+          },
+          "description": null,
+          "metadata": null,
+          "recipientCode": "RCP_fixture0000001",
+          "active": true,
+          "isDeleted": false,
+          "createdAt": "2026-04-05T09:19:55.000Z",
+          "updatedAt": "2026-04-05T09:19:55.000Z",
+          "email": null,
+          "recipientAccount": "0000000000",
+          "institutionCode": "999992"
+        }
+      }
+    ]
+  }
+}

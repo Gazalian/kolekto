@@ -26,6 +26,12 @@ const WEBHOOK_SECRET = "whsec_webhook_route_stub_00000000000000000";
 
 let injectedProvider: PaystackPaymentProvider | null = null;
 const confirmPayment = vi.fn();
+const confirmWithdrawalTransfer = vi.fn();
+let transferContext: unknown = { db: () => null, provider: {} };
+
+vi.mock("../../../../lib/payments/transfers.ts", () => ({
+  getTransferContext: () => transferContext,
+}));
 
 vi.mock("../../../../lib/payments/paystack.ts", () => ({
   getPaystackPaymentProvider: () => injectedProvider,
@@ -46,6 +52,7 @@ vi.mock("@kolekto/payments", async () => {
   return {
     ...actual,
     confirmPayment: (...args: unknown[]) => confirmPayment(...args),
+    confirmWithdrawalTransfer: (...args: unknown[]) => confirmWithdrawalTransfer(...args),
   };
 });
 
@@ -103,6 +110,7 @@ function routeRequest(
 beforeEach(() => {
   injectedProvider = makeProvider();
   confirmPayment.mockReset();
+  confirmWithdrawalTransfer.mockReset();
 });
 
 afterEach(() => {
@@ -236,14 +244,58 @@ describe("outcome mapping", () => {
 });
 
 describe("non-charge events", () => {
-  it("transfer events are acknowledged without acting (subsystem deferred)", async () => {
-    const { raw, text } = makeBody({ event: "transfer.success", data: { transfer_code: "TRF_abc" } });
+  const TRANSFER_REF = "ktr_0123456789abcdef01234567";
+
+  it("a transfer event without a Kolekto reference is acknowledged and not acted on", async () => {
+    const { raw, text } = makeBody({ event: "transfer.success", data: { transfer_code: "TRF_abc", reference: "manual-dashboard-1" } });
     const { header } = signModern(raw);
     const response = await POST(routeRequest(text, { "Paystack-Signature": header }));
     expect(response.status).toBe(200);
     const json = (await response.json()) as { outcome: string };
-    expect(json.outcome).toBe("transfer_ignored");
+    expect(json.outcome).toBe("transfer_not_kolekto");
+    expect(confirmWithdrawalTransfer).not.toHaveBeenCalled();
     expect(confirmPayment).not.toHaveBeenCalled();
+  });
+
+  it("a Kolekto transfer event is confirmed by reference (verify, never the body)", async () => {
+    confirmWithdrawalTransfer.mockResolvedValueOnce("paid");
+    const { raw, text } = makeBody({ event: "transfer.failed", data: { transfer_code: "TRF_abc", reference: TRANSFER_REF } });
+    const { header } = signModern(raw);
+    const response = await POST(routeRequest(text, { "Paystack-Signature": header }));
+    expect(response.status).toBe(200);
+    expect(((await response.json()) as { outcome: string }).outcome).toBe("transfer_paid");
+    // Only the reference is passed on: the event name ("failed") is not trusted.
+    expect(confirmWithdrawalTransfer).toHaveBeenCalledWith(transferContext, TRANSFER_REF);
+    expect(confirmPayment).not.toHaveBeenCalled();
+  });
+
+  it("a transfer event is refused unsigned, before anything is verified", async () => {
+    const { text } = makeBody({ event: "transfer.success", data: { transfer_code: "TRF_abc", reference: TRANSFER_REF } });
+    const response = await POST(routeRequest(text, {}));
+    expect(response.status).toBe(401);
+    expect(confirmWithdrawalTransfer).not.toHaveBeenCalled();
+  });
+
+  it("verify unavailable → 503 so Paystack retries; a thrown error → 500 with no detail", async () => {
+    const { raw, text } = makeBody({ event: "transfer.success", data: { transfer_code: "TRF_abc", reference: TRANSFER_REF } });
+    confirmWithdrawalTransfer.mockResolvedValueOnce("provider_unavailable");
+    let response = await POST(routeRequest(text, { "Paystack-Signature": signModern(raw).header }));
+    expect(response.status).toBe(503);
+    confirmWithdrawalTransfer.mockRejectedValueOnce(new Error("secret detail"));
+    response = await POST(routeRequest(text, { "Paystack-Signature": signModern(raw).header }));
+    expect(response.status).toBe(500);
+    expect(await response.text()).not.toContain("secret detail");
+  });
+
+  it("no transfer provider configured → 503", async () => {
+    transferContext = null;
+    try {
+      const { raw, text } = makeBody({ event: "transfer.success", data: { transfer_code: "TRF_abc", reference: TRANSFER_REF } });
+      const response = await POST(routeRequest(text, { "Paystack-Signature": signModern(raw).header }));
+      expect(response.status).toBe(503);
+    } finally {
+      transferContext = { db: () => null, provider: {} };
+    }
   });
 
   it("unsupported events are acknowledged (never 5xx so Paystack does not loop)", async () => {

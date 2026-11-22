@@ -18,6 +18,9 @@ export const NOTIFICATION_LABELS: Record<string, string> = {
   // creates deliveries (payment status cannot be established).
   "collection.publish_remind_unpaid": "Payment reminder",
   "collection.remind": "Collection reminder",
+  // Organiser-sent (Phase 9, 2026-11-17): the database chose only members it
+  // knows have not paid this collection.
+  "collection.remind_unpaid": "Payment reminder",
   "collection.announce_update": "Collection updated",
   "member.approve_join": "Membership approved",
   "member.join_via_invite": "New member joined",
@@ -43,6 +46,7 @@ export function getNotificationDeepLink(eventType: string, payload: Record<strin
     case "collection.publish":
     case "collection.publish_remind_unpaid":
     case "collection.remind":
+    case "collection.remind_unpaid":
     case "collection.announce_update": {
       const colSlug = typeof payload.collection_slug === "string" ? payload.collection_slug : undefined;
       return colSlug ? `/${slug}/${colSlug}` : null;
@@ -62,6 +66,10 @@ export function getNotificationDescription(eventType: string, payload: Record<st
     case "collection.publish": {
       const name = typeof payload.collection_name === "string" ? payload.collection_name : undefined;
       return name ? `${name} is now live` : "A collection is now live";
+    }
+    case "collection.remind_unpaid": {
+      const name = typeof payload.collection_name === "string" ? payload.collection_name : undefined;
+      return name ? `You haven't contributed to ${name} yet` : "You have a payment reminder";
     }
     case "collection.publish_remind_unpaid":
     case "collection.remind": {

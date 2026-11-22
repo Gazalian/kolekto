@@ -85,6 +85,15 @@ describe("getNotificationDescription", () => {
     }
   });
 
+  it("labels, links and describes an organiser's payment reminder", () => {
+    expect(getNotificationLabel("collection.remind_unpaid")).toBe("Payment reminder");
+    expect(getNotificationDescription("collection.remind_unpaid", { collection_name: "Dues" })).toBe(
+      "You haven't contributed to Dues yet",
+    );
+    expect(getNotificationDescription("collection.remind_unpaid", {})).toBe("You have a payment reminder");
+    expect(getNotificationDeepLink("collection.remind_unpaid", { community_slug: "c", collection_slug: "dues" })).not.toBeNull();
+  });
+
   it("labels and describes reminders and update announcements", () => {
     expect(getNotificationLabel("collection.remind")).toBe("Collection reminder");
     expect(getNotificationLabel("collection.announce_update")).toBe("Collection updated");

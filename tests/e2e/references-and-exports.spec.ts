@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { openPeopleView, openRoll } from "./helpers/collection-detail.ts";
 import { configureReferences, fillTier, stepCount, walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -140,7 +141,7 @@ test("options with their own prefixes give REG-0001 and VIP-0001, and both land 
   await page.waitForLoadState("networkidle");
 
   // ── Put one person on each option ───────────────────────────────────────
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
 
   for (const [name, option] of [
     ["Ẹniọlá Adéṣínà", "Regular"],
@@ -174,7 +175,7 @@ test("options with their own prefixes give REG-0001 and VIP-0001, and both land 
   await expect(page.getByRole("cell", { name: "₦25,000" })).toBeVisible();
 
   // ── Both files, read rather than merely requested ───────────────────────
-  await page.getByRole("button", { name: "Exports" }).click();
+  await openPeopleView(page, "Members", "Export");
   // By role: "Option" is both a column to tick and a filter to choose from,
   // in different cards, and a bare label matches both.
   await page.getByRole("checkbox", { name: "Reference" }).check();
@@ -235,7 +236,7 @@ test("a reference format is fixed once references are out", async ({ page }) => 
   await page.waitForLoadState("networkidle");
 
   // Issue one by putting somebody on the roll.
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await page.getByRole("button", { name: "Add members" }).click();
   const assign = page.getByRole("dialog");
   await assign.getByRole("checkbox").first().check();
@@ -340,7 +341,7 @@ test("a random reference style issues unguessable codes that persist and export"
   await page.waitForLoadState("networkidle");
 
   // ── Three people, three references ──────────────────────────────────────
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await page.getByRole("button", { name: "Add members" }).click();
   const assign = page.getByRole("dialog");
   for (const name of ["Ada Random", "Bola Random", "Chidi Random"]) {
@@ -367,7 +368,7 @@ test("a random reference style issues unguessable codes that persist and export"
   // ── They survive a reload, which is what "issued" means ─────────────────
   await page.reload();
   await page.waitForLoadState("networkidle");
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   for (const reference of issued) {
     await expect(page.getByRole("cell", { name: reference })).toBeVisible({ timeout: 30_000 });
   }
@@ -379,7 +380,7 @@ test("a random reference style issues unguessable codes that persist and export"
   await page.getByLabel("Search").fill("");
 
   // ── And they reach both files ───────────────────────────────────────────
-  await page.getByRole("button", { name: "Exports" }).click();
+  await openPeopleView(page, "Members", "Export");
   await page.getByRole("checkbox", { name: "Reference" }).check();
 
   const csvDownload = page.waitForEvent("download");

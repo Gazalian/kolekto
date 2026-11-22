@@ -452,7 +452,7 @@ export async function exportCollectionAction(
     }),
     columns: reportColumns,
     rows: rows.map((row) => columns.map((column) => column.value(row))),
-    note: "Online payment is not switched on yet, so this report shows what was asked for — never what has been received.",
+    note: "This report shows what was asked for — never what has been received. Payments are listed on the collection's Contributors tab.",
   });
 
   return {

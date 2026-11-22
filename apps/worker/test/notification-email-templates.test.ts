@@ -49,7 +49,6 @@ describe("hasTemplate", () => {
 
   it("returns false for non-template events", () => {
     assert.equal(hasTemplate("collection.publish_remind_unpaid"), false);
-    assert.equal(hasTemplate("collection.remind_unpaid"), false);
     assert.equal(hasTemplate("member.reject_join"), false);
     assert.equal(hasTemplate("member.join_via_invite"), false);
     assert.equal(hasTemplate("unknown.action"), false);
@@ -494,6 +493,26 @@ describe("collection announcement templates", () => {
     const r = renderTemplate(ctx("collection.remind"))!;
     assert.equal(r.subject, "Reminder from KWASU Alumni: Annual Dues");
     assert.ok(!/owe|outstanding|unpaid|not paid|overdue/i.test(r.text + r.html), "no payment-status claim");
+  });
+
+  it("payment reminder: names the collection, links to its pay page, and tells a recent payer to ignore it", () => {
+    const r = renderTemplate(ctx("collection.remind_unpaid"))!;
+    assert.equal(r.subject, "Payment reminder: Annual Dues");
+    for (const part of [
+      "You haven't contributed to Annual Dues yet. KWASU Alumni sent you this reminder.",
+      "Pay now: https://app.kolekto.example/kwasu/annual-dues",
+      "If you have paid in the last few minutes, please ignore this message.",
+      "To stop receiving these messages, contact the organisers of KWASU Alumni.",
+    ]) {
+      assert.ok(r.text.includes(part), part);
+    }
+    assert.ok(r.html.includes('href="https://app.kolekto.example/kwasu/annual-dues"'));
+    assert.ok(!/@/.test(r.text.replace(/https?:\/\/\S+/g, "")), "no address in the body");
+  });
+
+  it("payment reminder: open-amount collection says contribute, and no link means no email", () => {
+    assert.ok(renderTemplate(ctx("collection.remind_unpaid", { amount_model: "open", fixed_amount_kobo: null }))!.text.includes("Contribute now: "));
+    assert.equal(renderTemplate(ctx("collection.remind_unpaid", {}, null)), null);
   });
 
   it("update: names what changed, in words", () => {

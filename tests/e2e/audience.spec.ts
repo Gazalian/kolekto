@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { openRoll } from "./helpers/collection-detail.ts";
 import { walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -86,7 +87,7 @@ test("aim a collection at a group, then add obligations for newly eligible membe
   await page.waitForLoadState("networkidle");
 
   // ── One eligible member, none expected yet ────────────────────────────────
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await expect(page.getByText("For 300 Level")).toBeVisible();
   await expect(page.getByText("1 eligible · 0 already expected to pay")).toBeVisible();
 
@@ -112,7 +113,7 @@ test("aim a collection at a group, then add obligations for newly eligible membe
   await expect(page.getByRole("heading", { name: "Collections" })).toBeVisible({ timeout: 45_000 });
   await page.getByRole("link", { name: "Level Dues 2026" }).click();
   await page.waitForLoadState("networkidle");
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
 
   // Eligible, and explicitly NOT yet expected to pay — the rule this test exists for.
   await expect(page.getByText("2 eligible · 1 already expected to pay")).toBeVisible();

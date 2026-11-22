@@ -190,11 +190,11 @@ describe("isImportedMember", () => {
 describe("recipientPlan", () => {
   it("tells the right in-app audience for each action", () => {
     assert.deepEqual(recipientPlan("collection.publish"), { kind: "collection_audience" });
-    // Payment-status targeting is disabled: no contributions are recorded and
-    // no path sets an obligation to paid, so "unpaid" cannot be established.
+    // Publish-time "unpaid" targeting stays off; organiser reminders name
+    // their members through a reminder batch (20261117100500).
     assert.deepEqual(recipientPlan("collection.publish_remind_unpaid"), { kind: "payment_status_unavailable" });
     assert.deepEqual(recipientPlan("collection.remind"), { kind: "collection_audience" });
-    assert.deepEqual(recipientPlan("collection.remind_unpaid"), { kind: "payment_status_unavailable" });
+    assert.deepEqual(recipientPlan("collection.remind_unpaid"), { kind: "payment_reminder_batch" });
     assert.deepEqual(recipientPlan("collection.announce_update"), { kind: "collection_audience" });
     assert.deepEqual(recipientPlan("member.create"), { kind: "member_self" });
     assert.deepEqual(recipientPlan("member.approve_join"), { kind: "member_self" });

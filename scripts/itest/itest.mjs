@@ -633,6 +633,8 @@ const WORKER_ROLE_FUNCTIONS = Object.freeze([
   "app.evaluate_actor_email(uuid)",
   // Payment lifecycle emails to the payer (20261116100000). SECURITY DEFINER; the role still reads no payment table.
   "app.payment_notification_context(uuid)",
+  // Organiser payment reminders (20261117100500): who in a batch still gets it, re-checked at send time.
+  "app.payment_reminder_batch_recipients(uuid)",
   // Run by the insert path: the id default, the payload sanitiser trigger and the table's CHECK constraint.
   "app.uuid_generate_v7()",
   "extensions.gen_random_bytes(integer)",

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { flowFor } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { futureEventStart } from "./helpers/collection-detail.ts";
 import { chooseFeeBearer, openWizard, stepCount, walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -272,7 +273,7 @@ test("a per-order limit set during creation is enforced by the server", async ({
     fill: {
       event: async (p) => {
         await p.getByLabel("What is the event called?").fill("Founders Breakfast 2026");
-        await p.getByLabel("When does it start?").fill("2026-11-20T08:00");
+        await p.getByLabel("When does it start?").fill(futureEventStart(60, "08:00").input);
         await p.getByLabel("Where is it?").fill("Kwara Hotel, Ilorin");
       },
       tickets: async (p) => {

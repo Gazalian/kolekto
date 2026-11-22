@@ -102,3 +102,21 @@ communication policy against the M13.3 database proposals: attestation, opt-outs
 send-time recheck on the real claim → reserve path). No SMTP, no pause-switch write, every test rolled
 back; it runs in `--without-smtp`. It holds the M13.3 tests so the processor file's `set_config`
 guard stays at three.
+
+## The itest stack and the full pgTAP suite (2026-11-20)
+
+The dedicated `kolekto-itest` database also carries objects the harness creates, not the migrations:
+`kolekto_itest_worker` and its 10 policies (`npm run itest:worker-role`), and the pg_net lockdown
+(`npm run itest:net-lockdown`). Keep them: the integration lane needs them.
+
+- **pgTAP 32 #5** counts the policies on `notification_deliveries`. Since session 41 it skips exactly the two
+  harness policies (`kolekto_itest_worker_notification_deliveries_{select,insert}`, sole role
+  `kolekto_itest_worker`); any other policy still fails it. Full suite on itest: 70/70 files, 2,386/2,386.
+  Before that fix the expected itest result was 69/70 with only 32 #5 failing.
+- Running the suite: each file is `begin; … rollback;`, so it can run against the itest database without leaving
+  data, e.g. `docker exec -i supabase_db_kolekto-itest psql -X -q -t -A -U postgres -d postgres < supabase/tests/<file>.sql`.
+- **Known wrapper gap:** `itest:reset` refuses when the stack is stopped, and `itest:up` refuses when the migration
+  copy is stale and the volume exists, so "stopped + stale + volume" has no supported path. Root cause, proposed
+  fix and the safe manual recovery (backup, exact-name volume removal, `itest:up`) are in
+  `docs/phase-4/staging-readiness-2026-11-20.md` §5. Never prune volumes; the developer volume
+  `supabase_db_kolekto` differs from the itest one only by its suffix.

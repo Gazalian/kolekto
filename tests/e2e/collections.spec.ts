@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { openRoll } from "./helpers/collection-detail.ts";
 import { expectPaymentReview } from "./helpers/payments.ts";
 import { fillTier, openWizard, walkWizard } from "./helpers/wizard.ts";
 
@@ -111,7 +112,7 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   expect(draftResponse?.status()).toBe(404);
 
   // ── Assign ────────────────────────────────────────────────────────────────
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await expect(page.getByText("No members have been added to this collection yet")).toBeVisible();
 
   await page.getByRole("button", { name: "Add members" }).click();
@@ -130,7 +131,8 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await publishDialog.getByRole("button", { name: "Publish", exact: true }).click();
 
   await expect(page.getByText("Open", { exact: true })).toBeVisible();
-  await expect(page.getByText("Share this collection")).toBeVisible();
+  // Published, so the header's Share offers the working link rather than a draft warning.
+  await expect(page.getByRole("button", { name: "Share" })).toHaveAttribute("title", "Share this collection");
 
   // ── Contribute, with no account and no session ────────────────────────────
   await anonymousPage.goto(`/${communitySlug}/departmental-dues-2026`);

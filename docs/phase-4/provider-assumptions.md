@@ -77,6 +77,10 @@ is, because every ingest path converges on a conflict rather than an insert.
 
 ### PA-04 · Subaccount settlement timing is controllable
 
+> **NOT APPLICABLE (owner decision 2026-11-19, financial-decisions.md §22 A, ADR 0016).** Kolekto does not use
+> organiser subaccounts; funds stay in Kolekto's Paystack balance and are paid out by transfer. The entry below
+> is kept as the record of why it once mattered.
+
 **This is the most consequential unverified assumption in Phase 4.**
 
 **The assumption:** that a Paystack subaccount can be operated so that the
@@ -167,6 +171,11 @@ documentation available to us does not clearly establish either.
 
 *C5, and the answer is "we do not know".*
 
+> **2026-11-19 [TEST]:** a second `POST /transfer` with a reference already used is refused
+> (`duplicate_transfer_reference`), sequentially and concurrently, and only one transfer exists for it
+> (transfer-idempotency-timeout-otp-review-2026-11-19.md §1). Not observed on a live key. Kolekto still treats
+> calls as not exactly-once: P8-1 to P8-4 (withdrawal-otp-owner-approval-2026-11-19.md §6).
+
 **How Kolekto is designed for it:** Kolekto generates its **own** unique
 payout/transfer reference and treats provider transfer calls as **not**
 exactly-once. The withdrawal is idempotent on Kolekto's reference regardless of
@@ -181,6 +190,10 @@ bank twice.
 how to establish what actually happened.
 
 *C6, and the answer is "we do not know".*
+
+> **2026-11-19:** still not observed (a timeout cannot be provoked on demand). Unknown reference verifies as 404
+> `not_found` [TEST]. Kolekto's handling is now a versioned backoff with escalation and no automatic release
+> (withdrawal-otp-owner-approval-2026-11-19.md §7).
 
 **How Kolekto is designed for it — the rule, not a preference:**
 
@@ -262,12 +275,12 @@ accept.
 | PA-01 | Webhook signature (HMAC SHA-512, raw body) | ESTABLISHED | — |
 | PA-02 | Retry schedule, 72-hour window | ESTABLISHED | — |
 | PA-03 | Event ids, listable and resendable | ESTABLISHED | — |
-| PA-04 | Subaccount settlement timing is controllable | **UNVERIFIED** | **all withdrawal work** |
+| PA-04 | Subaccount settlement timing is controllable | NOT APPLICABLE (2026-11-19) | — |
 | PA-05 | Verify returns the settled fee | UNVERIFIED | fee reconciliation confidence |
 | PA-06 | Split and fee treatment matches our model | UNVERIFIED | the Paystack adapter |
 | PA-07 | Attribution is per-organiser, not per-collection | UNVERIFIED | nothing — assumed coarse either way |
-| PA-08 | Transfer idempotency | UNKNOWN | payout execution |
-| PA-09 | Transfer timeout semantics | UNKNOWN | payout retry |
+| PA-08 | Transfer idempotency | PARTLY ESTABLISHED (TEST: duplicate reference refused) | payout execution on live |
+| PA-09 | Transfer timeout semantics | UNKNOWN (handled pessimistically) | payout retry |
 | PA-10 | Settlement report decomposition | UNKNOWN | reconciliation boundary ④ |
 | PA-11 | Transaction list pagination | UNKNOWN | reconciliation boundary ① |
 | PA-12 | API rate limits | UNKNOWN | sweep frequency |

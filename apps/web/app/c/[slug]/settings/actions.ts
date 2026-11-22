@@ -5,10 +5,13 @@ import {
   createOfficerInvitation,
   DatabaseError,
   endOfficerTerm,
+  replaceWithdrawalApprover,
   revokeCommunityNotice,
   revokeOfficerInvitation,
+  setWithdrawalApprover,
   updateCommunityProfile,
 } from "@kolekto/db";
+import { approverErrorMessage } from "./approver-view.ts";
 import { createOfficerInvitationSchema, updateCommunityProfileSchema } from "@kolekto/validation";
 import { revalidatePath } from "next/cache";
 import { requireCallerContext } from "../../../../lib/caller.ts";
@@ -112,6 +115,42 @@ export async function revokeCommunityNoticeAction(slug: string, communityId: str
     await revokeCommunityNotice(caller, communityId, "other");
   } catch (error) {
     return { error: messageFrom(error, "Could not withdraw the member notice") };
+  }
+  revalidatePath(`/c/${slug}/settings`);
+  return { ok: true };
+}
+
+// ── Withdrawal second approver (session 39) ──────────────────────────────────
+// Owner only. Every rule — owner of THIS community, eligible designee (active
+// admin/owner term, active account), never the owner themself — is enforced by
+// the database functions; nothing here grants authority. Inputs are checked
+// only for shape.
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function approverFailure(error: unknown): ActionResult {
+  return { error: approverErrorMessage(error instanceof DatabaseError ? error.code : "UNKNOWN") };
+}
+
+export async function setWithdrawalApproverAction(slug: string, communityId: string, userId: string, active: boolean): Promise<ActionResult> {
+  if (!UUID.test(String(communityId)) || !UUID.test(String(userId)) || typeof active !== "boolean") return { error: "Choose a person." };
+  const caller = await requireCallerContext();
+  try {
+    await setWithdrawalApprover(caller, { communityId, userId, active });
+  } catch (error) {
+    return approverFailure(error);
+  }
+  revalidatePath(`/c/${slug}/settings`);
+  return { ok: true };
+}
+
+export async function replaceWithdrawalApproverAction(slug: string, communityId: string, fromUserId: string, toUserId: string): Promise<ActionResult> {
+  if (![communityId, fromUserId, toUserId].every((v) => UUID.test(String(v)))) return { error: "Choose a person." };
+  const caller = await requireCallerContext();
+  try {
+    await replaceWithdrawalApprover(caller, { communityId, fromUserId, toUserId });
+  } catch (error) {
+    return approverFailure(error);
   }
   revalidatePath(`/c/${slug}/settings`);
   return { ok: true };

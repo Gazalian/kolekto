@@ -4,6 +4,12 @@
 **Validated:** 2026-09-28 — [STAGING-ENVIRONMENT-VALIDATION.md](../migration/STAGING-ENVIRONMENT-VALIDATION.md)
 **Parent document:** [docs/phase-4/environments.md](../phase-4/environments.md) (all environments)
 
+> **Update 2026-11-20:** §D ("must stay UNSET", "no code reads them") and "Current limitations" ("no money moves in
+> staging") describe 2026-09-28. Paystack code now reads `PAYSTACK_*`; staging takes **TEST keys only** (`sk_test_`),
+> never `PAYSTACK_LIVE_TRANSFERS_APPROVED`. Current list and checklist:
+> [docs/phase-4/staging-readiness-2026-11-20.md](../phase-4/staging-readiness-2026-11-20.md). The isolation rules on
+> this page are unchanged.
+
 ## Identity
 
 | | |

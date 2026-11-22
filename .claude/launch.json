@@ -8,6 +8,12 @@
       "port": 3000
     },
     {
+      "name": "kolekto-web-clean-env",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set PAYSTACK_SECRET_KEY=&& set PAYSTACK_WEBHOOK_SECRET=&& set EMAIL_PROVIDER=&& set EMAIL_API_KEY=&& set KOLEKTO_PRODUCTION_PROJECT_REF=&& npm run dev --workspace=apps/web"],
+      "port": 3000
+    },
+    {
       "name": "kolekto-web-qa",
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set NEXT_DIST_DIR=.next-qa&& npm run dev --workspace=apps/web -- -p 3001"],

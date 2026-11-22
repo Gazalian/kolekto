@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { openRoll } from "./helpers/collection-detail.ts";
 import { walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -74,7 +75,7 @@ test("an organiser can send a reminder on an already-published collection, twice
   await expect(page).toHaveURL(/\/collections\/reminder-dues/, { timeout: 45_000 });
 
   // Assign the member to the collection.
-  await page.getByRole("button", { name: "Members" }).click();
+  await openRoll(page);
   await page.getByRole("button", { name: "Add members" }).click();
   const assignDialog = page.getByRole("dialog");
   await assignDialog.getByRole("checkbox").first().check();
@@ -89,7 +90,9 @@ test("an organiser can send a reminder on an already-published collection, twice
 
   // ── First reminder (all) ──────────────────────────────────────────────
   // The button appears on a published collection for the authorised officer.
-  const reminderButton = page.getByRole("button", { name: "Send reminder" });
+  // It lives with the people it reaches, in the Members section.
+  await page.getByRole("navigation", { name: "Collection sections" }).getByRole("button", { name: "Members", exact: true }).click();
+  const reminderButton = page.getByRole("button", { name: "Send a reminder to everyone" });
   await expect(reminderButton).toBeVisible();
   await reminderButton.click();
 

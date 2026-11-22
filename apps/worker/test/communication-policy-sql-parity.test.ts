@@ -23,6 +23,8 @@ import { COLLECTION_DB_SKIP_REASONS } from "../src/notification-eligibility.ts";
 
 const MIGRATIONS = new URL("../../../supabase/migrations/", import.meta.url);
 const POLICY_SQL = readFileSync(new URL("20261109100000_m13_3_communication_policy.sql", MIGRATIONS), "utf8");
+// The matrix itself was last redefined in 20261117100500 (payment attribution on).
+const MATRIX_SQL = readFileSync(new URL("20261117100500_payment_reminders.sql", MIGRATIONS), "utf8");
 const ANNOUNCE_SQL = readFileSync(new URL("20261109100100_member_collection_announcements.sql", MIGRATIONS), "utf8");
 const R3_SQL = readFileSync(new URL("20261109100200_m13_3_send_time_recheck.sql", MIGRATIONS), "utf8").replace(/\r\n/g, "\n");
 // The category map was last redefined in 20261116100000 (payment lifecycle events, essential).
@@ -71,7 +73,7 @@ function checkList(text: string, constraint: string, column: string): string[] {
 
 describe("SQL policy matrix = worker policy matrix", () => {
   const rows = [
-    ...between(POLICY_SQL, "-- POLICY-MATRIX-BEGIN", "-- POLICY-MATRIX-END").matchAll(
+    ...between(MATRIX_SQL, "-- POLICY-MATRIX-BEGIN", "-- POLICY-MATRIX-END").matchAll(
       /\('([a-z_]+)',\s*'([a-z_]*)',\s*'([a-z_]+)',\s*'([a-z_]+)',\s*(null(?:::text)?|'[a-z_,]+')\)/g,
     ),
   ].map((m) => ({

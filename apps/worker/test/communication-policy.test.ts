@@ -75,17 +75,13 @@ const TODAY: Record<string, Record<Channel, string>> = {
     whatsapp: "opt_in(marketing_consent,whatsapp_permission)",
     sms: "disabled(channel_disabled)",
   },
-  "payment:status": {
-    in_app: "disabled(payment_attribution_unavailable)",
-    email: "disabled(payment_attribution_unavailable)",
-    whatsapp: "disabled(payment_attribution_unavailable)",
-    sms: "disabled(payment_attribution_unavailable)",
-  },
+  // Payment attribution on since 20261117100500 (owner decision 2026-11-17).
+  "payment:status": { in_app: "always", email: "always", whatsapp: "opt_in(whatsapp_permission)", sms: "disabled(channel_disabled)" },
   "payment:targeted_reminder": {
-    in_app: "disabled(payment_attribution_unavailable)",
-    email: "disabled(payment_attribution_unavailable)",
-    whatsapp: "disabled(payment_attribution_unavailable)",
-    sms: "disabled(payment_attribution_unavailable)",
+    in_app: "always",
+    email: "default_on+notice",
+    whatsapp: "opt_in(whatsapp_permission)",
+    sms: "disabled(channel_disabled)",
   },
 };
 
@@ -129,8 +125,8 @@ describe("communication policy matrix (every category × channel)", () => {
     assert.deepEqual([...CHANNELS], ["in_app", "email", "whatsapp", "sms"]);
   });
 
-  it("current capabilities are all off", () => {
-    assert.deepEqual(CURRENT_CAPABILITIES, { paymentAttribution: false, smsApproved: false });
+  it("current capabilities: payment attribution on, SMS off", () => {
+    assert.deepEqual(CURRENT_CAPABILITIES, { paymentAttribution: true, smsApproved: false });
     assert.ok(Object.isFrozen(CURRENT_CAPABILITIES));
   });
 
@@ -232,19 +228,23 @@ describe("event classification", () => {
     }
   });
 
-  it("payment-targeted events are blocked on every channel today", () => {
+  it("payment-targeted events follow the targeted-reminder cells today", () => {
     for (const action of ["collection.publish_remind_unpaid", "collection.remind_unpaid"]) {
-      for (const ch of CHANNELS) {
-        assert.equal(sig(eventChannelRequirement(action, ch)!), "disabled(payment_attribution_unavailable)", `${action} × ${ch}`);
-      }
+      assert.equal(sig(eventChannelRequirement(action, "in_app")!), "always", action);
+      assert.equal(sig(eventChannelRequirement(action, "email")!), "default_on+notice", action);
+      assert.equal(sig(eventChannelRequirement(action, "whatsapp")!), "opt_in(whatsapp_permission)", action);
+      assert.equal(sig(eventChannelRequirement(action, "sms")!), "disabled(channel_disabled)", action);
     }
   });
 
-  it("the in-app recipient plan agrees with the policy: blocked in-app ⇔ payment_status_unavailable plan", () => {
+  it("the in-app recipient plan never tells anyone the policy blocks, and payment reminders go only through a batch", () => {
     for (const action of classifiedEvents()) {
-      const blocked = eventChannelRequirement(action, "in_app")!.kind === "disabled";
-      assert.equal(recipientPlan(action).kind === "payment_status_unavailable", blocked, action);
+      if (eventChannelRequirement(action, "in_app")!.kind === "disabled") {
+        assert.ok(["nobody", "payment_status_unavailable"].includes(recipientPlan(action).kind), action);
+      }
     }
+    assert.equal(recipientPlan("collection.remind_unpaid").kind, "payment_reminder_batch");
+    assert.equal(recipientPlan("collection.publish_remind_unpaid").kind, "payment_status_unavailable");
   });
 });
 
@@ -430,9 +430,9 @@ describe("collectionMemberDecision()", () => {
     assert.deepEqual(collectionMemberDecision("collection.publish", { ...ELIGIBLE, assurance: null }, ATTESTED), { send: false, reason: "no_recipient" });
   });
 
-  it("payment-targeted and unclassified events never send, whatever the database says", () => {
+  it("unclassified events never send, whatever the database says; payment reminders never reach the announcement path", () => {
     for (const action of ["collection.publish_remind_unpaid", "collection.remind_unpaid"]) {
-      assert.deepEqual(collectionMemberDecision(action, ELIGIBLE, ATTESTED), { send: false, reason: "payment_attribution_unavailable" });
+      assert.equal(collectionEmailCategory(action), null, action);
     }
     assert.deepEqual(collectionMemberDecision("nope", ELIGIBLE, ATTESTED), { send: false, reason: "category_not_on_channel" });
   });

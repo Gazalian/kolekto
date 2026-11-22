@@ -13,13 +13,29 @@ import type {
   Obligation,
 } from "@kolekto/db";
 import { notFound } from "next/navigation";
-import { collectionDoorTotals, countCollectionAudience } from "@kolekto/db";
+import {
+  collectionDoorTotals,
+  collectionHasContributorActivity,
+  countCollectionAudience,
+  getCollectionExpectedSummary,
+  getCollectionFinancialOverview,
+  listCollectionContributors,
+  listMyBankAccounts,
+} from "@kolekto/db";
 import { requireCallerContext } from "../../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../../lib/permissions.ts";
 import { createClient } from "../../../../../lib/supabase/server.ts";
 import { CollectionDetailClient, type ObligationRow } from "./CollectionDetailClient.tsx";
 import type { ExportFieldChoice } from "./export-fields.ts";
+import {
+  CONTRIBUTOR_PAGE_SIZE,
+  toContributorView,
+  toOverviewView,
+  type ContributorView,
+  type OverviewView,
+} from "./contributor-register.ts";
 import { DOOR_PAGE_SIZE, ROLL_PAGE_SIZE } from "./roll.ts";
+import type { ExpectedView, PayoutAccountView } from "./money-view.ts";
 
 export async function generateMetadata({ params }: { params: Promise<{ collectionSlug: string }> }) {
   const { collectionSlug } = await params;
@@ -237,6 +253,87 @@ export default async function CollectionDetailPage({
       ? await collectionDoorTotals(await requireCallerContext(), collection.id)
       : { expected: 0, inside: 0, left: 0, notArrived: 0 };
 
+  // The money and the people who paid (design:
+  // docs/product/COLLECTION-FINANCIAL-OVERVIEW-AND-REGISTER.md). Computed by
+  // the database as this officer; a collector outside their scope is refused
+  // there, and that refusal simply means the section is not shown.
+  let overview: OverviewView | null = null;
+  let contributorPage: { rows: ContributorView[]; total: number } = { rows: [], total: 0 };
+  if (hasPermission(access, "transaction.view")) {
+    try {
+      const caller = await requireCallerContext();
+      const [figures, page] = await Promise.all([
+        getCollectionFinancialOverview(caller, collection.id),
+        listCollectionContributors(caller, { collectionId: collection.id, limit: CONTRIBUTOR_PAGE_SIZE }),
+      ]);
+      overview = toOverviewView(figures);
+      contributorPage = { rows: page.rows.map(toContributorView), total: page.total };
+    } catch {
+      overview = null;
+    }
+  }
+
+  // Who is expected to pay and what they still owe (20261117120000): a managed
+  // member list only. Counted by the database; not money received.
+  let expected: ExpectedView | null = null;
+  if (overview && collection.participation_mode === "managed" && collection.status !== "draft") {
+    try {
+      const summary = await getCollectionExpectedSummary(await requireCallerContext(), collection.id);
+      expected = summary.supported
+        ? {
+            supported: true,
+            expectedCount: summary.expectedCount,
+            paidCount: summary.paidCount,
+            partlyPaidCount: summary.partlyPaidCount,
+            unpaidCount: summary.unpaidCount,
+            exemptCount: summary.exemptCount,
+            outstandingKobo: summary.outstandingKobo.toString(),
+            outstandingComplete: summary.outstandingComplete,
+          }
+        : null;
+    } catch {
+      expected = null;
+    }
+  }
+
+  // Withdrawals go to the officer's own saved bank account, verified by a
+  // Paystack name match (owner decision Q3, 2026-11-18). Masked; read here to
+  // offer them in the withdraw dialog. app.request_withdrawal_to_account
+  // checks ownership, status and cooling-off again. Null when unreadable.
+  let payoutAccounts: PayoutAccountView[] | null = null;
+  // Only to explain a blocked withdraw button ("being reviewed" vs "add an account").
+  let payoutAccountsUnderReview = false;
+  if (hasPermission(access, "withdrawal.request")) {
+    try {
+      const myAccounts = await listMyBankAccounts(await requireCallerContext());
+      payoutAccountsUnderReview = myAccounts.some((a) => a.status === "needs_review");
+      payoutAccounts = myAccounts
+        .filter((a) => a.status === "verified")
+        .map((a) => ({
+          id: a.id,
+          bankName: a.bankName,
+          accountLast4: a.accountLast4,
+          accountName: a.accountName,
+          isDefault: a.isDefault,
+          usableFrom: a.usableFrom,
+        }));
+    } catch {
+      payoutAccounts = null;
+    }
+  }
+
+  // Phase 7: once the provider has confirmed money here, reference settings
+  // can no longer gain anything new. The database enforces it; this lets the
+  // settings screen say so before anyone presses Save.
+  let referencesLocked = false;
+  if (collection.participation_mode === "managed" && collection.status !== "draft") {
+    try {
+      referencesLocked = await collectionHasContributorActivity(await requireCallerContext(), collection.id);
+    } catch {
+      referencesLocked = false;
+    }
+  }
+
   return (
     <CollectionDetailClient
       slug={slug}
@@ -282,6 +379,13 @@ export default async function CollectionDetailPage({
         };
       })}
       checkInTotals={doorTotals}
+      overview={overview}
+      expected={expected}
+      payoutAccounts={payoutAccounts}
+      payoutAccountsUnderReview={payoutAccountsUnderReview}
+      contributorFirstPage={contributorPage.rows}
+      contributorTotal={contributorPage.total}
+      referencesLocked={referencesLocked}
       permissions={{
         canEdit: hasPermission(access, "collection.draft"),
         canPublish: hasPermission(access, "collection.publish"),
@@ -291,6 +395,9 @@ export default async function CollectionDetailPage({
         canExport: hasPermission(access, "member.export"),
         canCheckIn: hasPermission(access, "attendance.check_in"),
         canConfigureCodes: hasPermission(access, "collection.configure_codes"),
+        canViewContact: hasPermission(access, "member.view_contact"),
+        canViewBalances: hasPermission(access, "balance.view"),
+        canRequestWithdrawal: hasPermission(access, "withdrawal.request"),
       }}
     />
   );

@@ -3,6 +3,12 @@
 **Target:** `kwolxuoeqwuedydxzncb` ("kolekto staging") only.
 **Environment detail:** [docs/environments/staging.md](../environments/staging.md)
 
+> **Update 2026-11-20:** the Paystack payment, webhook, transfer and approval code now exists, and staging will
+> need Paystack TEST keys, a public URL for both Paystack routes, the payout worker and new secrets. The current
+> readiness matrix and the step-by-step staging checklist are in
+> [docs/phase-4/staging-readiness-2026-11-20.md](../phase-4/staging-readiness-2026-11-20.md) §2 and §6. This page is
+> kept as written on 2026-09-28; its migration procedure and rollback notes still apply.
+
 There are two separate things to deploy: the **database schema** (done, and
 repeatable below) and the **web application** (not yet possible — no hosting
 platform has been chosen).
