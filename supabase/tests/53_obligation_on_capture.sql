@@ -82,6 +82,31 @@ insert into public.collection_audience_groups (collection_id, group_id, communit
 insert into public.obligations (id, community_id, collection_id, member_id, expected_amount_kobo) values
   ('a5360000-0000-4000-8000-000000000001', 'a5320000-0000-4000-8000-00000000000a', 'a5350000-0000-4000-8000-000000000004', 'a5330000-0000-4000-8000-000000000001', 500000);
 
+-- M10: checkout re-resolves the membership pass, so every managed-collection
+-- attempt needs a live one. This makes it the way app.validate_membership_id
+-- does (a live membership ID, then a 30-minute grant holding only the token's
+-- SHA-256) and returns the raw token. Fixture only; no assertion depends on it.
+create function pg_temp.pass_for(p_collection uuid, p_member uuid) returns text language plpgsql as $$
+declare
+  v_token  text := encode(extensions.gen_random_bytes(32), 'hex');
+  v_member public.members%rowtype;
+  v_mi     uuid;
+  v_id     text;
+begin
+  select * into v_member from public.members where id = p_member;
+  select id into v_mi from public.membership_ids where member_id = p_member and revoked_at is null;
+  if v_mi is null then
+    v_id := 'TST/X' || upper(substr(md5(p_member::text), 1, 4));
+    insert into public.membership_ids (community_id, member_id, membership_id, canonical_id, prefix, separator, last2)
+    values (v_member.community_id, p_member, v_id, app.canonical_membership_id(v_id), 'TST', '/', right(v_id, 2))
+    returning id into v_mi;
+  end if;
+  insert into public.membership_access_grants (token_hash, membership_id_id, member_id, collection_id, community_id, expires_at)
+  values (extensions.digest(v_token, 'sha256'), v_mi, p_member, p_collection, v_member.community_id, now() + interval '30 minutes');
+  return v_token;
+end;
+$$;
+
 create function pg_temp.ref(n integer) returns text language sql as $$
   select 'KLK-' || lpad(n::text, 26, '0')
 $$;
@@ -92,7 +117,8 @@ create function pg_temp.dues(p_collection uuid, p_ref integer, p_member uuid) re
     p_collection, 'checkout-key-lazy-' || p_ref, pg_temp.ref(p_ref), 'fake', p_member,
     'Test Payer', 'payer@example.test', '+2348000000000', '{}'::jsonb, '{}'::text[],
     null, null, 500000, 2500, 7500, 0, 10000, 500000, 490000, 5000,
-    'community_absorbs', '2026-11-founder')
+    'community_absorbs', '2026-11-founder',
+    case when p_member is null then null else pg_temp.pass_for(p_collection, p_member) end)
 $$;
 
 -- The provider says it succeeded (T1), then T2. Returns "status" or "status:reason".
@@ -130,7 +156,8 @@ insert into tmp_att values
      'a5330000-0000-4000-8000-000000000010',
      'Test Payer', 'payer@example.test', '+2348000000000', '{}'::jsonb, '{}'::text[],
      null, 100000, 100000, 500, 1500, 0, 2000, 100000, 98000, 1000,
-     'community_absorbs', '2026-11-founder')));
+     'community_absorbs', '2026-11-founder',
+     pg_temp.pass_for('a5350000-0000-4000-8000-000000000006', 'a5330000-0000-4000-8000-000000000010'))));
 
 create function pg_temp.att(p_label text) returns uuid language sql as $$
   select id from tmp_att where label = p_label

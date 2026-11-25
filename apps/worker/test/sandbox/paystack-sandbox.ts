@@ -42,7 +42,7 @@ import { createPaystackPaymentProvider, tryLoadPaystackConfigFromEnv } from "@ko
 import type { PaymentDb } from "@kolekto/db";
 import { confirmPayment, type PaymentContext, startCheckout } from "@kolekto/payments";
 
-import { type FlowFixture, type FlowIds, type FlowName, type PaymentCommunity, seedFlow, seedPaymentCommunity } from "../support/itest-payment-flows.ts";
+import { type FlowFixture, type FlowIds, type FlowName, issueMembershipPass, type PaymentCommunity, seedFlow, seedPaymentCommunity } from "../support/itest-payment-flows.ts";
 
 const LOCAL_DEV_DB = "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 /** Never resolves anywhere (RFC 2606). Paystack redirects the browser here after paying; nothing listens. */
@@ -150,6 +150,8 @@ async function main(): Promise<void> {
           fixtures.set(s.flow, flow);
         }
         const memberId = s.asMemberB ? community.memberIds[1] : flow.memberId;
+        // M10: managed checkout needs a live membership pass for the same member.
+        const accessToken = memberId ? await issueMembershipPass(t, flow.collectionId, memberId) : null;
         const started = await startCheckout(ctx, {
           environment: "staging",
           appOrigin: APP_ORIGIN,
@@ -161,6 +163,7 @@ async function main(): Promise<void> {
           feeBearer: flow.feeBearer,
           resolved: flow.resolved,
           memberId,
+          accessToken,
           contributorName: "Sandbox Contributor",
           contributorEmail: scope.address(),
           contributorPhone: "+2348097771999",

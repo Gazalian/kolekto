@@ -58,6 +58,8 @@ export interface StartCheckoutInput {
   feeBearer: FeeBearer;
   resolved: ResolvedContribution;
   memberId: string | null;
+  /** M10: the membership-pass token from the server's pass cookie; null on open collections. Forwarded unchanged. */
+  accessToken: string | null;
   contributorName: string;
   contributorEmail: string;
   contributorPhone: string;
@@ -162,6 +164,7 @@ export async function startCheckout(ctx: PaymentContext, input: StartCheckoutInp
       providerCostEstimateKobo: fees.providerCostEstimate,
       feeBearer: fees.bearer === "contributor" ? "contributor_pays" : "community_absorbs",
       feeScheduleVersion: fees.scheduleVersion,
+      accessToken: input.accessToken,
     });
   } catch (error) {
     if (error instanceof DatabaseError) return { outcome: "db_error", code: error.code };

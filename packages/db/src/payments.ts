@@ -69,6 +69,13 @@ export interface CreatePaymentAttemptInput {
   providerCostEstimateKobo: bigint;
   feeBearer: string;
   feeScheduleVersion: string;
+  /**
+   * M10: the raw membership-pass token, read by the server from the signed
+   * httpOnly pass cookie. Required (non-null) on managed collections, where the
+   * database re-resolves it and requires it to name `memberId`; null on open
+   * collections. Never logged, never returned.
+   */
+  accessToken: string | null;
 }
 
 export interface CreatePaymentAttemptResult {
@@ -110,7 +117,8 @@ export async function createPaymentAttempt(
         ${input.netKobo.toString()}::bigint,
         ${input.providerCostEstimateKobo.toString()}::bigint,
         ${input.feeBearer}::fee_mode,
-        ${input.feeScheduleVersion}
+        ${input.feeScheduleVersion},
+        ${input.accessToken}::text
       )
     ` as Promise<CreatePaymentAttemptResult[]>,
   );

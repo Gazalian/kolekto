@@ -69,6 +69,31 @@ insert into public.collection_fields (collection_id, community_id, key, label, t
 insert into public.collection_tiers (id, collection_id, community_id, name, price_kobo, sort_order) values
   ('a5640000-0000-4000-8000-000000000001', 'a5650000-0000-4000-8000-000000000003', 'a5620000-0000-4000-8000-00000000000a', 'Regular seat', 200000, 0);
 
+-- M10: checkout re-resolves the membership pass, so every managed-collection
+-- attempt needs a live one. This makes it the way app.validate_membership_id
+-- does (a live membership ID, then a 30-minute grant holding only the token's
+-- SHA-256) and returns the raw token. Fixture only; no assertion depends on it.
+create function pg_temp.pass_for(p_collection uuid, p_member uuid) returns text language plpgsql as $$
+declare
+  v_token  text := encode(extensions.gen_random_bytes(32), 'hex');
+  v_member public.members%rowtype;
+  v_mi     uuid;
+  v_id     text;
+begin
+  select * into v_member from public.members where id = p_member;
+  select id into v_mi from public.membership_ids where member_id = p_member and revoked_at is null;
+  if v_mi is null then
+    v_id := 'TST/X' || upper(substr(md5(p_member::text), 1, 4));
+    insert into public.membership_ids (community_id, member_id, membership_id, canonical_id, prefix, separator, last2)
+    values (v_member.community_id, p_member, v_id, app.canonical_membership_id(v_id), 'TST', '/', right(v_id, 2))
+    returning id into v_mi;
+  end if;
+  insert into public.membership_access_grants (token_hash, membership_id_id, member_id, collection_id, community_id, expires_at)
+  values (extensions.digest(v_token, 'sha256'), v_mi, p_member, p_collection, v_member.community_id, now() + interval '30 minutes');
+  return v_token;
+end;
+$$;
+
 create function pg_temp.ref(n integer) returns text language sql as $$
   select 'KLK-' || lpad(n::text, 26, '0')
 $$;
@@ -80,7 +105,8 @@ returns uuid language sql as $$
     p_collection, 'checkout-key-reg-' || p_ref, pg_temp.ref(p_ref), 'fake', p_member,
     p_name, p_email, '+2348000000056', p_answers, '{}'::text[],
     null, null, 500000, 2500, 7500, 0, 10000, 500000, 490000, 5000,
-    'community_absorbs', '2026-11-founder')
+    'community_absorbs', '2026-11-founder',
+    case when p_member is null then null else pg_temp.pass_for(p_collection, p_member) end)
 $$;
 
 create function pg_temp.capture(p_ref integer, p_amount bigint, p_attempt uuid) returns text language plpgsql as $$

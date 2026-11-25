@@ -34,7 +34,7 @@ import { renderTemplate } from "../../src/notification-email-templates.ts";
 import { connectVerified, liveGateDeps } from "../support/itest-db.ts";
 import { createIntegrationGate } from "../support/itest-gate.ts";
 import { createFileHarness, inRollback } from "../support/itest-isolation.ts";
-import { FLOW_NAMES, type FlowFixture, type PaymentCommunity, seedFlow, seedPaymentCommunity } from "../support/itest-payment-flows.ts";
+import { FLOW_NAMES, type FlowFixture, issueMembershipPass, type PaymentCommunity, seedFlow, seedPaymentCommunity } from "../support/itest-payment-flows.ts";
 
 const gate = createIntegrationGate(liveGateDeps());
 const harness = createFileHarness(() => gate.verified(), "payments-orchestrator");
@@ -65,7 +65,13 @@ function contextFor(tx: Tx, scenarios: Record<string, FakeScenario> = {}): Payme
   };
 }
 
-async function checkout(ctx: PaymentContext, community: PaymentCommunity, flow: FlowFixture, key: string): Promise<StartCheckoutResult> {
+// M10: a managed flow needs a live membership pass, as the web reads it from its cookie.
+async function passFor(tx: Tx, flow: FlowFixture): Promise<string | null> {
+  return flow.memberId ? issueMembershipPass(tx, flow.collectionId, flow.memberId) : null;
+}
+
+async function checkout(tx: Tx, ctx: PaymentContext, community: PaymentCommunity, flow: FlowFixture, key: string): Promise<StartCheckoutResult> {
+  const accessToken = await passFor(tx, flow);
   return startCheckout(ctx, {
     environment: "local",
     appOrigin: APP_ORIGIN,
@@ -77,6 +83,7 @@ async function checkout(ctx: PaymentContext, community: PaymentCommunity, flow: 
     feeBearer: flow.feeBearer,
     resolved: flow.resolved,
     memberId: flow.memberId,
+    accessToken,
     contributorName: "ITest Contributor",
     contributorEmail: scope.address(),
     contributorPhone: "+2348097771999",
@@ -141,7 +148,7 @@ describe("M8.5 payment orchestrator against the real database", () => {
           const flow = await seedFlow(tx, scope, community, name);
           const ctx = contextFor(tx);
 
-          const started = expectOk(await checkout(ctx, community, flow, scope.uuid()));
+          const started = expectOk(await checkout(tx, ctx, community, flow, scope.uuid()));
           assert.equal(ctx.provider.initializeCalls.length, 1);
           assert.equal(ctx.provider.initializeCalls[0]!.amount, started.fees.totalPayable, "the provider is asked for the frozen total");
           assert.match(
@@ -212,13 +219,13 @@ describe("M8.5 payment orchestrator against the real database", () => {
         const flow = await seedFlow(tx, scope, community, "items");
         const ctx = contextFor(tx);
 
-        const declined = expectOk(await checkout(ctx, community, flow, scope.uuid()));
+        const declined = expectOk(await checkout(tx, ctx, community, flow, scope.uuid()));
         ctx.provider.completeCheckout(declined.reference, "payment_failed");
         assert.deepEqual(await confirmPayment(ctx, declined.reference), { outcome: "failed", failureCode: "failed" });
         assert.equal((await attemptRow(tx, declined.attemptId)).status, "failed");
         assert.deepEqual(await stockByStatus(tx, declined.attemptId), { released: 2 }, "a failed payment gives its stock back");
 
-        const abandoned = expectOk(await checkout(ctx, community, flow, scope.uuid()));
+        const abandoned = expectOk(await checkout(tx, ctx, community, flow, scope.uuid()));
         ctx.provider.completeCheckout(abandoned.reference, "abandoned");
         // Inside the 30-minute hold an abandoned checkout is still pending (20261114110000):
         // the payer may come back and pay. The sweep fails it once the hold has ended.
@@ -227,7 +234,7 @@ describe("M8.5 payment orchestrator against the real database", () => {
         assert.deepEqual(await stockByStatus(tx, abandoned.attemptId), { reserved: 2 }, "an abandoned checkout keeps its stock during the hold");
 
         const mismatchKey = scope.uuid();
-        const mismatch = expectOk(await checkout(ctx, community, flow, mismatchKey));
+        const mismatch = expectOk(await checkout(tx, ctx, community, flow, mismatchKey));
         const mismatchCtx = { ...ctx, provider: createFakePaymentProvider({ webhookSecret: FAKE_SECRET, scenarios: { [mismatch.reference]: "amount_mismatch" } }) };
         // The mismatch fake must know what was asked, so it initializes the same reference first.
         await mismatchCtx.provider.initialize(ctx.provider.initializeCalls.at(-1)!);
@@ -236,7 +243,7 @@ describe("M8.5 payment orchestrator against the real database", () => {
         assert.equal(parked.outcome === "needs_review" ? parked.reason : null, "amount_mismatch");
         assert.equal((await attemptRow(tx, mismatch.attemptId)).status, "needs_review");
 
-        const timeout = expectOk(await checkout(ctx, community, flow, scope.uuid()));
+        const timeout = expectOk(await checkout(tx, ctx, community, flow, scope.uuid()));
         const timeoutCtx = { ...ctx, provider: createFakePaymentProvider({ webhookSecret: FAKE_SECRET, defaultScenario: "verify_timeout" }) };
         const unanswered = await confirmPayment(timeoutCtx, timeout.reference);
         assert.equal(unanswered.outcome, "provider_unavailable", "a timeout is not a failure (D-27)");
@@ -260,18 +267,18 @@ describe("M8.5 payment orchestrator against the real database", () => {
         const ctx = contextFor(tx);
         const key = scope.uuid();
 
-        const firstTry = expectOk(await checkout(ctx, community, flow, key));
-        const retry = expectOk(await checkout(ctx, community, flow, key));
+        const firstTry = expectOk(await checkout(tx, ctx, community, flow, key));
+        const retry = expectOk(await checkout(tx, ctx, community, flow, key));
         assert.equal(retry.attemptId, firstTry.attemptId, "a double-click resumes the same attempt");
         assert.equal(retry.reference, firstTry.reference);
         assert.equal(first(await tx<{ n: number }[]>`select count(*)::int as n from public.payment_attempts where collection_id = ${flow.collectionId}`).n, 1);
 
-        const changed = await checkout(ctx, community, { ...flow, resolved: { ...flow.resolved, amountKobo: (flow.resolved.amountKobo + 100n) as typeof flow.resolved.amountKobo } }, key);
+        const changed = await checkout(tx, ctx, community, { ...flow, resolved: { ...flow.resolved, amountKobo: (flow.resolved.amountKobo + 100n) as typeof flow.resolved.amountKobo } }, key);
         assert.deepEqual(changed, { outcome: "db_error", code: "CHECKOUT_KEY_REUSED" });
 
         ctx.provider.completeCheckout(firstTry.reference, "payment_failed");
         assert.equal((await confirmPayment(ctx, firstTry.reference)).outcome, "failed");
-        assert.deepEqual(await checkout(ctx, community, flow, key), { outcome: "checkout_ended" }, "a spent key cannot start a second payment");
+        assert.deepEqual(await checkout(tx, ctx, community, flow, key), { outcome: "checkout_ended" }, "a spent key cannot start a second payment");
       });
     } finally {
       await sql.end();
@@ -288,7 +295,7 @@ describe("M8.5 payment orchestrator against the real database", () => {
         const ctx = contextFor(tx);
 
         // T1 recorded the money, then the process died before T2.
-        const paid = expectOk(await checkout(ctx, community, flow, scope.uuid()));
+        const paid = expectOk(await checkout(tx, ctx, community, flow, scope.uuid()));
         ctx.provider.completeCheckout(paid.reference, "success");
         const verified = await ctx.provider.verify(paid.reference);
         if (verified.outcome !== "ok") assert.fail("fake verify failed");
@@ -296,7 +303,7 @@ describe("M8.5 payment orchestrator against the real database", () => {
         assert.equal(t1.status, "captured");
 
         // Still inside its 30-minute hold: not the sweep's business yet.
-        const held = expectOk(await checkout(ctx, community, ticketing, scope.uuid()));
+        const held = expectOk(await checkout(tx, ctx, community, ticketing, scope.uuid()));
 
         const report = await sweepPaymentAttempts(ctx, { limit: 1000 });
         const mine = report.outcomes.filter((o) => o.reference === paid.reference || o.reference === held.reference);
@@ -335,6 +342,7 @@ describe("M8.5 payment orchestrator against the real database", () => {
             feeBearer: flow.feeBearer,
             resolved: flow.resolved,
             memberId: flow.memberId,
+            accessToken: await passFor(tx, flow),
             contributorName: "ITest Payer",
             contributorEmail: payer,
             contributorPhone: "+2348097771999",

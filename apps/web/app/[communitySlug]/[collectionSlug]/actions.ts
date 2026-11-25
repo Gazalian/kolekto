@@ -31,11 +31,17 @@ import {
   startMembershipPass,
   type MembershipPassSummary,
 } from "../../../lib/membership-pass-helpers.ts";
-import { clearMembershipPass } from "../../../lib/membership-pass.ts";
+import { clearMembershipPass, readMembershipPass } from "../../../lib/membership-pass.ts";
 import { startCheckout } from "@kolekto/payments";
 import { contributorCheckoutUrl, getPaymentContext } from "../../../lib/payments/provider-factory.ts";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** M10: the single message for a missing, expired, revoked or mismatched membership proof at checkout. */
+const IDENTIFICATION_EXPIRED = "Your identification has expired. Enter your membership ID again.";
+
+/** M10: database codes that mean the membership proof was refused; the contributor must identify again. */
+const MEMBER_PROOF_CODES = new Set(["MEMBER_PROOF_EXPIRED", "MEMBER_PROOF_MISMATCH"]);
 
 /**
  * Codes raised by app.create_payment_attempt (20261111100100), as copy a
@@ -51,6 +57,10 @@ const CHECKOUT_ERROR_MESSAGES: Record<string, string> = {
   TARGET_REACHED: "This collection has reached its target and is no longer accepting contributions.",
   MEMBER_REQUIRED: "Enter your membership ID before continuing.",
   MEMBER_NOT_ELIGIBLE: "That record can no longer contribute to this collection.",
+  // M10: one generic message for every refused membership proof, so the
+  // contributor learns nothing about why (expired, revoked, mismatched…).
+  MEMBER_PROOF_EXPIRED: IDENTIFICATION_EXPIRED,
+  MEMBER_PROOF_MISMATCH: IDENTIFICATION_EXPIRED,
   NOTHING_OWED: "There is nothing for you to pay on this collection.",
   ALREADY_PAID: "You have already paid this in full.",
   OBLIGATION_EXEMPT: "You have been exempted from this collection. There is nothing to pay.",
@@ -93,6 +103,8 @@ export interface ContributionResult {
   error?: string;
   /** The checkout key is spent (its attempt ended or the order changed). The form must generate a new one before retrying. */
   restartCheckout?: boolean;
+  /** M10: the identification is gone or was refused. Both cookies are cleared; the form must return to the membership ID step. */
+  reidentify?: boolean;
   /** Present on success: what the server resolved, for the confirmation screen. */
   summary?: {
     amount: string;
@@ -365,17 +377,29 @@ export async function submitContributionAction(
   // A managed collection asks named people. The member is resolved from the
   // signed cookie and re-checked against the database — the page never says who
   // it is, and could not be believed if it did.
+  //
+  // M10: the membership pass is read from its own signed httpOnly cookie and
+  // sent to the database, which re-resolves it and requires it to name the
+  // same member as the session. Neither value ever comes from `input`.
   let memberContext: CollectionMemberContext | null = null;
   let memberId: string | null = null;
+  let accessToken: string | null = null;
   if (collection.audience_mode !== "public") {
     memberId = await readContributorSession(collection.collection_id);
     if (!memberId) {
-      return { error: "Enter your membership ID before continuing." };
+      await clearMembershipPass();
+      return { error: "Enter your membership ID before continuing.", reidentify: true };
     }
     memberContext = await getCollectionMemberContext(collection.collection_id, memberId);
     if (!memberContext) {
       await clearContributorSession();
       return { error: "That record can no longer contribute to this collection." };
+    }
+    accessToken = await readMembershipPass(collection.collection_id);
+    if (!accessToken) {
+      await clearContributorSession();
+      await clearMembershipPass();
+      return { error: IDENTIFICATION_EXPIRED, reidentify: true };
     }
   }
 
@@ -499,6 +523,7 @@ export async function submitContributionAction(
     feeBearer,
     resolved,
     memberId,
+    accessToken,
     contributorName: contact.data.fullName,
     contributorEmail: contact.data.email,
     contributorPhone: contact.data.phone,
@@ -509,6 +534,16 @@ export async function submitContributionAction(
 
   switch (checkoutResult.outcome) {
     case "db_error": {
+      if (MEMBER_PROOF_CODES.has(checkoutResult.code)) {
+        // A mismatch should never happen in normal use (both cookies are set
+        // by the same confirm step). Logged without member ids or token.
+        if (checkoutResult.code === "MEMBER_PROOF_MISMATCH") {
+          console.error(JSON.stringify({ msg: "checkout_member_proof_mismatch", collectionId: collection.collection_id }));
+        }
+        await clearContributorSession();
+        await clearMembershipPass();
+        return { error: IDENTIFICATION_EXPIRED, reidentify: true };
+      }
       const message = CHECKOUT_ERROR_MESSAGES[checkoutResult.code];
       if (!message) console.error(JSON.stringify({ msg: "checkout_refused_unmapped", code: checkoutResult.code }));
       return {

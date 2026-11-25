@@ -157,20 +157,25 @@ export function ContributeForm({
   // contributor has said "yes, this is me".
   if (isManaged && !member && !done) {
     return (
-      <FindYourself
-        communitySlug={communitySlug}
-        collectionSlug={collectionSlug}
-        organiser={organiser}
-        onIdentified={(identified) => {
-          setMember(identified);
-          // Only the name. Email and phone are the payer's own and start empty:
-          // the member's stored contact details are never sent to this page.
-          const payer = payerDetailsAfterIdentification(identified);
-          setFullName(payer.fullName);
-          setEmail(payer.email);
-          setPhone(payer.phone);
-        }}
-      />
+      <>
+        {/* M10: why the contributor is back here after pressing Pay (generic wording only). */}
+        {error && <Banner tone="danger">{error}</Banner>}
+        <FindYourself
+          communitySlug={communitySlug}
+          collectionSlug={collectionSlug}
+          organiser={organiser}
+          onIdentified={(identified) => {
+            setError(null);
+            setMember(identified);
+            // Only the name. Email and phone are the payer's own and start empty:
+            // the member's stored contact details are never sent to this page.
+            const payer = payerDetailsAfterIdentification(identified);
+            setFullName(payer.fullName);
+            setEmail(payer.email);
+            setPhone(payer.phone);
+          }}
+        />
+      </>
     );
   }
 
@@ -353,6 +358,12 @@ export function ContributeForm({
         checkoutKey,
       });
       if (result.restartCheckout) setCheckoutKey(crypto.randomUUID());
+      // M10: the server cleared both identification cookies; back to the
+      // membership ID step, as "Not you?" does.
+      if (result.reidentify) {
+        setMember(null);
+        setFullName("");
+      }
       if (result.error) setError(result.error);
       else if (result.summary) {
         setDone(result.summary);
