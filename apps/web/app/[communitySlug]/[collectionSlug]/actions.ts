@@ -243,9 +243,9 @@ export async function membershipPassSummaryAction(
  * Step 3: "Yes, that is me."
  *
  * Confirms the pass in the database (writes an audit row), sets the
- * contributor-session cookie, and clears the pass cookie. Returns the
- * member's context (same shape as confirmMemberAction) so the UI can
- * proceed to the payment form.
+ * contributor-session cookie, and keeps the pass cookie (M10: checkout
+ * sends its token to the database). Returns the member's context (same
+ * shape as confirmMemberAction) so the UI can proceed to the payment form.
  */
 export async function confirmMembershipPassAction(
   communitySlug: string,

@@ -26,7 +26,53 @@
 
 > Updated at the end of every work session. Replace this whole section each time; older detail lives in the sections below.
 
-**Last updated:** 2026-11-25, session 61 — **M10 applied on local itest AND local dev (owner approved both). Staging and production NOT applied. Nothing committed.**
+**Last updated:** 2026-11-25, session 62 — **M10 audited and committed locally (`00600a2`, `3096f45`). Not pushed. Staging and production NOT applied.**
+
+### Session 62 — M10 audit, commit split, two local commits (owner approved each step; nothing pushed)
+
+**Done.**
+- Read-only audit of M10. Function body diffed against `20261111100100:259–662`: only the intended lines differ (pass
+  argument, member-row FOR SHARE, pass resolution, PROOF codes, stray-token refusal, `p_member_id` → `v_member_id` in
+  the intent, attempt and idempotency compare). No fee, amount, stock, idempotency, capture, settlement, ledger,
+  withdrawal, transfer or reconciliation change. Rollback body is byte-identical to the original. Read-only DB check:
+  dev 152 migrations and itest 158, both latest `20261125100000`; one 23-arg `create_payment_attempt` on each (same
+  md5, matches the repo file), SECURITY DEFINER, `search_path=""`, ACL postgres only. Dev: six 18–20 Nov migrations
+  still unrecorded, A-1 finalize unrecorded.
+- Working tree split into two commits on `feat/payment-receipts-alarms`:
+  `00600a2 feat(community): add overview, avatars, public page and membership IDs` (97 files; M10 lines removed from
+  `actions.ts` / `ContributeForm.tsx` for this commit) and `3096f45 feat(payments): revalidate membership pass at
+  checkout (M10)` (18 files). `supabase/pending-migrations/` (A-1 finalize, and a byte-identical duplicate of
+  `20261123130000_member_id_lookup.sql`) left untracked on purpose.
+- Doc fixes (this follow-up): stale "clears the pass cookie" comment on `confirmMembershipPassAction`; superseded
+  dev-apply lines in the session 61 block marked as historical.
+
+**Verified (each commit's staged tree exported to an isolated copy, packages linked to the copy).**
+- Commit 1: `tsc --build` PASS, web `tsc --noEmit` PASS, web vitest 26 files / 379 PASS.
+- Commit 2: `tsc --build` PASS, web `tsc --noEmit` PASS, web vitest 27 files / 391 PASS, packages/payments 64/64 PASS.
+- ESLint `eslint .` (web) FAILS on both: only the pre-existing `MoneyPanel.tsx:422` error and `VerifyForm.tsx:72`
+  warning; neither file is in either commit.
+
+**NOT RUN.** pgTAP (78 and full suite) on the committed state; worker unit tests; worker itest integration lane;
+browser e2e. Host has 7.9 GiB RAM; both Supabase stacks leave little headroom.
+
+**Audit findings still open.** (1) Per-IP rate limit for membership ID checks trusts `x-forwarded-for` (A-2) — confirm
+the hosting proxy overwrites it before staging. (2) Group-audience removal is not serialised with checkout. (3)
+Managed collections cannot take payments until officers issue membership IDs (dev has 0) — rollout blocker for
+staging/production. (4) `.env.example` comment still says the stored ID is encrypted (no longer true after A-1). (5)
+`supabase/.temp` still holds hosted-project link files. (6) The duplicate pending migration should be deleted (needs
+approval).
+
+**Next (needs the owner).** (1) Decide on pushing the branch. (2) With memory free (stop under ~2 GiB), run pgTAP 78 +
+the full suite on itest, the worker integration lane and `contributor.spec` managed. (3) Decide on deleting the
+duplicate pending migration.
+
+**Paste-ready prompt for the next session:**
+
+> Session 63. Read the session 62 block in docs/phase-4/payment-integration-status-2026-11-12.md. M10 is committed
+> locally (`00600a2`, `3096f45`) and applied on local itest and dev; not pushed. Check free physical memory first and
+> stop if under ~2 GiB. Then, on local itest only: run pgTAP 78 and the full pgTAP suite, the worker itest integration
+> lane and contributor.spec (managed) once each, no retries on environment failures; report pass/fail per test. Fake
+> payments only; no staging/production; no reset; no migration changes; no commit, push or deploy.
 
 ### Session 61 (end) — local dev synchronised and M10 applied (owner approved; nothing committed)
 
@@ -113,11 +159,14 @@ works for open collections only; managed checkout would refuse until the code sh
 - NOT RUN: worker itest integration lane and browser e2e — host had 0.22 GiB physical memory free (27.4/31.9 GiB
   committed). Not attempted.
 - Rollback on itest (needs approval): revert code first, then run `docs/phase-4/m10-checkout-pass-revalidation-rollback.sql`.
-- Dev database: NOT applied. The working-tree code now calls the 23-arg function, so any web server running this
+- *(Superseded later in session 61: M10 was applied to local dev — see "Session 61 (end)" above.)* Dev database: NOT
+  applied at this point. The working-tree code now calls the 23-arg function, so any web server running this
   code against the dev DB (which still has only the 22-arg function) will fail EVERY checkout, open and managed, with
   "function does not exist". Code at HEAD is unaffected. Applying M10 to dev needs its own approval.
 
-**Dev apply — STOPPED before any change (owner approved dev-only apply, 2026-11-25).** Read-only checks found two blockers:
+**Dev apply — STOPPED before any change (owner approved dev-only apply, 2026-11-25).** *(Superseded: both blockers were
+resolved later in session 61 by applying the seven migrations with `psql` directly, bypassing the CLI link — see "Session
+61 (end)" above. The `next` list and prompt below are historical.)* Read-only checks found two blockers:
 1. `supabase/.temp` (the dev workdir) contains `project-ref`, `linked-project.json` and `pooler-url` (dated 2026-09-28):
    the CLI considers the main project linked to a hosted Supabase project. The owner's condition "not linked" fails.
 2. The dev DB (container `supabase_db_kolekto`, port 54322) is at 145 migrations, latest `20261122120000`. Six migrations
@@ -131,7 +180,7 @@ DB URL that bypasses the link). (2) Decide whether dev should receive the six pr
 `20261123120000`, which on itest needed the plaintext backfill — dev has no `membership_ids` rows, so no backfill) before
 M10. (3) Free memory, then run the worker integration lane and `contributor.spec` managed on itest. (4) Commit when ready.
 
-**Paste-ready prompt for the next session:**
+**Paste-ready prompt for the next session (historical — superseded by the session 62 prompt at the top):**
 
 > Session 62. Read the session 61 block in docs/phase-4/payment-integration-status-2026-11-12.md. M10 is applied on
 > local itest only. If host memory allows (check free physical memory first; stop if under ~2 GiB), run the worker
