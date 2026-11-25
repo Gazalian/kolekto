@@ -126,51 +126,10 @@ export async function getPublicCollectionItems(collectionId: string): Promise<Pu
 
 // ── Contributor self-identification (20260920170000) ───────────────────────
 //
-// The only public surface that touches a community's roll. Both functions are
-// scoped to one collection's audience by the database; neither can list
-// anybody, and `app.resolve_collection_audience` — which can — is granted to no
-// role at all.
-
-export interface CollectionMemberMatch {
-  /** `one` carries the member; `many` carries only a count; `none` carries nothing. */
-  match_status: "none" | "one" | "many";
-  member_id: string | null;
-  full_name: string | null;
-  member_code: string | null;
-  /** What this community calls its primary identifier ("Matric number"), for the prompt. */
-  identifier_label: string | null;
-  identifier_value: string | null;
-  match_count: number;
-}
-
-/**
- * "Find yourself" on a managed collection.
- *
- * The query is matched by equality against what the person already knows —
- * their member code, a unique attribute, their phone, their email — or against
- * at least two parts of their name. Several matches deliberately come back as a
- * count and nothing else: showing a stranger a list of candidates is showing
- * them somebody else's name.
- */
-export async function findCollectionMember(
-  collectionId: string,
-  query: string,
-): Promise<CollectionMemberMatch> {
-  const rows = await withCallerContext(ANONYMOUS, (tx) =>
-    tx<CollectionMemberMatch[]>`select * from app.find_collection_member(${collectionId}, ${query})`,
-  );
-  return (
-    rows[0] ?? {
-      match_status: "none",
-      member_id: null,
-      full_name: null,
-      member_code: null,
-      identifier_label: null,
-      identifier_value: null,
-      match_count: 0,
-    }
-  );
-}
+// findCollectionMember was removed in A2.2 (M9b3 revoked anon/authenticated
+// execution of app.find_collection_member — owner decision D4). The membership
+// pass flow (membershipPassSummary / confirmMembershipPass in membership.ts)
+// replaces it.
 
 export interface CollectionMemberContext {
   member_id: string;
@@ -210,6 +169,57 @@ export async function getCollectionMemberContext(
 export async function getPublicCollectionFields(collectionId: string): Promise<PublicCollectionField[]> {
   const rows = await withCallerContext(ANONYMOUS, (tx) =>
     tx<PublicCollectionField[]>`select * from app.get_public_collection_fields(${collectionId})`,
+  );
+  return [...rows];
+}
+
+// ── Public community page (20261122140000, D-H / D-J) ───────────────────────
+
+export interface PublicCommunity {
+  community_id: string;
+  slug: string;
+  name: string;
+  type: string;
+  description: string | null;
+  logo_url: string | null;
+  location_state: string | null;
+  location_city: string | null;
+  institution: string | null;
+  verification_status: string;
+  /** Only present when the owner chose to show contact details. */
+  contact_email: string | null;
+  contact_phone_e164: string | null;
+  published_at: Date;
+}
+
+export interface PublicCommunityCollection {
+  slug: string;
+  name: string;
+  description: string | null;
+  cover_image_url: string | null;
+  category: string;
+  status: "active" | "paused" | "closed";
+  amount_model: string;
+  fixed_amount_kobo: string | null;
+  min_amount_kobo: string | null;
+  starts_at: Date | null;
+  deadline_at: Date | null;
+  event_starts_at: Date | null;
+  published_at: Date | null;
+}
+
+/** A published, active, non-personal community's public identity, or null (the page is a 404). */
+export async function getPublicCommunity(communitySlug: string): Promise<PublicCommunity | null> {
+  const rows = await withCallerContext(ANONYMOUS, (tx) =>
+    tx<PublicCommunity[]>`select * from app.get_public_community(${communitySlug})`,
+  );
+  return rows[0] ?? null;
+}
+
+/** The collections that community LISTS publicly (visibility = public). Never link-only or members-only. */
+export async function listPublicCommunityCollections(communitySlug: string): Promise<PublicCommunityCollection[]> {
+  const rows = await withCallerContext(ANONYMOUS, (tx) =>
+    tx<PublicCommunityCollection[]>`select * from app.get_public_community_collections(${communitySlug})`,
   );
   return [...rows];
 }

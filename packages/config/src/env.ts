@@ -314,6 +314,32 @@ export function loadWithdrawalOtpSecret(): string {
   return secret;
 }
 
+/**
+ * The membership server key (product doc §F4.5). Since owner decision A1
+ * (2026-11-23, migration 20261123120000) membership IDs are stored as
+ * plaintext and this key no longer protects them. It is used for two things:
+ * the keyed hash of a caller's IP for rate limiting, and the legacy
+ * fingerprint check that keeps two unrecoverable revoked itest IDs reserved
+ * (owner decision D1). Never in the database, never in the browser, never
+ * given to the admin application.
+ */
+export function loadMembershipIdSecret(): string {
+  if (typeof window !== "undefined") {
+    throw new ConfigError(
+      "loadMembershipIdSecret() was called in a browser context. The membership ID key must never reach the " +
+        "client. This is a bug, not a configuration problem.",
+    );
+  }
+  const secret = required("KOLEKTO_MEMBERSHIP_ID_SECRET");
+  if (secret.length < 32) {
+    throw new ConfigError(
+      "KOLEKTO_MEMBERSHIP_ID_SECRET is shorter than 32 characters. Generate one with: " +
+        "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"",
+    );
+  }
+  return secret;
+}
+
 /** Reset the cache. Tests only. */
 export function resetConfigCache(): void {
   cached = undefined;

@@ -1,6 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
 import { openRoll } from "./helpers/collection-detail.ts";
+import {
+  enableMembershipIds,
+  enterMembershipId,
+  identifyWithMembershipId,
+  INVALID_MEMBERSHIP_ID_MESSAGE,
+  issueMembershipId,
+} from "./helpers/membership-id.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 import { expectPaymentReview } from "./helpers/payments.ts";
 import { openWizard, walkWizard, type StepFiller } from "./helpers/wizard.ts";
 import type { SectionKind } from "../../apps/web/app/c/[slug]/collections/new/flows.ts";
@@ -12,8 +20,9 @@ import type { SectionKind } from "../../apps/web/app/c/[slug]/collections/new/fl
  * Two journeys exist, and they are different products:
  *
  *   · an OPEN collection takes money from anyone with the link;
- *   · a MANAGED collection asks named people, so the contributor has to find
- *     themselves on the roll before anything about amounts appears.
+ *   · a MANAGED collection asks named people, so the contributor has to
+ *     identify themselves with the membership ID an officer issued them, and
+ *     confirm the masked details shown, before anything about amounts appears.
  *
  * Most of what these tests assert is a refusal — an archived member, somebody
  * outside the audience, a member of another community, a browser that edits its
@@ -27,7 +36,8 @@ import type { SectionKind } from "../../apps/web/app/c/[slug]/collections/new/fl
 test.describe.configure({ timeout: 300_000 });
 
 async function createCommunity(page: Page, name: string): Promise<string> {
-  await page.getByRole("link", { name: "+ New community" }).click();
+  // "+ New community" before the communities-page redesign, "New community" after it.
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(name);
   await page.getByLabel("Type").selectOption("university_association");
@@ -43,7 +53,7 @@ async function createCommunity(page: Page, name: string): Promise<string> {
 
 /** Gives the community a member-code prefix and a primary identifier, the way an officer would. */
 async function configureMemberProfile(page: Page, identifierLabel: string): Promise<void> {
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
 
   await page.getByRole("button", { name: "Member profile" }).click();
@@ -139,10 +149,15 @@ async function publish(page: Page): Promise<void> {
   await expect(page.getByText("Open", { exact: true })).toBeVisible();
 }
 
-test("a managed collection: find yourself, see what you owe, reach the payment boundary", async ({
+test("a managed collection: identify by membership ID, see what you owe, reach the payment boundary", async ({
   page,
   browser,
 }) => {
+  // The longest journey in the file: four members, membership IDs turned on
+  // and two issued, an archive, a collection, three ID attempts and a payment
+  // review. Measured at just over five minutes on the 4-CPU itest machine,
+  // with every assertion already passed when the old budget ran out.
+  test.setTimeout(480_000);
   await signInAsNewUser(page, "e2e-contrib");
   const communitySlug = await createCommunity(page, `E2E Contributor ${Date.now()}`);
   await configureMemberProfile(page, "Matric number");
@@ -153,7 +168,16 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
   await addMember(page, { name: "Grace Adeyemi", phone: "+2348011110103", identifier: "20/53A/0789" });
   await addMember(page, { name: "Tunde Bakare", phone: "+2348011110104", identifier: "20/53A/0999" });
 
-  // Tunde has left the class: archived members are not asked for anything new.
+  // Each member is identified by the private ID an officer issued them. The
+  // identifier column tells the two Graces apart on the officer's side.
+  await enableMembershipIds(page, communitySlug, "KWASU");
+  const graceId = await issueMembershipId(page, communitySlug, "20/53A/0456");
+  const tundeId = await issueMembershipId(page, communitySlug, "20/53A/0999");
+
+  // Tunde has left the class: archived members are not asked for anything new,
+  // and the ID he was given stops identifying him.
+  await page.goto(`/c/${communitySlug}/members`);
+  await page.waitForLoadState("networkidle");
   await page.locator("tr").filter({ hasText: "Tunde Bakare" }).getByRole("button", { name: "Archive" }).click();
   await page.locator("dialog[open]").getByRole("button", { name: "Archive member" }).click();
   await expect(page.locator("tr").filter({ hasText: "Tunde Bakare" })).toHaveCount(0);
@@ -186,40 +210,47 @@ test("a managed collection: find yourself, see what you owe, reach the payment b
 
   // WHO IS THIS FOR, before anything else.
   await expect(contributor.getByText(/For members of/)).toBeVisible();
-  await expect(contributor.getByRole("heading", { name: "Find yourself on the list" })).toBeVisible();
+  await expect(contributor.getByRole("heading", { name: "Identify yourself" })).toBeVisible();
   // Nothing about the money until they say who they are.
   await expect(contributor.getByLabel("Full name")).toBeHidden();
 
-  // A name two people answer to: a count and a prompt, never a list.
-  await contributor.getByLabel(/Your member ID, identifier, phone or name/).fill("Grace Adeyemi");
-  await contributor.getByRole("button", { name: "Find me" }).click();
-  await expect(contributor.getByText(/2 people on this list match that/)).toBeVisible();
-  // The banner's own wording: /matric number/ alone also matches the intro
-  // paragraph above the search box.
-  await expect(contributor.getByText(/Enter your matric number or your member ID instead/i)).toBeVisible();
-  // The other Grace's details are nowhere on the page.
-  await expect(contributor.getByText("20/53A/0456")).toBeHidden();
-  await expect(contributor.getByText("20/53A/0789")).toBeHidden();
+  // A name is not an ID, and an unknown ID says nothing about why.
+  await enterMembershipId(contributor, "KWASU/ZZZZZ");
+  await expect(contributor.getByText(INVALID_MEMBERSHIP_ID_MESSAGE)).toBeVisible();
 
-  // An archived member cannot identify at all.
-  await contributor.getByLabel(/Your member ID, identifier, phone or name/).fill("Tunde Bakare");
-  await contributor.getByRole("button", { name: "Find me" }).click();
-  await expect(contributor.getByText(/Nobody on this list matches that/)).toBeVisible();
+  // An archived member's ID gets the very same message.
+  await enterMembershipId(contributor, tundeId);
+  await expect(contributor.getByText(INVALID_MEMBERSHIP_ID_MESSAGE)).toBeVisible();
+  await expect(contributor.getByText("Tunde Bakare")).toBeHidden();
 
-  // The identifier tells the two Graces apart.
-  await contributor.getByLabel(/Your member ID, identifier, phone or name/).fill("20/53A/0456");
-  await contributor.getByRole("button", { name: "Find me" }).click();
-  await expect(contributor.getByText("Is this you?")).toBeVisible();
+  // Typed the way people actually type it: lower case, a space for the slash.
+  await enterMembershipId(contributor, graceId.toLowerCase().replace(/[/-]/, " "));
+  await expect(contributor.getByRole("heading", { name: "Are these your details?" })).toBeVisible();
   await expect(contributor.getByText("Grace Adeyemi")).toBeVisible();
-  await expect(contributor.getByText("20/53A/0456")).toBeVisible();
+  // Contact details are masked; nothing is on record for an email.
+  await expect(contributor.getByText("+234 ••• ••• •102")).toBeVisible();
+  await expect(contributor.getByText("Not on record")).toBeVisible();
+  // Neither Grace's full phone, the other Grace's identifier, nor the ID itself is on the page.
+  await expect(contributor.getByText("+2348011110102")).toBeHidden();
+  await expect(contributor.getByText("20/53A/0789")).toBeHidden();
+  await expect(contributor.getByText(graceId)).toBeHidden();
 
-  await contributor.getByRole("button", { name: "Yes, this is me" }).click();
+  // "No, that's not me" starts again with an empty box.
+  await contributor.getByRole("button", { name: "No, that's not me" }).click();
+  await expect(contributor.getByRole("heading", { name: "Identify yourself" })).toBeVisible();
+  await expect(contributor.getByLabel("Membership ID")).toHaveValue("");
+
+  await identifyWithMembershipId(contributor, graceId);
 
   // Their own obligation, and an honest status.
-  await expect(contributor.getByText("Contributing as")).toBeVisible();
   await expect(contributor.getByText("₦5,000").first()).toBeVisible();
   await expect(contributor.getByText("Awaiting contribution")).toBeVisible();
   await expect(contributor.getByText(/Paid/)).toBeHidden();
+
+  // The name is carried over; contact details are theirs to type.
+  await expect(contributor.getByLabel("Full name")).toHaveValue("Grace Adeyemi");
+  await expect(contributor.getByLabel("Email address")).toHaveValue("");
+  await expect(contributor.getByLabel("Phone number")).toHaveValue("");
 
   // The collection's own question is required, and the server says so.
   await contributor.getByLabel("Full name").fill("Grace Adeyemi");
@@ -245,9 +276,11 @@ test("identification cannot be forged: the server refuses a contribution with no
 }) => {
   await signInAsNewUser(page, "e2e-contrib");
   const communitySlug = await createCommunity(page, `E2E Forge ${Date.now()}`);
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await addMember(page, { name: "Bola Ahmed", phone: "+2348011110201" });
+  await enableMembershipIds(page, communitySlug, "FORGE");
+  const bolaId = await issueMembershipId(page, communitySlug, "Bola Ahmed");
 
   await createDuesCollection(page, "Levy M7", "2000");
   await expect(page).toHaveURL(/\/collections\/levy-m7/, { timeout: 45_000 });
@@ -259,10 +292,16 @@ test("identification cannot be forged: the server refuses a contribution with no
   await contributor.goto(`/${communitySlug}/levy-m7`);
   await contributor.waitForLoadState("networkidle");
 
-  await contributor.getByLabel(/Your member ID, identifier, phone or name/).fill("Bola Ahmed");
-  await contributor.getByRole("button", { name: "Find me" }).click();
-  await contributor.getByRole("button", { name: "Yes, this is me" }).click();
-  await expect(contributor.getByText("Contributing as")).toBeVisible();
+  await identifyWithMembershipId(contributor, bolaId);
+
+  // Neither cookie is readable from the page.
+  const cookies = await anonymous.cookies();
+  for (const name of ["kolekto_contributor", "kolekto_member_pass"]) {
+    const cookie = cookies.find((c) => c.name === name);
+    if (cookie) expect(cookie.httpOnly, `${name} is httpOnly`).toBe(true);
+  }
+  expect(cookies.find((c) => c.name === "kolekto_contributor")?.sameSite).toBe("Lax");
+  expect(await contributor.evaluate(() => document.cookie)).not.toMatch(/kolekto_(contributor|member_pass)/);
 
   // The identification lives in an httpOnly signed cookie. Throwing it away is
   // the closest a browser can get to editing it — and the server then refuses,
@@ -289,16 +328,18 @@ test("a group collection only knows the members of that group, and never another
   // A second community first, to prove its members cannot be reached from the
   // first one's collection.
   const otherSlug = await createCommunity(page, `E2E Other ${Date.now()}`);
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await addMember(page, { name: "Outsider Person", phone: "+2348011110301" });
+  await enableMembershipIds(page, otherSlug, "OTHER");
+  const outsiderId = await issueMembershipId(page, otherSlug, "Outsider Person");
 
   await page.getByRole("link", { name: "← All communities" }).click();
   await page.waitForLoadState("networkidle");
   const communitySlug = await createCommunity(page, `E2E Groups M7 ${Date.now()}`);
   expect(communitySlug).not.toEqual(otherSlug);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await addMember(page, { name: "Inside Group", phone: "+2348011110302" });
   await addMember(page, { name: "Outside Group", phone: "+2348011110303" });
@@ -327,6 +368,10 @@ test("a group collection only knows the members of that group, and never another
   }
   await expect(page.locator("dialog[open]")).toHaveCount(0);
 
+  await enableMembershipIds(page, communitySlug, "LEVEL");
+  const insideId = await issueMembershipId(page, communitySlug, "Inside Group");
+  const outsideId = await issueMembershipId(page, communitySlug, "Outside Group");
+
   // This one is for the group, not the whole roll.
   await createDuesCollection(page, "Level Dues M7", "1500", {
     audience: async (p) => {
@@ -344,19 +389,19 @@ test("a group collection only knows the members of that group, and never another
   await contributor.goto(`/${communitySlug}/level-dues-m7`);
   await contributor.waitForLoadState("networkidle");
 
-  await contributor.getByLabel(/Your member ID, identifier, phone or name/).fill("Inside Group");
-  await contributor.getByRole("button", { name: "Find me" }).click();
-  await expect(contributor.getByText("Is this you?")).toBeVisible();
+  await enterMembershipId(contributor, insideId);
+  await expect(contributor.getByRole("heading", { name: "Are these your details?" })).toBeVisible();
+  await expect(contributor.getByText("Inside Group")).toBeVisible();
 
-  await contributor.getByRole("button", { name: "No, search again" }).click();
-  await contributor.getByLabel(/Your member ID, identifier, phone or name/).fill("Outside Group");
-  await contributor.getByRole("button", { name: "Find me" }).click();
-  await expect(contributor.getByText(/Nobody on this list matches that/)).toBeVisible();
+  await contributor.getByRole("button", { name: "No, that's not me" }).click();
+  await enterMembershipId(contributor, outsideId);
+  await expect(contributor.getByText(INVALID_MEMBERSHIP_ID_MESSAGE)).toBeVisible();
+  await expect(contributor.getByText("Outside Group")).toBeHidden();
 
   // And a member of the other community is not reachable from here at all.
-  await contributor.getByLabel(/Your member ID, identifier, phone or name/).fill("Outsider Person");
-  await contributor.getByRole("button", { name: "Find me" }).click();
-  await expect(contributor.getByText(/Nobody on this list matches that/)).toBeVisible();
+  await enterMembershipId(contributor, outsiderId);
+  await expect(contributor.getByText(INVALID_MEMBERSHIP_ID_MESSAGE)).toBeVisible();
+  await expect(contributor.getByText("Outsider Person")).toBeHidden();
 
   await anonymous.close();
 });
@@ -365,14 +410,13 @@ test("a recurring charge shows the period it is asking about", async ({ page, br
   await signInAsNewUser(page, "e2e-contrib");
   const communitySlug = await createCommunity(page, `E2E Recurring M7 ${Date.now()}`);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await addMember(page, { name: "Resident One", phone: "+2348011110401" });
+  await enableMembershipIds(page, communitySlug, "ESTATE");
+  const residentId = await issueMembershipId(page, communitySlug, "Resident One");
 
-  await page.getByRole("link", { name: "Collections" }).click();
-  await page.waitForLoadState("networkidle");
-  await page.getByRole("link", { name: "New collection" }).click();
-  await page.waitForLoadState("networkidle");
+  await openWizard(page);
 
   // §20: a recurring plan asks its amount and its frequency on separate
   // steps, and is never asked when it closes — a plan that repeats does not.
@@ -414,9 +458,7 @@ test("a recurring charge shows the period it is asking about", async ({ page, br
   await contributor.goto(`/${communitySlug}/service-charge-m7`);
   await contributor.waitForLoadState("networkidle");
 
-  await contributor.getByLabel(/Your member ID, identifier, phone or name/).fill("Resident One");
-  await contributor.getByRole("button", { name: "Find me" }).click();
-  await contributor.getByRole("button", { name: "Yes, this is me" }).click();
+  await identifyWithMembershipId(contributor, residentId);
 
   // The period is named, because October's charge and November's are different
   // debts and a contributor must know which one they are settling.
@@ -431,10 +473,7 @@ test("an open collection asks nobody to identify, and a closed one takes nothing
   await signInAsNewUser(page, "e2e-contrib");
   const communitySlug = await createCommunity(page, `E2E Open M7 ${Date.now()}`);
 
-  await page.getByRole("link", { name: "Collections" }).click();
-  await page.waitForLoadState("networkidle");
-  await page.getByRole("link", { name: "New collection" }).click();
-  await page.waitForLoadState("networkidle");
+  await openWizard(page);
 
   // §15: a campaign opens on its story, not on a name-and-description form.
   await walkWizard(page, {
@@ -457,7 +496,7 @@ test("an open collection asks nobody to identify, and a closed one takes nothing
   await contributor.waitForLoadState("networkidle");
 
   await expect(contributor.getByText("Open to anyone with this link.")).toBeVisible();
-  await expect(contributor.getByRole("heading", { name: "Find yourself on the list" })).toBeHidden();
+  await expect(contributor.getByRole("heading", { name: "Identify yourself" })).toBeHidden();
 
   await contributor.getByLabel("How much would you like to contribute?").fill("7500");
   await contributor.getByLabel("Full name").fill("Ada Obi");

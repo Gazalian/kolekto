@@ -4,6 +4,7 @@ import { Banner, Button, SelectField, TextField } from "@kolekto/ui";
 import { useState, useTransition } from "react";
 import { forgetMemberAction, submitContributionAction, type ContributionResult } from "./actions.ts";
 import { FindYourself, type IdentifiedMember } from "./FindYourself.tsx";
+import { payerDetailsAfterIdentification } from "./membership-id-flow.ts";
 
 /**
  * The contributor's form. Three rules it follows, all of them product
@@ -160,7 +161,15 @@ export function ContributeForm({
         communitySlug={communitySlug}
         collectionSlug={collectionSlug}
         organiser={organiser}
-        onIdentified={setMember}
+        onIdentified={(identified) => {
+          setMember(identified);
+          // Only the name. Email and phone are the payer's own and start empty:
+          // the member's stored contact details are never sent to this page.
+          const payer = payerDetailsAfterIdentification(identified);
+          setFullName(payer.fullName);
+          setEmail(payer.email);
+          setPhone(payer.phone);
+        }}
       />
     );
   }
@@ -508,6 +517,7 @@ export function ContributeForm({
                 startTransition(async () => {
                   await forgetMemberAction();
                   setMember(null);
+                  setFullName("");
                 })
               }
             >

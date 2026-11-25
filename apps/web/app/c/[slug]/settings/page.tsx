@@ -1,5 +1,10 @@
 import {
+  communityMembershipIdSummary,
   getCommunityNoticeStatus,
+  getMembershipIdSettings,
+  listDelegablePermissions,
+  listOfficerPermissionGrants,
+  membersWithoutMembershipId,
   listWithdrawalApproverCandidates,
   listWithdrawalApproverHistory,
   type Community,
@@ -8,10 +13,14 @@ import {
   type OfficerTerm,
 } from "@kolekto/db";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import { requireCallerContext } from "../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
 import { approverPanelState, type ApproverPanelState } from "./approver-view.ts";
+import { MembershipIdSettingsCard, type MembershipIdSettingsView } from "./MembershipIdSettingsCard.tsx";
+import { OfficerPermissionsCard, type DelegableOption, type GrantRow } from "./OfficerPermissionsCard.tsx";
+import { PublicPageControl } from "./PublicPageControl.tsx";
 import { SettingsClient } from "./SettingsClient.tsx";
 
 export const metadata = { title: "Settings" };
@@ -70,7 +79,49 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
     }
   }
 
-  return (
+  // Membership IDs and delegated permissions (Part F; M9b). Shown only to those
+  // who can act on them; every SQL function re-checks permission.
+  const canConfigureIds = hasPermission(access, "membership.configure_ids");
+  const canIssueIds = hasPermission(access, "membership.issue_ids");
+  const canDelegate = hasPermission(access, "officer.delegate");
+  let membershipCard: ReactNode = null;
+  let permissionsCard: ReactNode = null;
+  if (!c.is_personal && (canConfigureIds || canIssueIds || canDelegate)) {
+    const caller = await requireCallerContext();
+    if (canConfigureIds || canIssueIds) {
+      const [idSettings, missing, summary] = await Promise.all([
+        getMembershipIdSettings(caller, c.id).catch(() => null),
+        canIssueIds ? membersWithoutMembershipId(caller, c.id, 201).catch(() => null) : Promise.resolve(null),
+        communityMembershipIdSummary(caller, c.id).catch(() => null),
+      ]);
+      const view: MembershipIdSettingsView | null = idSettings
+        ? { prefix: idSettings.prefix, separator: idSettings.separator, suffixLength: idSettings.suffixLength, enabled: idSettings.enabled }
+        : null;
+      membershipCard = (
+        <MembershipIdSettingsCard
+          slug={slug}
+          communityId={c.id}
+          settings={view}
+          missingCount={missing ? missing.length : null}
+          issuedCount={summary ? summary.size : null}
+          canConfigure={canConfigureIds}
+          canIssue={canIssueIds}
+        />
+      );
+    }
+    if (canDelegate) {
+      const [delegable, grants] = await Promise.all([
+        listDelegablePermissions(caller).catch((): DelegableOption[] => []),
+        listOfficerPermissionGrants(caller, c.id).catch((): GrantRow[] => []),
+      ]);
+      const delegates = ((officers ?? []) as OfficerTermWithUser[])
+        .filter((o) => o.role !== "owner")
+        .map((o) => ({ termId: o.id, name: o.users?.full_name ?? "Officer", role: o.role }));
+      permissionsCard = <OfficerPermissionsCard slug={slug} officers={delegates} delegable={delegable} grants={grants} />;
+    }
+  }
+
+  const settings = (
     <SettingsClient
       slug={slug}
       community={c}
@@ -85,5 +136,26 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
       isOwner={isOwner}
       approvers={approvers}
     />
+  );
+
+  const showPublicPage = isOwner && !c.is_personal;
+  if (!showPublicPage && !membershipCard && !permissionsCard) return settings;
+  return (
+    <div className="flex flex-col gap-6">
+      {showPublicPage && (
+        <div className="w-full max-w-2xl">
+          <PublicPageControl
+            slug={slug}
+            communityId={c.id}
+            published={c.public_page_published_at !== null}
+            contactVisible={c.public_contact_visible}
+            verified={c.verification_status === "verified"}
+          />
+        </div>
+      )}
+      {membershipCard && <div className="w-full max-w-2xl">{membershipCard}</div>}
+      {permissionsCard && <div className="w-full max-w-2xl">{permissionsCard}</div>}
+      {settings}
+    </div>
   );
 }

@@ -18,7 +18,7 @@ import "server-only";
  * uses, with no direct-Postgres connection needed just to draw a sidebar.
  */
 
-import type { OfficerRole } from "@kolekto/db";
+import { myGrantedPermissions, type OfficerRole } from "@kolekto/db";
 import { createClient } from "./supabase/server.ts";
 
 export interface CommunityAccess {
@@ -47,9 +47,18 @@ export async function getCommunityAccess(communityId: string): Promise<Community
 
   const { data: rolePermissions } = await supabase.from("role_permissions").select("permission").eq("role", term.role);
 
+  // Q2 (2026-11-23): permissions an owner granted to this officer individually.
+  // A mirror for the UI only — every SQL function re-checks app.has_permission.
+  let granted: string[] = [];
+  try {
+    granted = await myGrantedPermissions({ userId: user.id }, communityId);
+  } catch {
+    granted = [];
+  }
+
   return {
     role: term.role as OfficerRole,
-    permissions: new Set((rolePermissions ?? []).map((row) => row.permission as string)),
+    permissions: new Set([...(rolePermissions ?? []).map((row) => row.permission as string), ...granted]),
   };
 }
 

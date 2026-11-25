@@ -53,6 +53,7 @@ const STATUS_TONE: Record<Member["status"], "neutral" | "success" | "warning" | 
   unclaimed: "neutral",
   invited: "info",
   pending_approval: "warning",
+  suspended: "warning",
   archived: "neutral",
   merged: "neutral",
 };

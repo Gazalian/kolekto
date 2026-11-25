@@ -1,5 +1,6 @@
 import { expect, type Page } from "@playwright/test";
 import { flowFor, type SectionKind, type StepKind } from "../../../apps/web/app/c/[slug]/collections/new/flows.ts";
+import { sidebarLink } from "./nav.ts";
 
 /**
  * Walking the collection wizard, one flow at a time (M7.7 §33).
@@ -45,9 +46,14 @@ const CONTINUE = { name: "Continue", exact: true } as const;
 
 /** Opens the wizard from anywhere inside a community. */
 export async function openWizard(page: Page): Promise<void> {
-  await page.getByRole("link", { name: "Collections" }).first().click();
+  await sidebarLink(page, "Collections").click();
+  // Wait for the collections page itself: the overview it may start from also
+  // offers "New collection" shortcuts, and clicking before the navigation
+  // lands would pick one of those instead.
+  await expect(page).toHaveURL(/\/c\/[^/]+\/collections$/);
   await page.waitForLoadState("networkidle");
-  await page.getByRole("link", { name: "New collection" }).click();
+  // The page's own header action. The empty state says "Create a collection".
+  await page.getByRole("main").getByRole("link", { name: "New collection", exact: true }).click();
   await page.waitForLoadState("networkidle");
 }
 

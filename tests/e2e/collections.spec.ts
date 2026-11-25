@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
 import { openRoll } from "./helpers/collection-detail.ts";
+import { enableMembershipIds, identifyWithMembershipId, issueMembershipId } from "./helpers/membership-id.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 import { expectPaymentReview } from "./helpers/payments.ts";
 import { fillTier, openWizard, walkWizard } from "./helpers/wizard.ts";
 
@@ -25,7 +27,8 @@ test.describe.configure({ timeout: 180_000 });
 
 /** Returns the community's slug, which is also the first segment of every collection's public address. */
 async function createCommunity(page: Page, name: string): Promise<string> {
-  await page.getByRole("link", { name: "+ New community" }).click();
+  // "+ New community" before the communities-page redesign, "New community" after it.
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(name);
   await page.getByLabel("Type").selectOption("fellowship");
@@ -48,7 +51,7 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
 
   // A member to be expected to pay. Managed collections are the half of the
   // product that answers "who has not paid", so the member comes first.
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Add member" }).click();
   const memberDialog = page.getByRole("dialog");
@@ -57,12 +60,17 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await memberDialog.getByRole("button", { name: "Add member", exact: true }).click();
   await expect(page.getByText("Chidi Eze")).toBeVisible();
 
+  // Members of a managed collection identify with the ID an officer issues them.
+  await enableMembershipIds(page, communitySlug, "FELLOW");
+  const chidiId = await issueMembershipId(page, communitySlug, "Chidi Eze");
+
   // ── Create ────────────────────────────────────────────────────────────────
-  await page.getByRole("link", { name: "Collections" }).click();
+  await sidebarLink(page, "Collections").click();
+  await expect(page).toHaveURL(/\/c\/[^/]+\/collections$/);
   await page.waitForLoadState("networkidle");
   await expect(page.getByText("No collections yet")).toBeVisible();
 
-  await page.getByRole("link", { name: "New collection" }).click();
+  await page.getByRole("main").getByRole("link", { name: "New collection", exact: true }).click();
   await page.waitForLoadState("networkidle");
 
   // The fixed flow, walked by the flow's own definition. `walkWizard` asserts
@@ -143,12 +151,9 @@ test("create a fixed collection, assign a member, publish it, and contribute fro
   await expect(anonymousPage.getByText("Dues for the 2026 session.")).toBeVisible();
 
   // A managed collection asks a named list, so the contributor identifies
-  // themselves before anything else (M7). Until they do, the form is not shown.
-  await expect(anonymousPage.getByRole("heading", { name: "Find yourself on the list" })).toBeVisible();
-  await anonymousPage.getByLabel(/Your member ID, identifier, phone or name/).fill("Chidi Eze");
-  await anonymousPage.getByRole("button", { name: "Find me" }).click();
-  await anonymousPage.getByRole("button", { name: "Yes, this is me" }).click();
-  await expect(anonymousPage.getByText("Contributing as")).toBeVisible();
+  // themselves before anything else (M7, A2.5). Until they do, the form is not shown.
+  await expect(anonymousPage.getByLabel("Full name")).toBeHidden();
+  await identifyWithMembershipId(anonymousPage, chidiId);
 
   // The collection's own question is asked, separately from contact details.
   await expect(anonymousPage.getByLabel("House number")).toBeVisible();

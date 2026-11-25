@@ -8,6 +8,7 @@ build/
 .next/
 .next-e2e/
 .next-qa/
+.next-itest/
 out/
 *.tsbuildinfo
 

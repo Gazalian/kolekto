@@ -179,7 +179,7 @@ export function CollectionView({
         <p className="text-sm text-[var(--color-text-muted)]">
           {collection.audience_mode === "public"
             ? "Open to anyone with this link."
-            : `For members of ${collection.community_name}. You will be asked to find yourself on the list.`}
+            : `For members of ${collection.community_name}. You will be asked for your membership ID.`}
         </p>
 
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-[var(--color-text-muted)]">

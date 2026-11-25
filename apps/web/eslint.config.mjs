@@ -21,8 +21,9 @@ const eslintConfig = [
   // out of `.next/**` so it doesn't collide with a running `next dev`
   // server. It needs the same lint ignore `.next/**` already gets.
   // `.next-qa/**` is the same thing for the `kolekto-web-qa` dev server in
-  // .claude/launch.json (`NEXT_DIST_DIR=.next-qa`).
-  { ignores: [".next/**", ".next-e2e/**", ".next-qa/**", "next-env.d.ts"] },
+  // .claude/launch.json (`NEXT_DIST_DIR=.next-qa`), and `.next-itest/**` for
+  // `kolekto-web-itest` (`NEXT_DIST_DIR=.next-itest`).
+  { ignores: [".next/**", ".next-e2e/**", ".next-qa/**", ".next-itest/**", "next-env.d.ts"] },
 ];
 
 export default eslintConfig;

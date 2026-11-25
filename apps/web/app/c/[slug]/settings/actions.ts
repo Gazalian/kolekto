@@ -8,6 +8,7 @@ import {
   replaceWithdrawalApprover,
   revokeCommunityNotice,
   revokeOfficerInvitation,
+  setCommunityPublicPage,
   setWithdrawalApprover,
   updateCommunityProfile,
 } from "@kolekto/db";
@@ -153,5 +154,26 @@ export async function replaceWithdrawalApproverAction(slug: string, communityId:
     return approverFailure(error);
   }
   revalidatePath(`/c/${slug}/settings`);
+  return { ok: true };
+}
+
+/** D-J: owner-only. The database refuses anyone else (app.set_community_public_page). */
+export async function setCommunityPublicPageAction(
+  slug: string,
+  communityId: string,
+  published: boolean,
+  contactVisible: boolean,
+): Promise<ActionResult> {
+  const caller = await requireCallerContext();
+  try {
+    await setCommunityPublicPage(caller, { communityId, published, contactVisible });
+  } catch (error) {
+    if (error instanceof DatabaseError && error.message.includes("FORBIDDEN")) {
+      return { error: "Only the community owner can change the public page." };
+    }
+    return { error: messageFrom(error, "Could not update the public page") };
+  }
+  revalidatePath(`/c/${slug}/settings`);
+  revalidatePath(`/${slug}`);
   return { ok: true };
 }

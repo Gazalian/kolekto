@@ -22,3 +22,4 @@ so the reasoning survives.
 | [0014](0014-contributor-identification.md) | A contributor identifies themselves inside one collection, and is never a user | Accepted |
 | [0015](0015-subaccount-custody-and-collection-level-ownership.md) | Subaccount custody with Kolekto-controlled settlement; financial ownership at the collection | Custody superseded in part by [0016](0016-member-code-owner-approval-paystack-server-approval.md); collection ownership stands |
 | [0016](0016-member-code-owner-approval-paystack-server-approval.md) | Kolekto-held balance with two-party withdrawal authorisation (member code + owner approval) and Paystack server approval | Accepted |
+| [0017](0017-central-admin-in-a-separate-repository.md) | The central Kolekto admin lives in a separate private repository | Proposed |

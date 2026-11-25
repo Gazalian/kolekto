@@ -1,7 +1,6 @@
 "use server";
 
 import {
-  findCollectionMember,
   getCollectionMemberContext,
   getPublicCollection,
   getPublicCollectionFields,
@@ -24,9 +23,15 @@ import { buildContributorAnswersSchema, contributorContactSchema } from "@kolekt
 import {
   clearContributorSession,
   readContributorSession,
-  setContributorSession,
 } from "../../../lib/contributor-session.ts";
-import { allowLookup } from "../../../lib/lookup-throttle.ts";
+import {
+  completeMembershipPass,
+  loadMembershipPassSummary,
+  rejectMembershipPass,
+  startMembershipPass,
+  type MembershipPassSummary,
+} from "../../../lib/membership-pass-helpers.ts";
+import { clearMembershipPass } from "../../../lib/membership-pass.ts";
 import { startCheckout } from "@kolekto/payments";
 import { contributorCheckoutUrl, getPaymentContext } from "../../../lib/payments/provider-factory.ts";
 
@@ -44,7 +49,7 @@ const CHECKOUT_ERROR_MESSAGES: Record<string, string> = {
   COLLECTION_NOT_YET_OPEN: "This collection is not open for contributions yet.",
   COLLECTION_WINDOW_CLOSED: "This collection has closed and is no longer accepting contributions.",
   TARGET_REACHED: "This collection has reached its target and is no longer accepting contributions.",
-  MEMBER_REQUIRED: "Find yourself on the list before continuing.",
+  MEMBER_REQUIRED: "Enter your membership ID before continuing.",
   MEMBER_NOT_ELIGIBLE: "That record can no longer contribute to this collection.",
   NOTHING_OWED: "There is nothing for you to pay on this collection.",
   ALREADY_PAID: "You have already paid this in full.",
@@ -134,22 +139,6 @@ export interface ContributionResult {
 // changing it means becoming somebody else on the roll. What the browser gets
 // back is only what that person may see about themselves.
 
-/** What a lookup tells the contributor. Deliberately carries no id — the identification lives in the cookie. */
-export interface MemberLookupResult {
-  status: "none" | "one" | "many" | "error";
-  error?: string;
-  /** For `one`: the person we think they are, so they can say whether that is right. */
-  candidate?: {
-    fullName: string;
-    memberCode: string | null;
-    identifierLabel: string | null;
-    identifierValue: string | null;
-  };
-  /** For `many`: how many people answered, and what to type to tell them apart. */
-  matchCount?: number;
-  identifierLabel?: string | null;
-}
-
 /** The identified member and what they are being asked for. Rebuilt from the database on every call. */
 export interface MemberContextResult {
   error?: string;
@@ -177,59 +166,101 @@ async function loadCollection(communitySlug: string, collectionSlug: string) {
   return getPublicCollection(communitySlug, collectionSlug);
 }
 
-export async function findMemberAction(
+// ── Membership pass flow (A2.4) ─────────────────────────────────────────────
+//
+// Anonymous search by name, email or phone was removed in A2.2 (M9b3, owner
+// decision D4); FindYourself.tsx uses only these four actions (A2.5).
+
+export interface MembershipPassValidationResult {
+  valid: boolean;
+  error?: string;
+}
+
+export interface MembershipPassSummaryResult {
+  error?: string;
+  summary?: MembershipPassSummary;
+}
+
+/**
+ * Step 1: the contributor typed a membership ID.
+ *
+ * Validates against the database (rate-limited), and if valid stores the
+ * access token in an httpOnly cookie. The browser learns only whether it
+ * worked — the token and member identity stay server-side.
+ */
+export async function validateMembershipIdAction(
   communitySlug: string,
   collectionSlug: string,
-  query: string,
-): Promise<MemberLookupResult> {
+  typedId: string,
+): Promise<MembershipPassValidationResult> {
+  if (typeof typedId !== "string" || typedId.trim().length === 0) {
+    return { valid: false, error: "Enter your membership ID." };
+  }
+
   const collection = await loadCollection(communitySlug, collectionSlug);
-  if (!collection) return { status: "error", error: "This collection is no longer available." };
-  if (collection.audience_mode === "public") {
-    return { status: "error", error: "This collection is open to anyone — there is nobody to find." };
-  }
+  if (!collection) return { valid: false, error: "This collection is no longer available." };
 
-  if (!(await allowLookup(collection.collection_id))) {
-    return { status: "error", error: "Too many searches. Wait a minute and try again." };
+  const result = await startMembershipPass(collection.collection_id, typedId.trim());
+  if (!result.valid) {
+    return { valid: false, error: "That membership ID was not recognised. Check it and try again." };
   }
+  return { valid: true };
+}
 
-  let match;
-  try {
-    match = await findCollectionMember(collection.collection_id, query);
-  } catch (error) {
-    // QUERY_TOO_SHORT and QUERY_TOO_LONG are the database refusing to answer;
-    // both are things the person can act on, so the wording is passed through.
-    const message = error instanceof Error ? error.message : "";
-    if (message.includes("QUERY_TOO_SHORT")) return { status: "error", error: "Type at least 3 characters." };
-    if (message.includes("QUERY_TOO_LONG")) return { status: "error", error: "That is too long." };
-    return { status: "error", error: "That search could not be completed. Try again." };
-  }
+/**
+ * Step 2: the confirmation screen loads and shows the member's masked details.
+ *
+ * Returns the member's full name and masked contact info so they can say
+ * whether that is them. Returns an error when the pass has expired or was
+ * never set.
+ */
+export async function membershipPassSummaryAction(
+  communitySlug: string,
+  collectionSlug: string,
+): Promise<MembershipPassSummaryResult> {
+  const collection = await loadCollection(communitySlug, collectionSlug);
+  if (!collection) return { error: "This collection is no longer available." };
 
-  if (match.match_status === "one" && match.member_id) {
-    // Remembered server-side immediately, so the id never has to travel to the
-    // page and back. Nothing is shown about them beyond what is below, and the
-    // contributor still has to say "yes, this is me" before anything about what
-    // they owe appears.
-    await setContributorSession(collection.collection_id, match.member_id);
-    return {
-      status: "one",
-      candidate: {
-        fullName: match.full_name ?? "",
-        memberCode: match.member_code,
-        identifierLabel: match.identifier_label,
-        identifierValue: match.identifier_value,
-      },
-    };
-  }
+  const summary = await loadMembershipPassSummary(collection.collection_id);
+  if (!summary) return { error: "That identification has expired. Enter your membership ID again." };
 
-  if (match.match_status === "many") {
-    // No names, no ids: a count, and the name of the field that tells them
-    // apart. Listing candidates here would be showing a stranger the roll.
+  return { summary };
+}
+
+/**
+ * Step 3: "Yes, that is me."
+ *
+ * Confirms the pass in the database (writes an audit row), sets the
+ * contributor-session cookie, and clears the pass cookie. Returns the
+ * member's context (same shape as confirmMemberAction) so the UI can
+ * proceed to the payment form.
+ */
+export async function confirmMembershipPassAction(
+  communitySlug: string,
+  collectionSlug: string,
+): Promise<MemberContextResult> {
+  const collection = await loadCollection(communitySlug, collectionSlug);
+  if (!collection) return { error: "This collection is no longer available." };
+
+  const memberId = await completeMembershipPass(collection.collection_id);
+  if (!memberId) return { error: "That identification has expired. Enter your membership ID again." };
+
+  const context = await getCollectionMemberContext(collection.collection_id, memberId);
+  if (!context) {
     await clearContributorSession();
-    return { status: "many", matchCount: match.match_count, identifierLabel: match.identifier_label };
+    return { error: "That record can no longer contribute to this collection." };
   }
 
-  await clearContributorSession();
-  return { status: "none", identifierLabel: match.identifier_label };
+  return { member: describeMember(context) };
+}
+
+/**
+ * Step 3 (alternative): "No, that's not me."
+ *
+ * Clears the membership pass cookie so the contributor can start again.
+ */
+export async function rejectMembershipPassAction(): Promise<void> {
+  await rejectMembershipPass();
 }
 
 /**
@@ -260,6 +291,7 @@ export async function confirmMemberAction(
 
 export async function forgetMemberAction(): Promise<void> {
   await clearContributorSession();
+  await clearMembershipPass();
 }
 
 function describeMember(context: CollectionMemberContext): NonNullable<MemberContextResult["member"]> {
@@ -338,7 +370,7 @@ export async function submitContributionAction(
   if (collection.audience_mode !== "public") {
     memberId = await readContributorSession(collection.collection_id);
     if (!memberId) {
-      return { error: "Find yourself on the list before continuing." };
+      return { error: "Enter your membership ID before continuing." };
     }
     memberContext = await getCollectionMemberContext(collection.collection_id, memberId);
     if (!memberContext) {

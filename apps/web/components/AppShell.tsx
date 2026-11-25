@@ -8,20 +8,23 @@ import { usePathname } from "next/navigation";
 import { type ReactNode, useState } from "react";
 import { NotificationBell } from "./NotificationBell.tsx";
 import { NotificationProvider } from "./NotificationProvider.tsx";
+import { Avatar } from "./Avatar.tsx";
 
 interface NavItem {
   href: string;
   label: string;
   icon: typeof LayoutGrid;
+  /** The permission the page needs to show anything; null = every officer. UI only: each page and function re-checks. */
+  requires: string | null;
 }
 
 function navItems(slug: string): NavItem[] {
   return [
-    { href: `/c/${slug}`, label: "Overview", icon: LayoutGrid },
-    { href: `/c/${slug}/collections`, label: "Collections", icon: Gift },
-    { href: `/c/${slug}/members`, label: "Members", icon: Users },
-    { href: `/c/${slug}/activity`, label: "Activity", icon: Activity },
-    { href: `/c/${slug}/settings`, label: "Settings", icon: Settings },
+    { href: `/c/${slug}`, label: "Overview", icon: LayoutGrid, requires: "community.view_dashboard" },
+    { href: `/c/${slug}/collections`, label: "Collections", icon: Gift, requires: "community.view_dashboard" },
+    { href: `/c/${slug}/members`, label: "Members", icon: Users, requires: "member.view_contact" },
+    { href: `/c/${slug}/activity`, label: "Activity", icon: Activity, requires: "audit.view" },
+    { href: `/c/${slug}/settings`, label: "Settings", icon: Settings, requires: null },
   ];
 }
 
@@ -29,16 +32,22 @@ export function AppShell({
   community,
   role,
   userName,
+  userAvatarUrl,
+  permissions,
   children,
 }: {
   community: Community;
   role: OfficerRole;
   userName: string;
+  userAvatarUrl?: string | null;
+  /** The caller's permissions in this community (lib/permissions.ts), to hide pages that would show nothing. */
+  permissions: readonly string[];
   children: ReactNode;
 }) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const items = navItems(community.slug);
+  const granted = new Set(permissions);
+  const items = navItems(community.slug).filter((item) => item.requires === null || granted.has(item.requires));
 
   const nav = (
     <nav className="flex flex-1 flex-col gap-1 p-3">
@@ -75,7 +84,7 @@ export function AppShell({
         <div className="border-t border-[var(--color-border)] px-3 py-2">
           <NotificationBell />
         </div>
-        <UserFooter userName={userName} />
+        <UserFooter userName={userName} avatarUrl={userAvatarUrl ?? null} />
       </aside>
 
       {/* Mobile top bar + slide-out */}
@@ -97,7 +106,7 @@ export function AppShell({
         {mobileOpen && (
           <div className="flex flex-col border-b border-[var(--color-border)] bg-[var(--color-surface)] sm:hidden">
             {nav}
-            <UserFooter userName={userName} />
+            <UserFooter userName={userName} avatarUrl={userAvatarUrl ?? null} />
           </div>
         )}
 
@@ -122,10 +131,20 @@ function SidebarHeader({ community, role }: { community: Community; role: Office
   );
 }
 
-function UserFooter({ userName }: { userName: string }) {
+function UserFooter({ userName, avatarUrl }: { userName: string; avatarUrl: string | null }) {
   return (
-    <form action="/logout" method="post" className="flex items-center justify-between border-t border-[var(--color-border)] p-3">
-      <span className="truncate text-sm text-[var(--color-text-muted)]">{userName}</span>
+    <form action="/logout" method="post" className="flex items-center justify-between gap-2 border-t border-[var(--color-border)] p-3">
+      <Link
+        href="/account"
+        className="flex min-w-0 items-center gap-2 rounded-[var(--radius-sm)] px-1 py-1 hover:bg-[var(--color-bg)] focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
+        title="Your profile"
+      >
+        <Avatar name={userName} url={avatarUrl} className="h-7 w-7 text-[10px]" />
+        <span className="min-w-0">
+          <span className="block truncate text-sm text-[var(--color-text)]">{userName}</span>
+          <span className="block text-xs text-[var(--color-text-muted)]">Your profile</span>
+        </span>
+      </Link>
       <button
         type="submit"
         className="flex items-center gap-1.5 rounded-[var(--radius-sm)] px-2 py-1 text-xs font-medium text-[var(--color-text-muted)] hover:bg-[var(--color-bg)] hover:text-[var(--color-text)]"
