@@ -12,7 +12,7 @@ const MEMBER_UUID = "m0000000-0000-4000-8000-000000000001";
 // ── Mock state ─────────────────────────────────────────────────────────────
 
 let mockCollection: Record<string, unknown> | null = { collection_id: COLLECTION_ID, status: "active" };
-let mockStartResult = { valid: true };
+let mockStartResult: { valid: boolean; unavailable?: true } = { valid: true };
 let mockSummaryResult: { fullName: string; emailMasked: string | null; phoneMasked: string | null } | null = {
   fullName: "Aisha Ibrahim",
   emailMasked: "a•••@gmail.com",
@@ -118,6 +118,17 @@ describe("validateMembershipIdAction()", () => {
     const result = await validateMembershipIdAction(COMMUNITY_SLUG, COLLECTION_SLUG, "BAD/ID000");
     expect(result.valid).toBe(false);
     expect(result.error).toBeDefined();
+  });
+
+  it("passes 'unavailable' through with a generic message when the caller address is unavailable", async () => {
+    mockStartResult = { valid: false, unavailable: true };
+    const result = await validateMembershipIdAction(COMMUNITY_SLUG, COLLECTION_SLUG, "IDS/K7P9Q");
+    expect(result).toEqual({
+      valid: false,
+      unavailable: true,
+      error: "Membership ID checks are temporarily unavailable. Please try again in a few minutes.",
+    });
+    expect(JSON.stringify(result)).not.toMatch(/forwarded|vercel|header|proxy|KOLEKTO_/i);
   });
 
   it("rejects empty input", async () => {

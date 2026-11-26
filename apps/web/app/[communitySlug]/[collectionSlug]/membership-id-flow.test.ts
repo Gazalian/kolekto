@@ -4,6 +4,7 @@ import {
   ENTER_SCREEN,
   INVALID_MEMBERSHIP_ID_MESSAGE,
   PASS_EXPIRED_MESSAGE,
+  TEMPORARILY_UNAVAILABLE_MESSAGE,
   TRY_AGAIN_MESSAGE,
   canSubmitMembershipId,
   canonicalMembershipIdLength,
@@ -115,6 +116,14 @@ describe("submitMembershipId()", () => {
     const screen = await submitMembershipId(a, "IDS/K7P9Q");
     expect(screen).toEqual({ step: "enter", error: INVALID_MEMBERSHIP_ID_MESSAGE });
     expect(INVALID_MEMBERSHIP_ID_MESSAGE).toBe("We couldn't find a member with this ID. Please check and try again.");
+    expect(a.summary).not.toHaveBeenCalled();
+  });
+
+  it("shows the temporary-unavailability message (not 'ID not found') when the check could not run", async () => {
+    const a = actions({ validate: async () => ({ valid: false, unavailable: true, error: "anything" }) });
+    const screen = await submitMembershipId(a, "IDS/K7P9Q");
+    expect(screen).toEqual({ step: "enter", error: TEMPORARILY_UNAVAILABLE_MESSAGE });
+    expect(TEMPORARILY_UNAVAILABLE_MESSAGE).toBe("Membership ID checks are temporarily unavailable. Please try again in a few minutes.");
     expect(a.summary).not.toHaveBeenCalled();
   });
 

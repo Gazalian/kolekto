@@ -27,9 +27,18 @@ let passToken: string | null = null;
 let contributorCollectionId: string | null = null;
 let contributorMemberId: string | null = null;
 
+class MockConfigError extends Error {}
+// The configured client-IP source (session 67 Phase 2). Default: local, as in development.
+let ipSource: () => unknown = () => ({ mode: "local" });
+// Request headers seen by client-ip.ts through next/headers.
+let requestHeaders: Record<string, string> = { "x-forwarded-for": "203.0.113.5" };
+let validateCalls: Buffer[] = [];
+
 vi.mock("@kolekto/config", () => ({
+  ConfigError: MockConfigError,
   loadSessionSecret: () => SECRET,
   loadMembershipIdSecret: () => SECRET,
+  loadClientIpSource: () => ipSource(),
 }));
 
 vi.mock("next/headers", () => ({
@@ -41,15 +50,15 @@ vi.mock("next/headers", () => ({
     },
   }),
   headers: async () => ({
-    get: (name: string) => {
-      if (name === "x-forwarded-for") return "203.0.113.5";
-      return null;
-    },
+    get: (name: string) => requestHeaders[name] ?? null,
   }),
 }));
 
 vi.mock("@kolekto/db", () => ({
-  validateMembershipId: async (_col: string, _id: string, _hash: Buffer) => mockValidateResult,
+  validateMembershipId: async (_col: string, _id: string, hash: Buffer) => {
+    validateCalls.push(hash);
+    return mockValidateResult;
+  },
   membershipPassSummary: async (_col: string, _token: string) => mockPassSummaryResult,
   confirmMembershipPass: async (_col: string, _token: string) => mockConfirmResult,
 }));
@@ -81,6 +90,7 @@ const {
   completeMembershipPass,
   rejectMembershipPass,
 } = await import("./membership-pass-helpers.ts");
+const { hashClientAddress } = await import("./membership-id.ts");
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 
@@ -109,6 +119,71 @@ describe("startMembershipPass()", () => {
     mockValidateResult = { valid: true, accessToken: null, expiresAt: null };
     const result = await startMembershipPass(COL_ID, TYPED_ID);
     expect(result.valid).toBe(false);
+  });
+});
+
+describe("startMembershipPass() rate-limit identity (session 67 Phase 2)", () => {
+  beforeEach(() => {
+    passToken = null;
+    validateCalls = [];
+    ipSource = () => ({ mode: "local" });
+    requestHeaders = { "x-forwarded-for": "203.0.113.5" };
+    mockValidateResult = { valid: true, accessToken: ACCESS_TOKEN, expiresAt: null };
+  });
+
+  it("sends the keyed hash of the normalised identity, never the raw header", async () => {
+    await startMembershipPass(COL_ID, TYPED_ID);
+    expect(validateCalls).toHaveLength(1);
+    expect(validateCalls[0]!.equals(hashClientAddress(SECRET, "ip4:203.0.113.5"))).toBe(true);
+    expect(validateCalls[0]!.equals(hashClientAddress(SECRET, "203.0.113.5"))).toBe(false);
+  });
+
+  it("vercel: forged X-Forwarded-For / X-Real-IP values give the same hash", async () => {
+    ipSource = () => ({ mode: "vercel" });
+    requestHeaders = { "x-vercel-forwarded-for": "198.51.100.7", "x-forwarded-for": "1.1.1.1", "x-real-ip": "2.2.2.2" };
+    await startMembershipPass(COL_ID, TYPED_ID);
+    requestHeaders = { "x-vercel-forwarded-for": "198.51.100.7", "x-forwarded-for": "9.9.9.9, 8.8.8.8", "x-real-ip": "7.7.7.7" };
+    await startMembershipPass(COL_ID, TYPED_ID);
+    expect(validateCalls).toHaveLength(2);
+    expect(validateCalls[0]!.equals(validateCalls[1]!)).toBe(true);
+    expect(validateCalls[0]!.equals(hashClientAddress(SECRET, "ip4:198.51.100.7"))).toBe(true);
+  });
+
+  it("xff-hops: forged left-hand entries give the same hash", async () => {
+    ipSource = () => ({ mode: "xff-hops", hops: 1 });
+    requestHeaders = { "x-forwarded-for": "1.1.1.1, 198.51.100.23" };
+    await startMembershipPass(COL_ID, TYPED_ID);
+    requestHeaders = { "x-forwarded-for": "4.4.4.4, 5.5.5.5, 198.51.100.23" };
+    await startMembershipPass(COL_ID, TYPED_ID);
+    expect(validateCalls[0]!.equals(validateCalls[1]!)).toBe(true);
+  });
+
+  it("fails closed WITHOUT calling the database when the configuration is missing or invalid", async () => {
+    ipSource = () => {
+      throw new MockConfigError("KOLEKTO_CLIENT_IP_SOURCE is not set.");
+    };
+    const result = await startMembershipPass(COL_ID, TYPED_ID);
+    expect(result).toEqual({ valid: false, unavailable: true });
+    expect(validateCalls).toHaveLength(0);
+    expect(passToken).toBeNull();
+  });
+
+  it("fails closed WITHOUT calling the database when the trusted header is missing", async () => {
+    ipSource = () => ({ mode: "vercel" });
+    requestHeaders = { "x-forwarded-for": "203.0.113.5", "x-real-ip": "203.0.113.5" };
+    const result = await startMembershipPass(COL_ID, TYPED_ID);
+    expect(result).toEqual({ valid: false, unavailable: true });
+    expect(validateCalls).toHaveLength(0);
+  });
+
+  it("fails closed WITHOUT calling the database on a malformed trusted value or a short chain", async () => {
+    ipSource = () => ({ mode: "vercel" });
+    requestHeaders = { "x-vercel-forwarded-for": "unknown" };
+    expect(await startMembershipPass(COL_ID, TYPED_ID)).toEqual({ valid: false, unavailable: true });
+    ipSource = () => ({ mode: "xff-hops", hops: 2 });
+    requestHeaders = { "x-forwarded-for": "198.51.100.23" };
+    expect(await startMembershipPass(COL_ID, TYPED_ID)).toEqual({ valid: false, unavailable: true });
+    expect(validateCalls).toHaveLength(0);
   });
 });
 

@@ -20,6 +20,8 @@ export const INVALID_MEMBERSHIP_ID_MESSAGE = "We couldn't find a member with thi
 export const PASS_EXPIRED_MESSAGE = "That identification has expired. Enter your membership ID again.";
 /** A server action threw (network, server error). Says nothing about why. */
 export const TRY_AGAIN_MESSAGE = "Something went wrong. Please try again.";
+/** The server could not run the check at all (its rate-limit identity was unavailable). Says nothing about why. */
+export const TEMPORARILY_UNAVAILABLE_MESSAGE = "Membership ID checks are temporarily unavailable. Please try again in a few minutes.";
 
 /**
  * Shortest canonical ID worth sending: a 2-character prefix plus a 5-character
@@ -107,6 +109,8 @@ export async function submitMembershipId(actions: IdentifyActions, raw: string):
   } catch {
     return { step: "enter", error: TRY_AGAIN_MESSAGE };
   }
+  // The check did not run, so this is not "ID not found".
+  if (validation.unavailable) return { step: "enter", error: TEMPORARILY_UNAVAILABLE_MESSAGE };
   // Whatever the server's reason, the contributor sees the same sentence.
   if (!validation.valid) return { step: "enter", error: INVALID_MEMBERSHIP_ID_MESSAGE };
 

@@ -7,7 +7,7 @@ import {
   type MembershipPassSummary,
 } from "@kolekto/db";
 import { loadMembershipIdSecret } from "@kolekto/config";
-import { headers } from "next/headers";
+import { resolveCallerIdentity } from "./client-ip.ts";
 import { hashClientAddress } from "./membership-id.ts";
 import { clearMembershipPass, readMembershipPass, setMembershipPass } from "./membership-pass.ts";
 import { setContributorSession } from "./contributor-session.ts";
@@ -16,6 +16,8 @@ export type { MembershipPassSummary };
 
 export interface MembershipPassStart {
   valid: boolean;
+  /** The caller's address could not be established from the trusted source; nothing was sent to the database. */
+  unavailable?: true;
 }
 
 /**
@@ -24,12 +26,19 @@ export interface MembershipPassStart {
  * Validates against the database, which rate-limits and returns a 30-minute
  * access token on success. The token goes into the membership pass cookie;
  * the browser never sees it.
+ *
+ * The rate limit is keyed on the caller's address from the configured trusted
+ * source only (`client-ip.ts`). When that cannot be established the attempt is
+ * refused as "unavailable" BEFORE the database is called: no shared bucket, no
+ * fallback to a header the caller can write.
  */
 export async function startMembershipPass(
   collectionId: string,
   typedMembershipId: string,
 ): Promise<MembershipPassStart> {
-  const clientHash = await callerAddressHash();
+  const caller = await resolveCallerIdentity();
+  if (!caller.ok) return { valid: false, unavailable: true };
+  const clientHash = hashClientAddress(loadMembershipIdSecret(), caller.identity);
   const result = await validateMembershipId(collectionId, typedMembershipId, clientHash);
 
   if (!result.valid || !result.accessToken) {
@@ -87,14 +96,4 @@ export async function completeMembershipPass(
  */
 export async function rejectMembershipPass(): Promise<void> {
   await clearMembershipPass();
-}
-
-// ── Internal ──────────────────────────────────────────────────────────────
-
-async function callerAddressHash(): Promise<Buffer> {
-  const headerList = await headers();
-  const forwarded = headerList.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const address = forwarded ?? headerList.get("x-real-ip") ?? "unknown";
-  const secret = loadMembershipIdSecret();
-  return hashClientAddress(secret, address);
 }

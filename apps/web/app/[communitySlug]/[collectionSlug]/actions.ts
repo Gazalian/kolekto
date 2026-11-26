@@ -186,6 +186,8 @@ async function loadCollection(communitySlug: string, collectionSlug: string) {
 export interface MembershipPassValidationResult {
   valid: boolean;
   error?: string;
+  /** The check could not run (caller address not established); not a verdict on the ID. */
+  unavailable?: true;
 }
 
 export interface MembershipPassSummaryResult {
@@ -213,6 +215,9 @@ export async function validateMembershipIdAction(
   if (!collection) return { valid: false, error: "This collection is no longer available." };
 
   const result = await startMembershipPass(collection.collection_id, typedId.trim());
+  if (result.unavailable) {
+    return { valid: false, unavailable: true, error: "Membership ID checks are temporarily unavailable. Please try again in a few minutes." };
+  }
   if (!result.valid) {
     return { valid: false, error: "That membership ID was not recognised. Check it and try again." };
   }
