@@ -151,10 +151,12 @@ describe("M8.5 payment orchestrator against the real database", () => {
           const started = expectOk(await checkout(tx, ctx, community, flow, scope.uuid()));
           assert.equal(ctx.provider.initializeCalls.length, 1);
           assert.equal(ctx.provider.initializeCalls[0]!.amount, started.fees.totalPayable, "the provider is asked for the frozen total");
-          assert.match(
+          // Since c046c41 the callback URL carries no query: the provider appends trxref/reference on redirect.
+          assert.equal(
             ctx.provider.initializeCalls[0]!.callbackUrl,
-            new RegExp(`^${APP_ORIGIN}/${community.communitySlug}/${flow.collectionSlug}/payment/callback\\?reference=${started.reference}$`),
+            `${APP_ORIGIN}/${community.communitySlug}/${flow.collectionSlug}/payment/callback`,
           );
+          assert.equal(ctx.provider.initializeCalls[0]!.reference, started.reference, "the provider is given this attempt's reference");
 
           // The attempt is the amount lock (D-16): what the database stored equals what the domain computed.
           const attempt = await attemptRow(tx, started.attemptId);

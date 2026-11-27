@@ -19,7 +19,7 @@ async function openWizardMobile(page: import("@playwright/test").Page): Promise<
 }
 
 async function createCommunity(page: import("@playwright/test").Page, name: string): Promise<string> {
-  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(name);
   await page.getByLabel("Type").selectOption("fellowship");

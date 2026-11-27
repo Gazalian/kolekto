@@ -56,10 +56,15 @@ async function configureMemberProfile(page: Page, identifierLabel: string): Prom
   await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
 
-  await page.getByRole("button", { name: "Member profile" }).click();
-  await page.getByLabel("Prefix").fill("KWASU/");
-  await page.getByRole("button", { name: "Save ID format" }).click();
+  await page.getByRole("button", { name: "IDs & access" }).click();
+  await page.getByLabel("Member ID prefix", { exact: true }).fill("KWASU/");
+  await page.getByRole("button", { name: "Save member ID format" }).click();
   await expect(page.getByText(/KWASU\/0001/)).toBeVisible();
+  await expect(page.getByText("Member ID format saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Member profile" }).click();
 
   await page.getByRole("button", { name: "Add field" }).click();
   await page.getByLabel("Label").fill(identifierLabel);

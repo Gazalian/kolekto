@@ -1,19 +1,20 @@
 import { expect, test } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 
 test.describe.configure({ timeout: 180_000 });
 
 test("deleting a member field requires confirmation", async ({ page }) => {
   await signInAsNewUser(page, "e2e-field-del");
 
-  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(`E2E Field Delete ${Date.now()}`);
   await page.getByLabel("Type").selectOption("university_association");
   await page.getByRole("button", { name: "Create community" }).click();
   await expect(page).toHaveURL(/\/c\//);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
 
   // ── Add a custom field ────────────────────────────────────────────────────

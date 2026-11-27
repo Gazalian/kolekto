@@ -17,14 +17,17 @@ export const INVALID_MEMBERSHIP_ID_MESSAGE = "We couldn't find a member with thi
 
 /** Turns membership IDs on for the community with the given prefix (2–10 letters or numbers, starting with a letter). */
 export async function enableMembershipIds(page: Page, communitySlug: string, prefix: string): Promise<void> {
-  await page.goto(`/c/${communitySlug}/settings`);
+  await page.goto(`/c/${communitySlug}/members`);
   await page.waitForLoadState("networkidle");
+  await page.getByRole("button", { name: "IDs & access" }).click();
 
-  const card = page.locator("section", { has: page.getByRole("heading", { name: "Membership IDs" }) });
-  await card.getByLabel("Prefix").fill(prefix);
-  await card.getByRole("checkbox", { name: "Membership IDs are on for this community" }).check();
-  await card.getByRole("button", { name: "Save format" }).click();
+  const card = page.locator("section", { has: page.getByRole("heading", { name: "Private membership ID" }) });
+  await card.getByLabel("Membership ID prefix", { exact: true }).fill(prefix);
+  await card.getByRole("checkbox", { name: /Membership IDs are on for this community/ }).check();
+  await card.getByRole("button", { name: "Save membership ID format" }).click();
   await expect(card.getByText(/^Saved\. New IDs use this format/)).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
 }
 
 /**

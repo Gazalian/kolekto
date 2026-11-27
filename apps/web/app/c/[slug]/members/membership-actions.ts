@@ -153,7 +153,7 @@ export async function saveMembershipIdSettingsAction(
   } catch (error) {
     return { error: messageFrom(error, "Could not save the membership ID format") };
   }
-  revalidatePath(`/c/${slug}/settings`);
+  revalidatePath(`/c/${slug}/members`);
   return { ok: true };
 }
 

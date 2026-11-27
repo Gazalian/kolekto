@@ -1,15 +1,20 @@
-import type {
-  Community,
-  CommunityMemberCodeSettings,
-  InviteLink,
-  Member,
-  MemberAttributeDefinition,
-  MemberAttributeValue,
-  MemberGroup,
+import {
+  communityMembershipIdSummary,
+  getMembershipIdSettings,
+  membersWithoutMembershipId,
+  type Community,
+  type CommunityMemberCodeSettings,
+  type InviteLink,
+  type Member,
+  type MemberAttributeDefinition,
+  type MemberAttributeValue,
+  type MemberGroup,
 } from "@kolekto/db";
 import { notFound } from "next/navigation";
+import { requireCallerContext } from "../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
+import type { MembershipIdAccess } from "./MemberIdsPanel.tsx";
 import { MembersClient, type MemberRow } from "./MembersClient.tsx";
 import type { GroupRow } from "./GroupsManager.tsx";
 
@@ -83,6 +88,29 @@ export default async function MembersPage({ params }: { params: Promise<{ slug: 
     groupIds: groupsByMember.get(member.id) ?? [],
   }));
 
+  // Private membership IDs (Part F; M9b), shown in "IDs & access" only to those
+  // who can act on them; every SQL function re-checks permission.
+  const canConfigureIds = hasPermission(access, "membership.configure_ids");
+  const canIssueIds = hasPermission(access, "membership.issue_ids");
+  let membershipIds: MembershipIdAccess | null = null;
+  if (!c.is_personal && (canConfigureIds || canIssueIds)) {
+    const caller = await requireCallerContext();
+    const [idSettings, missing, summary] = await Promise.all([
+      getMembershipIdSettings(caller, c.id).catch(() => null),
+      canIssueIds ? membersWithoutMembershipId(caller, c.id, 201).catch(() => null) : Promise.resolve(null),
+      communityMembershipIdSummary(caller, c.id).catch(() => null),
+    ]);
+    membershipIds = {
+      settings: idSettings
+        ? { prefix: idSettings.prefix, separator: idSettings.separator, suffixLength: idSettings.suffixLength, enabled: idSettings.enabled }
+        : null,
+      missingCount: missing ? missing.length : null,
+      issuedCount: summary ? summary.size : null,
+      canConfigure: canConfigureIds,
+      canIssue: canIssueIds,
+    };
+  }
+
   return (
     <MembersClient
       slug={slug}
@@ -99,6 +127,7 @@ export default async function MembersPage({ params }: { params: Promise<{ slug: 
       canInvite={hasPermission(access, "invite.create")}
       canApprove={hasPermission(access, "invite.approve")}
       canConfigure={hasPermission(access, "community.edit_profile")}
+      membershipIds={membershipIds}
     />
   );
 }

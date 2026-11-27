@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
 import { openRoll } from "./helpers/collection-detail.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 import { walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -25,7 +26,7 @@ async function addMember(page: Page, name: string, phone: string): Promise<void>
 test("aim a collection at a group, then add obligations for newly eligible members", async ({ page }) => {
   await signInAsNewUser(page, "e2e-audience");
 
-  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(`E2E Audience ${Date.now()}`);
   await page.getByLabel("Type").selectOption("university_association");
@@ -33,7 +34,7 @@ test("aim a collection at a group, then add obligations for newly eligible membe
   await expect(page).toHaveURL(/\/c\//);
 
   // ── Two members, one group, one of them in it ─────────────────────────────
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await addMember(page, "Ada Third", "+2348073330001");
   await addMember(page, "Bem Fourth", "+2348073330002");
@@ -96,7 +97,7 @@ test("aim a collection at a group, then add obligations for newly eligible membe
   await expect(page.getByText("Not yet paid")).toBeVisible();
 
   // ── The second member joins the group afterwards ──────────────────────────
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Groups" }).click();
   await page.getByRole("button", { name: "Add members" }).click();
