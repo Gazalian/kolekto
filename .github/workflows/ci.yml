@@ -218,14 +218,18 @@ jobs:
           echo "SUPABASE_SERVICE_ROLE_KEY=$service_key" >> "$GITHUB_ENV"
           rm -f supabase-status.env
 
-      # The contributor-cookie signing secret (>=32 chars). Generated per run and
-      # never persisted — it only has to be present and long enough for the app
-      # to start (packages/config/src/env.ts loadSessionSecret).
-      - name: Generate an ephemeral session secret
+      # The contributor-cookie signing secret and the membership-ID key (each
+      # >=32 chars). Generated per run and never persisted — they only have to be
+      # present and long enough for the app to start (packages/config/src/env.ts
+      # loadSessionSecret, loadMembershipIdSecret).
+      - name: Generate ephemeral session and membership-ID secrets
         run: |
           secret="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))")"
           echo "::add-mask::$secret"
           echo "KOLEKTO_SESSION_SECRET=$secret" >> "$GITHUB_ENV"
+          id_secret="$(node -e "console.log(require('crypto').randomBytes(32).toString('base64url'))")"
+          echo "::add-mask::$id_secret"
+          echo "KOLEKTO_MEMBERSHIP_ID_SECRET=$id_secret" >> "$GITHUB_ENV"
 
       - run: npm ci
 

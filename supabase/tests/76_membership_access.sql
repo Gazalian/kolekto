@@ -179,9 +179,12 @@ select is((select valid from pg_temp.v('1', 'ID-2', 'ip-brute')), false,
   'after ten failures in 15 minutes that IP is refused even with a valid ID');
 select is((select valid from pg_temp.v('1', 'ID-2', 'ip-fresh')), true, 'another IP is not affected');
 reset role;
-select is((select outcome from public.membership_validation_attempts
-           where ip_hash = extensions.digest('ip-brute', 'sha256') order by attempted_at desc, id desc limit 1),
-  'rate_limited', 'the refusal is recorded as rate-limited');
+-- Counted, not "latest row": every row in this transaction shares now(), and
+-- app.uuid_generate_v7() is random within one millisecond, so ordering by id
+-- does not reliably find the last insert (it failed this way in CI).
+select is((select count(*)::int from public.membership_validation_attempts
+           where ip_hash = extensions.digest('ip-brute', 'sha256') and outcome = 'rate_limited'),
+  1, 'the refusal is recorded as rate-limited');
 update public.membership_validation_attempts set attempted_at = attempted_at - interval '16 minutes'
 where ip_hash = extensions.digest('ip-brute', 'sha256');
 set local role anon;
