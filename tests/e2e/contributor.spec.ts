@@ -318,7 +318,9 @@ test("identification cannot be forged: the server refuses a contribution with no
   await contributor.getByLabel("Phone number").fill("+2348011110299");
   await contributor.getByRole("button", { name: "Continue" }).click();
 
-  await expect(contributor.getByText(/Find yourself on the list before continuing/)).toBeVisible();
+  // M10: no signed session → refused and sent back to identify again.
+  await expect(contributor.getByRole("alert").filter({ hasText: "Enter your membership ID before continuing." })).toBeVisible();
+  await expect(contributor.getByRole("region", { name: "Identify yourself" })).toBeVisible();
   await expect(contributor.getByText("Ready to continue to payment")).toBeHidden();
 
   await anonymous.close();

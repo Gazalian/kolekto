@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { signInAsNewUser } from "../helpers/auth.ts";
-import { openWizard, walkWizard } from "../helpers/wizard.ts";
+import { openWizardFromCollectionsLink, walkWizard } from "../helpers/wizard.ts";
 
 test.use({ viewport: { width: 390, height: 844 } });
 test.describe.configure({ timeout: 240_000 });
@@ -15,7 +15,11 @@ test.describe.configure({ timeout: 240_000 });
  */
 async function openWizardMobile(page: import("@playwright/test").Page): Promise<void> {
   await page.getByRole("button", { name: "Open menu" }).click();
-  await openWizard(page);
+  // `openWizard` clicks the link inside the sidebar (<aside>), which is hidden
+  // at this width; the open menu renders the same nav outside it.
+  const collections = { name: "Collections", exact: true } as const;
+  await page.getByRole("navigation").filter({ has: page.getByRole("link", collections) }).getByRole("link", collections).click();
+  await openWizardFromCollectionsLink(page);
 }
 
 async function createCommunity(page: import("@playwright/test").Page, name: string): Promise<string> {
