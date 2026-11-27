@@ -23,7 +23,7 @@ import {
   Thead,
   Tr,
 } from "@kolekto/ui";
-import { Plus, Settings2, UserPlus, Users } from "lucide-react";
+import { Contact, Plus, Settings2, UserPlus, Users } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState, useTransition } from "react";
 import {
@@ -38,6 +38,7 @@ import {
   updateMemberAction,
 } from "./actions.ts";
 import { InviteLinkDialog } from "./InviteLinkDialog.tsx";
+import { MemberIdsPanel, type MembershipIdAccess } from "./MemberIdsPanel.tsx";
 import { MemberProfileConfig } from "./MemberProfileConfig.tsx";
 import { GroupsManager, type GroupRow } from "./GroupsManager.tsx";
 
@@ -73,6 +74,7 @@ export function MembersClient({
   canInvite,
   canApprove,
   canConfigure,
+  membershipIds,
 }: {
   slug: string;
   communityId: string;
@@ -88,12 +90,15 @@ export function MembersClient({
   canInvite: boolean;
   canApprove: boolean;
   canConfigure: boolean;
+  /** Private membership ID state; null when the caller can neither configure nor issue them. */
+  membershipIds: MembershipIdAccess | null;
 }) {
   const [query, setQuery] = useState("");
   const [groupFilter, setGroupFilter] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [configOpen, setConfigOpen] = useState(false);
+  const [idsOpen, setIdsOpen] = useState(false);
   const [groupsOpen, setGroupsOpen] = useState(false);
   const [editing, setEditing] = useState<MemberRow | null>(null);
   const [archiving, setArchiving] = useState<MemberRow | null>(null);
@@ -148,6 +153,11 @@ export function MembersClient({
           {canConfigure && (
             <Button variant="secondary" onClick={() => setGroupsOpen(true)}>
               <Users className="h-4 w-4" aria-hidden="true" /> Groups
+            </Button>
+          )}
+          {(canConfigure || membershipIds) && (
+            <Button variant="secondary" onClick={() => setIdsOpen(true)}>
+              <Contact className="h-4 w-4" aria-hidden="true" /> IDs &amp; access
             </Button>
           )}
           {canConfigure && (
@@ -342,10 +352,20 @@ export function MembersClient({
           slug={slug}
           communityId={communityId}
           definitions={definitions}
-          codeSettings={codeSettings}
-          memberCount={rows.length}
           fieldValueCounts={fieldValueCounts}
           onClose={() => setConfigOpen(false)}
+        />
+      )}
+
+      {(canConfigure || membershipIds) && idsOpen && (
+        <MemberIdsPanel
+          slug={slug}
+          communityId={communityId}
+          codeSettings={codeSettings}
+          memberCount={rows.length}
+          canConfigureMemberId={canConfigure}
+          membershipIds={membershipIds}
+          onClose={() => setIdsOpen(false)}
         />
       )}
     </div>

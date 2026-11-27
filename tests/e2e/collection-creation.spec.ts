@@ -31,7 +31,7 @@ import { chooseFeeBearer, openWizard, stepCount, walkWizard } from "./helpers/wi
 test.describe.configure({ timeout: 240_000 });
 
 async function createCommunity(page: Page, name: string): Promise<string> {
-  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(name);
   await page.getByLabel("Type").selectOption("estate");

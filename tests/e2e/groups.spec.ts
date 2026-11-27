@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 
 /**
  * Groups in a real browser: create one, put people in it, filter the roster by
@@ -24,14 +25,14 @@ async function addMember(page: Page, name: string, phone: string): Promise<void>
 test("create a group, assign members, filter by it, and remove someone", async ({ page }) => {
   await signInAsNewUser(page, "e2e-groups");
 
-  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(`E2E Groups ${Date.now()}`);
   await page.getByLabel("Type").selectOption("fellowship");
   await page.getByRole("button", { name: "Create community" }).click();
   await expect(page).toHaveURL(/\/c\//);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
 
   await addMember(page, "Ada Youth", "+2348071110001");

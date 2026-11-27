@@ -47,6 +47,15 @@ const CONTINUE = { name: "Continue", exact: true } as const;
 /** Opens the wizard from anywhere inside a community. */
 export async function openWizard(page: Page): Promise<void> {
   await sidebarLink(page, "Collections").click();
+  await openWizardFromCollectionsLink(page);
+}
+
+/**
+ * The rest of `openWizard`, once "Collections" has been clicked — for callers
+ * that reach that link another way (the phone-width menu, which renders the
+ * same nav outside the hidden sidebar).
+ */
+export async function openWizardFromCollectionsLink(page: Page): Promise<void> {
   // Wait for the collections page itself: the overview it may start from also
   // offers "New collection" shortcuts, and clicking before the navigation
   // lands would pick one of those instead.

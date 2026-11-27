@@ -1,6 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
 import { openRoll } from "./helpers/collection-detail.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 import { walkWizard } from "./helpers/wizard.ts";
 
 /**
@@ -26,7 +27,7 @@ import { walkWizard } from "./helpers/wizard.ts";
 test.describe.configure({ timeout: 180_000 });
 
 async function createCommunity(page: Page, name: string): Promise<string> {
-  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(name);
   await page.getByLabel("Type").selectOption("fellowship");
@@ -44,7 +45,7 @@ test("an organiser can send a reminder on an already-published collection, twice
 
   // A single member on the roll gives the audience a non-zero size and
   // makes the "Send to N members" copy predictable.
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Add member" }).click();
   const memberDialog = page.getByRole("dialog");
