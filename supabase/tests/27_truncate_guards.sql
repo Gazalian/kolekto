@@ -37,8 +37,11 @@ select set_eq(
      -- M8.3 payment records (20261111100000)
      ('public.payment_limits'), ('public.contribution_intents'), ('public.payment_attempts'),
      ('public.payment_attempt_lines'), ('public.stock_reservations'), ('public.provider_transactions'),
-     ('public.contributions'), ('public.contribution_lines') $$,
-  'exactly the 31 append-only and immutable tables are guarded against TRUNCATE'
+     ('public.contributions'), ('public.contribution_lines'),
+     -- 2026-11-23 membership IDs (20261123100100): a revoked ID's hash must
+     -- survive so the ID is never issued again
+     ('public.membership_ids') $$,
+  'exactly the 32 append-only and immutable tables are guarded against TRUNCATE'
 );
 
 select throws_like($$ truncate public.ledger_accounts cascade $$,                     '%TRUNCATE_REFUSED%', 'ledger_accounts');

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 
 /**
  * Self-onboarding, end to end (§23): an officer builds a link that knows what
@@ -15,7 +16,8 @@ test.describe.configure({ timeout: 180_000 });
 test("invite with preset group and required field, then join as a stranger", async ({ page, browser }) => {
   await signInAsNewUser(page, "e2e-invite");
 
-  await page.getByRole("link", { name: "+ New community" }).click();
+  // "+ New community" before the communities-page redesign, "New community" after it.
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   const communityName = `E2E Invites ${Date.now()}`;
   await page.getByLabel("Community name").fill(communityName);
@@ -23,14 +25,18 @@ test("invite with preset group and required field, then join as a stranger", asy
   await page.getByRole("button", { name: "Create community" }).click();
   await expect(page).toHaveURL(/\/c\//);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
 
   // ── What this community records, and how it divides people ────────────────
-  await page.getByRole("button", { name: "Member profile" }).click();
-  await page.getByLabel("Prefix").fill("MIC/");
-  await page.getByRole("button", { name: "Save ID format" }).click();
+  await page.getByRole("button", { name: "IDs & access" }).click();
+  await page.getByLabel("Member ID prefix", { exact: true }).fill("MIC/");
+  await page.getByRole("button", { name: "Save member ID format" }).click();
   await expect(page.getByText("Member ID format saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Member profile" }).click();
   await page.getByRole("button", { name: "Add field" }).click();
   await page.getByLabel("Label").fill("Matric number");
   await page.getByLabel("This field identifies a member").check();
@@ -97,7 +103,8 @@ test("invite with preset group and required field, then join as a stranger", asy
 test("a joiner chooses their own group, and only the groups the link offers", async ({ page, browser }) => {
   await signInAsNewUser(page, "e2e-invite-groups");
 
-  await page.getByRole("link", { name: "+ New community" }).click();
+  // "+ New community" before the communities-page redesign, "New community" after it.
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   const communityName = `E2E Group Choice ${Date.now()}`;
   await page.getByLabel("Community name").fill(communityName);
@@ -105,7 +112,7 @@ test("a joiner chooses their own group, and only the groups the link offers", as
   await page.getByRole("button", { name: "Create community" }).click();
   await expect(page).toHaveURL(/\/c\//);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
 
   // Three levels a joiner may pick from, and one group they may not: the

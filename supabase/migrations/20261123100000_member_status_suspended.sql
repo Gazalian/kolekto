@@ -1,0 +1,22 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- 20261123100000 — M9a: member_status gains 'suspended' (product doc Part F §F9,
+-- owner decision Q8, 2026-11-22)
+--
+-- A suspended member is still on the roll but is not in good standing: their
+-- membership ID stops validating, and they drop out of collection audiences
+-- (app.resolve_collection_audience lists only active / unclaimed / invited, so
+-- no function needs to change for that). Reinstatement returns them to the
+-- status they had before (M9b).
+--
+-- Alone in its own migration on purpose: a value added by ALTER TYPE … ADD
+-- VALUE cannot be used in the transaction that adds it, and M9b's constraint
+-- and functions use it.
+--
+-- Existing rows: none change. No status is reinterpreted (owner decision Q8).
+-- Financial effect: none.
+--
+-- ROLLBACK: Postgres cannot drop an enum value. If M9b is rolled back the value
+-- stays, unused, which is harmless (no row can hold it without M9b's functions).
+-- ─────────────────────────────────────────────────────────────────────────────
+
+alter type public.member_status add value if not exists 'suspended';

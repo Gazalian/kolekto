@@ -3,7 +3,7 @@
 import type { Community, CommunityNoticeStatus, OfficerInvitation, OfficerRole, OfficerTerm } from "@kolekto/db";
 import { OFFICER_ROLES } from "@kolekto/validation";
 import { Badge, Banner, Button, CheckboxField, Dialog, SelectField, TextField } from "@kolekto/ui";
-import { useState, useTransition } from "react";
+import { type ReactNode, useState, useTransition } from "react";
 import {
   attestCommunityNoticeAction,
   createOfficerInvitationAction,
@@ -35,6 +35,10 @@ interface Props {
   isOwner: boolean;
   /** Owner only: the second-approver section's state; null when not loaded. */
   approvers: ApproverPanelState | null;
+  /** Owner only: the public page switch, shown in the Profile tab. */
+  publicPage: ReactNode;
+  /** Owner only: extra officer permissions, shown in the Team tab. */
+  officerPermissions: ReactNode;
 }
 
 export function SettingsClient(props: Props) {
@@ -148,11 +152,12 @@ function NotificationsTab({
   );
 }
 
-function ProfileTab({ slug, community, canEditProfile }: Props) {
+function ProfileTab({ slug, community, canEditProfile, publicPage }: Props) {
   const [isPending, startTransition] = useTransition();
   const [result, setResult] = useState<{ error?: string; ok?: boolean } | null>(null);
 
   return (
+    <div className="flex flex-col gap-8">
     <form
       className="flex max-w-lg flex-col gap-4"
       action={(formData) =>
@@ -185,10 +190,23 @@ function ProfileTab({ slug, community, canEditProfile }: Props) {
         </Button>
       )}
     </form>
+      {publicPage && <div className="w-full max-w-2xl">{publicPage}</div>}
+    </div>
   );
 }
 
-function TeamTab({ slug, community, officers, invitations, canInviteOfficers, canRemoveOwner, currentUserId, isOwner, approvers }: Props) {
+function TeamTab({
+  slug,
+  community,
+  officers,
+  invitations,
+  canInviteOfficers,
+  canRemoveOwner,
+  currentUserId,
+  isOwner,
+  approvers,
+  officerPermissions,
+}: Props) {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteRole, setInviteRole] = useState<OfficerRole | "">("");
 
@@ -220,6 +238,8 @@ function TeamTab({ slug, community, officers, invitations, canInviteOfficers, ca
           ))}
         </div>
       </section>
+
+      {officerPermissions}
 
       {canInviteOfficers && (
         <section className="flex flex-col gap-3">

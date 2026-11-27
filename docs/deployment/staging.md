@@ -111,5 +111,65 @@ What a staging deployment needs, in order:
 4. A **CI deploy job** for staging only, gated on the existing CI jobs. No
    production deployment configuration until a production project exists.
 
+**Owner decision, 2026-11-26:** staging will be hosted on **Vercel**; production on
+**AWS** (architecture not chosen yet — see [production.md](production.md)). The
+steps above still apply; §3a adds one variable and one verification gate.
+
+### 3a. Client IP for the membership-ID rate limit (Vercel)
+
+`app.validate_membership_id` limits attempts per caller (10 failures / 30 attempts
+per 15 minutes per IP hash) and per collection/community (shared backstops that
+lock every member out). The web server decides "per caller" in one place,
+`apps/web/lib/client-ip.ts`, from the source named by **`KOLEKTO_CLIENT_IP_SOURCE`**.
+
+**Set on Vercel (Production and Preview environments of the staging project):**
+
+```
+KOLEKTO_ENV=staging
+KOLEKTO_CLIENT_IP_SOURCE=vercel
+```
+
+**Why that header.** Vercel documents `x-forwarded-for`, `x-real-ip` and
+`x-vercel-forwarded-for` as the client's public IP, and says it overwrites
+`X-Forwarded-For` and does not forward external IPs "to prevent IP spoofing"
+(vercel.com/docs/headers/request-headers). `x-vercel-forwarded-for` is the one a
+proxy placed in front of Vercel cannot overwrite. `vercel` mode reads only that
+header and accepts exactly one address; it never looks at `X-Forwarded-For` or
+`X-Real-IP`.
+
+**What Vercel does not document**, and is therefore checked below, not assumed:
+that a client-sent value is replaced when no proxy is in front, that the value is
+never a list, and that no URL reaches the function without passing the edge.
+
+**Behaviour.**
+
+| Situation | Result |
+|---|---|
+| `x-vercel-forwarded-for` holds one valid IPv4/IPv6 address | rate limit keyed on it (IPv6 by its /64) |
+| A forged `X-Forwarded-For` / `X-Real-IP` is sent | ignored |
+| `x-vercel-forwarded-for` missing, empty, a list, malformed or oversized | **fails closed**: "Membership ID checks are temporarily unavailable…", no database call, log line `client_ip.unresolved` with a reason code |
+| `KOLEKTO_CLIENT_IP_SOURCE` unset, invalid, or `local` | **fails closed** the same way, reason `config_missing_or_invalid` |
+
+No log line contains an IP address, a header value, a membership ID or a token.
+
+**Verification gate — after the FIRST staging deploy, before anyone relies on it.**
+Use a real but harmless collection on staging and wrong IDs only.
+
+1. From one machine, send three membership-ID attempts through the normal page,
+   each with different forged headers, for example with a browser extension or a
+   proxy tool: `X-Forwarded-For: 1.1.1.1` / `X-Real-IP: 2.2.2.2` /
+   `X-Vercel-Forwarded-For: 3.3.3.3`, then `9.9.9.9, 8.8.8.8` / `7.7.7.7` /
+   `6.6.6.6`, then none.
+2. In the staging database (read-only), the attempts of the last few minutes
+   for that collection must share **one** hash:
+   `select count(distinct ip_hash), count(*) from public.membership_validation_attempts where collection_id = '<id>' and attempted_at > now() - interval '10 minutes';`
+   Expected: `1 | 3`. (Only hashes are stored; no IP is visible or needed.)
+3. Repeat from a second network (e.g. a phone hotspot): a **different** hash.
+4. Check the Vercel logs for `client_ip.unresolved`: none expected.
+
+**If any step fails or is inconclusive** (two hashes from one machine, a forged
+value accepted, attempts failing as unavailable): stop, record it, and do not
+switch to another header or weaken the resolver. Report it for a decision.
+
 **Paystack stays unconnected** after all four. The webhook URL staging will
 provide is one prerequisite of M8.9, not all of them.

@@ -1,51 +1,37 @@
 "use client";
 
-import type { CommunityMemberCodeSettings, MemberAttributeDefinition } from "@kolekto/db";
+import type { MemberAttributeDefinition } from "@kolekto/db";
 import { Banner, Button, CheckboxField, Dialog, SelectField, TextField } from "@kolekto/ui";
 import { parseFieldOptions } from "@kolekto/validation";
 import { Trash2 } from "lucide-react";
 import { useState, useTransition } from "react";
-import { deleteMemberFieldAction, saveMemberCodeSettingsAction, saveMemberFieldAction } from "./actions.ts";
+import { deleteMemberFieldAction, saveMemberFieldAction } from "./actions.ts";
 
 /**
- * How this community identifies its own members (§1–§6).
+ * What this community records about its members (§1–§6): what it already
+ * calls them — a matric number, a house number — plus anything else it needs
+ * to record. One field can be marked as the one that identifies a person, and
+ * that one has to be unique.
  *
- * Two separate things, and the panel keeps them separate because they answer
- * different questions:
- *
- *   Member ID    what Kolekto calls this person — KWASU/0021. Issued by the
- *                database, one per member, never reused.
- *   Member fields what the community already calls them — a matric number, a
- *                house number, a membership number — plus anything else it
- *                needs to record. One of them can be marked as the field that
- *                identifies a person, and that one has to be unique.
+ * Kolekto's own Member ID format (KWASU/0021) lives with the private
+ * membership ID in "IDs & access" (MemberIdsPanel.tsx).
  */
 export function MemberProfileConfig({
   slug,
   communityId,
   definitions,
-  codeSettings,
-  memberCount,
   fieldValueCounts,
   onClose,
 }: {
   slug: string;
   communityId: string;
   definitions: MemberAttributeDefinition[];
-  codeSettings: CommunityMemberCodeSettings | null;
-  memberCount: number;
   fieldValueCounts: Record<string, number>;
   onClose: () => void;
 }) {
-  const [prefix, setPrefix] = useState(codeSettings?.prefix ?? "");
-  const [padding, setPadding] = useState(String(codeSettings?.padding ?? 4));
   const [message, setMessage] = useState<{ tone: "success" | "danger"; text: string } | null>(null);
   const [editing, setEditing] = useState<MemberAttributeDefinition | "new" | null>(null);
   const [deleting, setDeleting] = useState<MemberAttributeDefinition | null>(null);
-  const [isPending, startTransition] = useTransition();
-
-  const nextNumber = codeSettings?.next_number ?? 1;
-  const preview = `${prefix}${String(nextNumber).padStart(Number(padding) || 4, "0")}`;
 
   // One dialog at a time rather than a dialog inside a dialog: the Dialog
   // component gives its title a fixed element id, so two open at once would put
@@ -85,60 +71,9 @@ export function MemberProfileConfig({
   }
 
   return (
-    <Dialog open onClose={onClose} title="Member profile" description="How this community identifies its members.">
+    <Dialog open onClose={onClose} title="Member profile" description="What this community records about each member.">
       <div className="flex flex-col gap-6">
         {message && <Banner tone={message.tone}>{message.text}</Banner>}
-
-        <section className="flex flex-col gap-3">
-          <div>
-            <h3 className="text-sm font-semibold text-[var(--color-text)]">Member ID format</h3>
-            <p className="text-xs text-[var(--color-text-muted)]">
-              Every member gets one automatically. Changing the format affects IDs issued from now on — the{" "}
-              {memberCount} already issued keep theirs.
-            </p>
-          </div>
-
-          <div className="grid gap-3 sm:grid-cols-2">
-            <TextField
-              label="Prefix"
-              placeholder="KWASU/"
-              value={prefix}
-              onChange={(event) => setPrefix(event.target.value)}
-            />
-            <TextField
-              label="Digits"
-              inputMode="numeric"
-              value={padding}
-              onChange={(event) => setPadding(event.target.value)}
-            />
-          </div>
-
-          <p className="text-sm text-[var(--color-text-muted)]">
-            Next member will be <span className="font-mono text-[var(--color-text)]">{preview}</span>
-          </p>
-
-          <Button
-            variant="secondary"
-            size="sm"
-            loading={isPending}
-            onClick={() =>
-              startTransition(async () => {
-                const result = await saveMemberCodeSettingsAction(slug, {
-                  communityId,
-                  prefix,
-                  padding: Number(padding) || 4,
-                });
-                setMessage(
-                  result.error
-                    ? { tone: "danger", text: result.error }
-                    : { tone: "success", text: "Member ID format saved." },
-                );
-              })
-            }
-          >
-            Save ID format
-          </Button>
-        </section>
 
         <section className="flex flex-col gap-3">
           <div className="flex items-center justify-between gap-3">
@@ -191,7 +126,6 @@ export function MemberProfileConfig({
                     </button>
                     <button
                       type="button"
-                      disabled={isPending}
                       className="text-xs font-medium text-[var(--color-danger)] hover:underline"
                       onClick={() => setDeleting(definition)}
                     >

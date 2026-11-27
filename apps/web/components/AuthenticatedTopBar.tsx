@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { NotificationBell } from "./NotificationBell.tsx";
 import { NotificationProvider } from "./NotificationProvider.tsx";
+import { UserMenu } from "./UserMenu.tsx";
 
 /**
  * Top bar for authenticated pages that live OUTSIDE a community workspace
@@ -17,17 +18,28 @@ import { NotificationProvider } from "./NotificationProvider.tsx";
  * provider, which keeps the shell consistent with how `AppShell` already
  * mounts its provider per community page.
  */
-export function AuthenticatedTopBar() {
+export function AuthenticatedTopBar({
+  userName,
+  email,
+  avatarUrl,
+}: {
+  userName?: string;
+  email?: string | null;
+  avatarUrl?: string | null;
+}) {
   return (
     <NotificationProvider>
-      <header className="flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-3 sm:px-6">
+      <header className="sticky top-0 z-20 flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)] px-4 py-2.5 sm:px-6">
         <Link
           href="/communities"
-          className="text-sm font-semibold text-[var(--color-text)] hover:underline focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
+          className="text-base font-semibold tracking-tight text-[var(--color-primary)] hover:underline focus-visible:shadow-[var(--focus-ring)] focus-visible:outline-none"
         >
           Kolekto
         </Link>
-        <NotificationBell />
+        <div className="flex items-center gap-2">
+          <NotificationBell />
+          {userName && <UserMenu userName={userName} email={email ?? null} avatarUrl={avatarUrl ?? null} />}
+        </div>
       </header>
     </NotificationProvider>
   );

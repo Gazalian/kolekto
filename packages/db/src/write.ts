@@ -1276,6 +1276,25 @@ export async function updateUserProfile(
   );
 }
 
+/** D-J: owner-only publish switch for the public page at /[slug], and whether contact details show on it. */
+export async function setCommunityPublicPage(
+  caller: CallerContext,
+  input: { communityId: string; published: boolean; contactVisible: boolean },
+): Promise<void> {
+  await call(caller, (tx) =>
+    tx`select app.set_community_public_page(${input.communityId}, ${input.published}, ${input.contactVisible})`,
+  );
+}
+
+/**
+ * D-F: points the caller's profile photo at an uploaded object (or clears it
+ * with null). Returns the previous URL so the caller can delete that object.
+ */
+export async function setMyAvatar(caller: CallerContext, avatarUrl: string | null): Promise<string | null> {
+  const rows = await call(caller, (tx) => tx<{ previous: string | null }[]>`select app.set_my_avatar(${avatarUrl}) as previous`);
+  return rows[0]?.previous ?? null;
+}
+
 /** M7.6 part A4: remembers how far through the wizard a draft got, so reopening it lands where the organiser left off. */
 export async function setCollectionDraftStep(
   caller: CallerContext,

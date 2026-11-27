@@ -10,6 +10,7 @@ import {
   type SeededFlow,
   seedPaymentFlow,
 } from "./helpers/payments.ts";
+import { identifyWithMembershipId } from "./helpers/membership-id.ts";
 
 /**
  * M8.5 acceptance: every collection flow can be paid end to end in a browser,
@@ -33,14 +34,12 @@ import {
 
 const CONTRIBUTOR = { name: "Ngozi Payer", email: "ngozi.payer@example.test", phone: "+2348011113333" };
 
-type Order = (page: Page) => Promise<void>;
+type Order = (page: Page, seeded: SeededFlow) => Promise<void>;
 
-/** A managed collection asks who is paying before it shows the form. */
-const identifyAsAda: Order = async (page) => {
-  await page.getByLabel(/Your member ID, identifier, phone or name/).fill("Ada Payer");
-  await page.getByRole("button", { name: "Find me" }).click();
-  await page.getByRole("button", { name: "Yes, this is me" }).click();
-  await expect(page.getByText("Contributing as")).toBeVisible();
+/** A managed collection asks who is paying, by membership ID, before it shows the form. */
+const identifyAsAda: Order = async (page, seeded) => {
+  if (!seeded.membershipId) throw new Error("a managed flow was seeded without a membership ID");
+  await identifyWithMembershipId(page, seeded.membershipId);
 };
 
 const giveAmount =
@@ -93,7 +92,7 @@ async function orderAndOpenCheckout(browser: Browser, name: FlowName): Promise<A
 
   await page.goto(seeded.path);
   await page.waitForLoadState("networkidle");
-  await ORDER[name](page);
+  await ORDER[name](page, seeded);
   await page.getByLabel("Full name").fill(CONTRIBUTOR.name);
   await page.getByLabel("Email address").fill(CONTRIBUTOR.email);
   await page.getByLabel("Phone number").fill(CONTRIBUTOR.phone);
@@ -128,6 +127,11 @@ async function orderAndOpenCheckout(browser: Browser, name: FlowName): Promise<A
 
   return { page, seeded, review, reference, close: () => context.close() };
 }
+
+// A managed flow now identifies by membership ID first (validate, summary,
+// confirm: three more round trips). On the 4-CPU itest machine the fixed flow
+// reached the fake checkout page with the 60s default and ran out there.
+test.describe.configure({ timeout: 120_000 });
 
 for (const name of FLOW_NAMES) {
   test(`${name}: a signed-out contributor pays through the fake checkout, and exactly one contribution is recorded`, async ({

@@ -1,5 +1,7 @@
 import {
   getCommunityNoticeStatus,
+  listDelegablePermissions,
+  listOfficerPermissionGrants,
   listWithdrawalApproverCandidates,
   listWithdrawalApproverHistory,
   type Community,
@@ -8,10 +10,13 @@ import {
   type OfficerTerm,
 } from "@kolekto/db";
 import { notFound } from "next/navigation";
+import type { ReactNode } from "react";
 import { requireCallerContext } from "../../../../lib/caller.ts";
 import { getCommunityAccess, hasPermission } from "../../../../lib/permissions.ts";
 import { createClient } from "../../../../lib/supabase/server.ts";
 import { approverPanelState, type ApproverPanelState } from "./approver-view.ts";
+import { OfficerPermissionsCard, type DelegableOption, type GrantRow } from "./OfficerPermissionsCard.tsx";
+import { PublicPageControl } from "./PublicPageControl.tsx";
 import { SettingsClient } from "./SettingsClient.tsx";
 
 export const metadata = { title: "Settings" };
@@ -70,6 +75,34 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
     }
   }
 
+  // Delegated permissions (Part F; M9b), shown in the Team tab only to those who
+  // can act on them; every SQL function re-checks permission. Membership IDs
+  // live on the Members page ("IDs & access").
+  const canDelegate = hasPermission(access, "officer.delegate");
+  let permissionsCard: ReactNode = null;
+  if (!c.is_personal && canDelegate) {
+    const caller = await requireCallerContext();
+    const [delegable, grants] = await Promise.all([
+      listDelegablePermissions(caller).catch((): DelegableOption[] => []),
+      listOfficerPermissionGrants(caller, c.id).catch((): GrantRow[] => []),
+    ]);
+    const delegates = ((officers ?? []) as OfficerTermWithUser[])
+      .filter((o) => o.role !== "owner")
+      .map((o) => ({ termId: o.id, name: o.users?.full_name ?? "Officer", role: o.role }));
+    permissionsCard = <OfficerPermissionsCard slug={slug} officers={delegates} delegable={delegable} grants={grants} />;
+  }
+
+  const publicPage =
+    isOwner && !c.is_personal ? (
+      <PublicPageControl
+        slug={slug}
+        communityId={c.id}
+        published={c.public_page_published_at !== null}
+        contactVisible={c.public_contact_visible}
+        verified={c.verification_status === "verified"}
+      />
+    ) : null;
+
   return (
     <SettingsClient
       slug={slug}
@@ -84,6 +117,8 @@ export default async function SettingsPage({ params }: { params: Promise<{ slug:
       currentUserId={currentUserId}
       isOwner={isOwner}
       approvers={approvers}
+      publicPage={publicPage}
+      officerPermissions={permissionsCard}
     />
   );
 }

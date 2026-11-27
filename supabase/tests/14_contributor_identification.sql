@@ -104,6 +104,11 @@ insert into public.obligations (id, community_id, collection_id, member_id, expe
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Everything below runs as an unauthenticated stranger.
 -- ─────────────────────────────────────────────────────────────────────────────
+-- 2026-11-23 (20261123130000, owner decision D4): anon no longer holds EXECUTE
+-- on app.find_collection_member (asserted in 02 and 77). The function stays for
+-- internal use, so its matching rules are still tested here: the grant is
+-- restored inside this test's transaction only, and rolled back with it.
+grant execute on function app.find_collection_member(uuid, text) to anon;
 set local role anon;
 
 -- ── Finding yourself ─────────────────────────────────────────────────────────

@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
 import { futureEventStart, openPeopleView, openRoll } from "./helpers/collection-detail.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 import { expectPaymentReview } from "./helpers/payments.ts";
 import { chooseFeeBearer, configureReferences, fillTier, openWizard, walkWizard } from "./helpers/wizard.ts";
 
@@ -26,7 +27,7 @@ import { chooseFeeBearer, configureReferences, fillTier, openWizard, walkWizard 
 test.describe.configure({ timeout: 240_000 });
 
 async function createCommunity(page: Page, name: string): Promise<string> {
-  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(name);
   await page.getByLabel("Type").selectOption("fellowship");
@@ -311,7 +312,7 @@ test("a recurring charge owes per period, and no period opens by itself", async 
   await signInAsNewUser(page, "e2e-types");
   await createCommunity(page, `E2E Recurring ${Date.now()}`);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Add member" }).click();
   const memberDialog = page.getByRole("dialog");
@@ -880,7 +881,7 @@ test("an event's door: find a guest, check them in, check them out", async ({ pa
   // A guest list is what a door can check (M7.5 part E): no purchase is
   // recorded anywhere in this phase, so the people who can be admitted are
   // the members an officer put on the collection.
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Add member" }).click();
   const dialog = page.getByRole("dialog");
@@ -937,7 +938,7 @@ test("a ticketed event has a door, and it opens and closes", async ({ page }) =>
   await signInAsNewUser(page, "e2e-door");
   await createCommunity(page, `E2E Gala ${Date.now()}`);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Add member" }).click();
   const dialog = page.getByRole("dialog");

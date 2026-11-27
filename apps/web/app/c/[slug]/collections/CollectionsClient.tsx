@@ -55,12 +55,17 @@ export function CollectionsClient({
   slug,
   collections,
   canCreate,
+  initialFilter,
 }: {
   slug: string;
   collections: Collection[];
   canCreate: boolean;
+  /** From `?filter=` (the overview's "Live now" link); anything unknown falls back to All. */
+  initialFilter?: string | undefined;
 }) {
-  const [filter, setFilter] = useState<FilterKey>("all");
+  const [filter, setFilter] = useState<FilterKey>(
+    FILTERS.find((f) => f.key === initialFilter)?.key ?? "all",
+  );
   const [query, setQuery] = useState("");
 
   const visible = useMemo(() => {

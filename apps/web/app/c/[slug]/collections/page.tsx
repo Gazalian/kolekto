@@ -6,8 +6,15 @@ import { CollectionsClient } from "./CollectionsClient.tsx";
 
 export const metadata = { title: "Collections" };
 
-export default async function CollectionsPage({ params }: { params: Promise<{ slug: string }> }) {
+export default async function CollectionsPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ slug: string }>;
+  searchParams: Promise<{ filter?: string | string[] }>;
+}) {
   const { slug } = await params;
+  const { filter } = await searchParams;
   const supabase = await createClient();
 
   const { data: community } = await supabase.from("communities").select("*").eq("slug", slug).maybeSingle();
@@ -29,6 +36,7 @@ export default async function CollectionsPage({ params }: { params: Promise<{ sl
       slug={slug}
       collections={(collections ?? []) as Collection[]}
       canCreate={hasPermission(access, "collection.draft")}
+      initialFilter={typeof filter === "string" ? filter : undefined}
     />
   );
 }

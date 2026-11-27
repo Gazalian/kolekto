@@ -265,7 +265,14 @@ export function SettingsPanel({
           >
             <option value="unlisted">Link only</option>
             <option value="public">Listed publicly</option>
-            <option value="members_only">Members only</option>
+            {/* Members-only is not available yet (product doc F1.8 / Phase 2a): no public page or payment
+                path serves it, so choosing it made the collection a 404. Shown only so a collection that
+                already carries the value displays it; it cannot be newly chosen. */}
+            {collection.visibility === "members_only" ? (
+              <option value="members_only" disabled>
+                Members only (not available yet)
+              </option>
+            ) : null}
           </SelectField>
 
           <TextAreaField

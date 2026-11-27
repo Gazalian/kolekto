@@ -374,6 +374,18 @@ async function ruleAppFunctionsStateTheirReachability() {
 
       const decidedHere = /(?:revoke|grant)\s+execute\s+on\s+function\s+app\.([a-z0-9_]+)/i.exec(text);
       if (decidedHere?.[1]) decided.add(decidedHere[1].toLowerCase());
+
+      // `revoke all` includes EXECUTE, so it states the decision too — but only
+      // when it names PUBLIC and both API roles on the same line. A bare
+      // `revoke all ... from public` does not: anon and authenticated may hold
+      // their own grants, and revoking from them alone leaves PUBLIC's.
+      const revokedAllHere = /revoke\s+all(?:\s+privileges)?\s+on\s+function\s+app\.([a-z0-9_]+)\b.*\bfrom\b(.*)$/i.exec(text);
+      if (
+        revokedAllHere?.[1] &&
+        ["public", "anon", "authenticated"].every((role) => new RegExp(`\\b${role}\\b`, "i").test(revokedAllHere[2]))
+      ) {
+        decided.add(revokedAllHere[1].toLowerCase());
+      }
     });
   }
 

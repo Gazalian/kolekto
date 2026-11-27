@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 
 /**
  * The golden path: sign up with password, complete onboarding (which creates
@@ -14,7 +15,7 @@ test("sign up with password, complete onboarding, and add a member", async ({ pa
   // onboarding-created community should be visible.
   await expect(page).toHaveURL(/\/communities/);
 
-  await page.getByRole("link", { name: "+ New community" }).click();
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   const communityName = `E2E Test Fellowship ${Date.now()}`;
   await page.getByLabel("Community name").fill(communityName);
@@ -25,7 +26,7 @@ test("sign up with password, complete onboarding, and add a member", async ({ pa
   await page.waitForLoadState("networkidle");
   await expect(page.getByRole("heading", { name: communityName })).toBeVisible();
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Add member" }).click();
   const dialog = page.getByRole("dialog");

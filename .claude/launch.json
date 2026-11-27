@@ -14,6 +14,18 @@
       "port": 3000
     },
     {
+      "name": "kolekto-web-itest",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set /p KOLEKTO_MEMBERSHIP_ID_SECRET=<.claude\\itest-membership-secret.local&& set NEXT_DIST_DIR=.next-itest&&set NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55421&& set SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:55422/postgres&& set PAYSTACK_SECRET_KEY=&& set PAYSTACK_WEBHOOK_SECRET=&& set EMAIL_PROVIDER=&& set EMAIL_API_KEY=&& set KOLEKTO_PRODUCTION_PROJECT_REF=&& set KOLEKTO_LOCAL_PAYMENT_PROVIDER=fake&& npm run dev --workspace=apps/web -- -p 3002"],
+      "port": 3002
+    },
+    {
+      "name": "kolekto-web-e2e-itest",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": ["/c", "set /p KOLEKTO_MEMBERSHIP_ID_SECRET=<.claude\\itest-membership-secret.local&& set NEXT_DIST_DIR=.next-e2e&&set NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:55421&& set SUPABASE_DB_URL=postgresql://postgres:postgres@127.0.0.1:55422/postgres&& set PAYSTACK_SECRET_KEY=&& set PAYSTACK_WEBHOOK_SECRET=&& set EMAIL_PROVIDER=&& set EMAIL_API_KEY=&& set KOLEKTO_PRODUCTION_PROJECT_REF=&& set KOLEKTO_LOCAL_PAYMENT_PROVIDER=fake&& npm run start --workspace=apps/web -- -p 3010"],
+      "port": 3010
+    },
+    {
       "name": "kolekto-web-qa",
       "runtimeExecutable": "cmd",
       "runtimeArgs": ["/c", "set NEXT_DIST_DIR=.next-qa&& npm run dev --workspace=apps/web -- -p 3001"],

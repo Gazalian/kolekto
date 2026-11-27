@@ -314,6 +314,100 @@ export function loadWithdrawalOtpSecret(): string {
   return secret;
 }
 
+/**
+ * The membership server key (product doc §F4.5). Since owner decision A1
+ * (2026-11-23, migration 20261123120000) membership IDs are stored as
+ * plaintext and this key no longer protects them. It is used for two things:
+ * the keyed hash of a caller's IP for rate limiting, and the legacy
+ * fingerprint check that keeps two unrecoverable revoked itest IDs reserved
+ * (owner decision D1). Never in the database, never in the browser, never
+ * given to the admin application.
+ */
+export function loadMembershipIdSecret(): string {
+  if (typeof window !== "undefined") {
+    throw new ConfigError(
+      "loadMembershipIdSecret() was called in a browser context. The membership ID key must never reach the " +
+        "client. This is a bug, not a configuration problem.",
+    );
+  }
+  const secret = required("KOLEKTO_MEMBERSHIP_ID_SECRET");
+  if (secret.length < 32) {
+    throw new ConfigError(
+      "KOLEKTO_MEMBERSHIP_ID_SECRET is shorter than 32 characters. Generate one with: " +
+        "node -e \"console.log(require('crypto').randomBytes(32).toString('base64url'))\"",
+    );
+  }
+  return secret;
+}
+
+/**
+ * Where the web server may read the caller's IP address from, for the
+ * membership-ID rate limit (Phase 2 of the session 67 security task).
+ *
+ * A request header is something the caller can write. It is evidence of the
+ * caller's address only when infrastructure we control set it and nothing in
+ * front of that infrastructure can reach the app. So the trusted source is
+ * named per deployment, never guessed:
+ *
+ *   local         KOLEKTO_ENV=local only (and the default there). The
+ *                 rightmost X-Forwarded-For entry, which `next start`/`next dev`
+ *                 fill from the socket when the request has none. Spoofable,
+ *                 and that is acceptable on a developer's own machine only.
+ *   vercel        Vercel's `x-vercel-forwarded-for`, exactly one address.
+ *                 Staging. Verify on the first deploy (docs/deployment/staging.md).
+ *   xff-hops:N    N (1–3) trusted proxies that each APPEND to X-Forwarded-For;
+ *                 the client is the Nth entry from the right. Safe only when the
+ *                 app cannot be reached except through those proxies
+ *                 (docs/deployment/production.md). AWS production: PENDING.
+ *
+ * Staging and production have no default: unset or unrecognised is a
+ * ConfigError, which the caller turns into "temporarily unavailable" — never
+ * into a guess. The raw value is not echoed back.
+ */
+export type ClientIpSource =
+  | { readonly mode: "local" }
+  | { readonly mode: "vercel" }
+  | { readonly mode: "xff-hops"; readonly hops: 1 | 2 | 3 };
+
+const CLIENT_IP_SOURCE_VAR = "KOLEKTO_CLIENT_IP_SOURCE";
+const CLIENT_IP_SOURCE_VALUES = "local (KOLEKTO_ENV=local only), vercel, xff-hops:1, xff-hops:2, xff-hops:3";
+
+/** Pure parser behind `loadClientIpSource`, so each environment can be tested without touching process.env. */
+export function parseClientIpSource(raw: string | undefined, environment: KolektoEnvironment): ClientIpSource {
+  const value = raw?.trim() ?? "";
+  if (value === "") {
+    if (environment === "local") return { mode: "local" };
+    throw new ConfigError(
+      `${CLIENT_IP_SOURCE_VAR} is not set. It is required when KOLEKTO_ENV is "${environment}", because the ` +
+        `membership-ID rate limit must know which proxy header to trust. Allowed: ${CLIENT_IP_SOURCE_VALUES}. ` +
+        `See docs/deployment/staging.md and docs/deployment/production.md.`,
+    );
+  }
+  if (value === "local") {
+    if (environment === "local") return { mode: "local" };
+    throw new ConfigError(
+      `${CLIENT_IP_SOURCE_VAR}=local is allowed only when KOLEKTO_ENV is "local" (it trusts a header any caller ` +
+        `can send). KOLEKTO_ENV is "${environment}".`,
+    );
+  }
+  if (value === "vercel") return { mode: "vercel" };
+  const hops = /^xff-hops:([1-3])$/.exec(value)?.[1];
+  if (hops) return { mode: "xff-hops", hops: Number(hops) as 1 | 2 | 3 };
+  throw new ConfigError(`${CLIENT_IP_SOURCE_VAR} has an unsupported value. Allowed: ${CLIENT_IP_SOURCE_VALUES}.`);
+}
+
+/** The configured client-IP source. Throws ConfigError when it is missing, invalid, or local-only outside local. */
+export function loadClientIpSource(): ClientIpSource {
+  if (typeof window !== "undefined") {
+    throw new ConfigError(
+      "loadClientIpSource() was called in a browser context. Client-IP resolution is server-only. This is a bug, " +
+        "not a configuration problem.",
+    );
+  }
+  const environment = parseEnvironment(required("KOLEKTO_ENV"));
+  return parseClientIpSource(process.env[CLIENT_IP_SOURCE_VAR], environment);
+}
+
 /** Reset the cache. Tests only. */
 export function resetConfigCache(): void {
   cached = undefined;

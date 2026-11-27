@@ -85,7 +85,15 @@ select is_empty(
       -- asserts they stay that way.
       and c.relname not in (
         'community_communication_attestations',
-        'member_communication_choices'
+        'member_communication_choices',
+        -- 2026-11-23 membership foundation (20261123100100): RLS forced, no
+        -- client grant, reachable only through app.* functions that check
+        -- permission (75_membership_ids.sql, 76_membership_access.sql).
+        'officer_permission_grants',
+        'community_membership_id_settings',
+        'membership_ids',
+        'membership_validation_attempts',
+        'membership_access_grants'
       )
     order by c.relname
   $$,

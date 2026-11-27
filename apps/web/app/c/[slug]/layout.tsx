@@ -23,7 +23,13 @@ export default async function CommunityLayout({ children, params }: { children: 
   if (!access) notFound();
 
   return (
-    <AppShell community={community as Community} role={access.role} userName={user.full_name}>
+    <AppShell
+      community={community as Community}
+      role={access.role}
+      userName={user.full_name}
+      userAvatarUrl={user.avatar_url}
+      permissions={[...access.permissions]}
+    >
       {children}
     </AppShell>
   );

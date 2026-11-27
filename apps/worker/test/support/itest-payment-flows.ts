@@ -13,6 +13,8 @@
  * exactly what it receives in production.
  */
 
+import { randomBytes } from "node:crypto";
+
 import { kobo, type FeeBearer, type ResolvedContribution } from "@kolekto/domain";
 
 import type { ItestTx as Tx } from "./itest-db.ts";
@@ -200,3 +202,36 @@ export async function seedFlow(tx: Tx, ids: FlowIds, c: PaymentCommunity, name: 
     }
   }
 }
+
+/**
+ * M10: a live membership pass for `memberId` on `collectionId`, written the way
+ * app.validate_membership_id writes one (a live membership ID, then a
+ * 30-minute grant holding only the token's SHA-256), inside the caller's
+ * rolled-back transaction. Returns the raw token for `startCheckout`'s
+ * `accessToken`; it is never logged or printed. Reuses the member's live
+ * membership ID when one exists (the e2e helpers seed their own).
+ */
+export async function issueMembershipPass(tx: Tx, collectionId: string, memberId: string): Promise<string> {
+  const token = randomBytes(32).toString("hex");
+  const live = await tx<{ id: string }[]>`
+    select id from public.membership_ids where member_id = ${memberId} and revoked_at is null`;
+  let membershipIdId = live[0]?.id;
+  if (!membershipIdId) {
+    // Five characters from the ID alphabet, starting with a letter, as the database requires.
+    const suffix = "X" + [...randomBytes(4)].map((b) => ID_ALPHABET[b % ID_ALPHABET.length]).join("");
+    const membershipId = `ITS/${suffix}`;
+    const inserted = await tx<{ id: string }[]>`
+      insert into public.membership_ids (community_id, member_id, membership_id, canonical_id, prefix, separator, last2)
+      select m.community_id, m.id, ${membershipId}, app.canonical_membership_id(${membershipId}), 'ITS', '/', ${membershipId.slice(-2)}
+      from public.members m where m.id = ${memberId}
+      returning id`;
+    membershipIdId = inserted[0]!.id;
+  }
+  await tx`
+    insert into public.membership_access_grants (token_hash, membership_id_id, member_id, collection_id, community_id, expires_at)
+    select extensions.digest(${token}, 'sha256'), ${membershipIdId}, m.id, ${collectionId}, m.community_id, now() + interval '30 minutes'
+    from public.members m where m.id = ${memberId}`;
+  return token;
+}
+
+const ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";

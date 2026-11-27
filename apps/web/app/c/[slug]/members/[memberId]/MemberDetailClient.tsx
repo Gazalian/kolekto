@@ -12,6 +12,7 @@ import {
   setMemberGroupsAction,
   updateMemberAction,
 } from "../actions.ts";
+import { MembershipPanel, type MembershipIdView } from "./MembershipPanel.tsx";
 
 /**
  * One member, as the community actually thinks about them (§20, §41).
@@ -40,6 +41,7 @@ export function MemberDetailClient({
   canEdit,
   canArchive,
   canManageGroups,
+  membership,
 }: {
   slug: string;
   member: Member;
@@ -50,6 +52,8 @@ export function MemberDetailClient({
   canEdit: boolean;
   canArchive: boolean;
   canManageGroups: boolean;
+  /** Null when the caller may neither see nor manage membership IDs or standing. */
+  membership: { membershipId: MembershipIdView | null; idsEnabled: boolean; canIssue: boolean; canSuspend: boolean } | null;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
@@ -72,7 +76,11 @@ export function MemberDetailClient({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-3">
             <h1 className="text-xl font-semibold text-[var(--color-text)]">{member.full_name}</h1>
-            <Badge tone={isArchived ? "neutral" : member.status === "active" ? "success" : "info"}>
+            <Badge
+              tone={
+                isArchived ? "neutral" : member.status === "active" ? "success" : member.status === "suspended" ? "warning" : "info"
+              }
+            >
               {member.status.replace("_", " ")}
             </Badge>
           </div>
@@ -144,6 +152,19 @@ export function MemberDetailClient({
           </CardBody>
         </Card>
       </div>
+
+      {membership && !isArchived && (
+        <MembershipPanel
+          slug={slug}
+          memberId={member.id}
+          memberName={member.full_name}
+          status={member.status}
+          membershipId={membership.membershipId}
+          idsEnabled={membership.idsEnabled}
+          canIssue={membership.canIssue}
+          canSuspend={membership.canSuspend}
+        />
+      )}
 
       {others.length > 0 && (
         <Card>

@@ -30,7 +30,14 @@ export type CommunityType =
   | "other";
 export type CommunityStatus = "active" | "restricted" | "suspended" | "archived";
 export type VerificationStatus = "unverified" | "pending" | "verified" | "rejected" | "expired";
-export type MemberStatus = "pending_approval" | "unclaimed" | "invited" | "active" | "archived" | "merged";
+export type MemberStatus =
+  | "pending_approval"
+  | "unclaimed"
+  | "invited"
+  | "active"
+  | "suspended"
+  | "archived"
+  | "merged";
 export type MemberJoinedVia = "invite_link" | "import" | "manual" | "payment" | "migration";
 export type InviteStatus = "active" | "expired" | "exhausted" | "revoked";
 export type OfficerInvitationStatus = "sent" | "accepted" | "declined" | "expired" | "revoked";
@@ -62,7 +69,11 @@ export interface Community {
   contact_email: string | null;
   contact_phone_e164: string | null;
   verification_status: VerificationStatus;
+  verified_at: string | null;
   show_officers_publicly: boolean;
+  /** 20261122140000: null = public page not published. */
+  public_page_published_at: string | null;
+  public_contact_visible: boolean;
   created_by: string;
   created_at: string;
   updated_at: string;

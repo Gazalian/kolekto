@@ -132,7 +132,7 @@ test.describe("onboarding paths", () => {
     await expect(page.getByText("My Workspace").first()).toBeVisible();
 
     // Can create a new community later
-    await page.getByRole("link", { name: "+ New community" }).click();
+    await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
     await page.waitForLoadState("networkidle");
     await expect(page.getByRole("heading", { name: "Create a community" })).toBeVisible();
   });

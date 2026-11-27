@@ -79,6 +79,9 @@ export interface ActionResult {
   savedIds?: string[];
 }
 
+const MEMBERS_ONLY_UNAVAILABLE =
+  "Members-only collections are not available yet. Choose “Link only” or “Listed publicly”.";
+
 function messageFrom(error: unknown, fallback: string): string {
   return error instanceof DatabaseError ? error.message : fallback;
 }
@@ -122,6 +125,10 @@ export async function createCollectionAction(
 
   const caller = await requireCallerContext();
   const data = parsed.data;
+
+  // Members-only is not available yet (product doc F1.8): nothing can serve or
+  // take payment for it. Refused here, not only hidden in the form.
+  if (data.visibility === "members_only") return { error: MEMBERS_ONLY_UNAVAILABLE };
 
   try {
     const collectionId = await createCollection(caller, {
@@ -179,6 +186,18 @@ export async function updateCollectionAction(
 
   const caller = await requireCallerContext();
   const data = parsed.data;
+
+  // A collection that already carries members_only may keep it; nothing may
+  // newly choose it until the members-only journey exists (product doc F1.8).
+  if (data.visibility === "members_only") {
+    const supabase = await createClient();
+    const { data: current } = await supabase
+      .from("collections")
+      .select("visibility")
+      .eq("id", data.collectionId)
+      .maybeSingle();
+    if (current?.visibility !== "members_only") return { error: MEMBERS_ONLY_UNAVAILABLE };
+  }
 
   try {
     await updateCollection(caller, {

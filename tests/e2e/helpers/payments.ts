@@ -68,6 +68,29 @@ export interface SeededFlow {
   flow: FlowFixture;
   /** The public collection page. */
   path: string;
+  /** The membership ID the flow's member identifies with on a managed collection; null on an open one. */
+  membershipId: string | null;
+}
+
+/** Crockford base32 — the alphabet `app.insert_membership_id` accepts for the random part. */
+const ID_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+const ID_LETTERS = ID_ALPHABET.slice(10);
+
+/**
+ * Turns membership IDs on for the seeded community and issues its member one,
+ * the way the officer's "Issue membership ID" button does (plaintext row,
+ * format checked by the database). Inside the seed's own transaction.
+ */
+async function seedMembershipId(tx: postgres.TransactionSql<Record<string, never>>, communityId: string, memberId: string): Promise<string> {
+  const bytes = randomBytes(5);
+  // At least one letter, as the database requires.
+  const suffix = ID_LETTERS[bytes[0]! % ID_LETTERS.length]! + [...bytes.subarray(1)].map((b) => ID_ALPHABET[b % 32]).join("");
+  const membershipId = `PAY/${suffix}`;
+  await tx`
+    insert into public.community_membership_id_settings (community_id, prefix, separator, suffix_length, enabled)
+    values (${communityId}, 'PAY', '/', 5, true)`;
+  await tx`select app.insert_membership_id(m, ${membershipId}, null) from public.members m where m.id = ${memberId}`;
+  return membershipId;
 }
 
 /** A fresh community with one active collection of the given flow, committed. */
@@ -76,7 +99,8 @@ export async function seedPaymentFlow(name: FlowName): Promise<SeededFlow> {
     sql.begin(async (tx) => {
       const community = await seedPaymentCommunity(tx, ids);
       const flow = await seedFlow(tx, ids, community, name);
-      return { community, flow, path: `/${community.communitySlug}/${flow.collectionSlug}` };
+      const membershipId = flow.memberId ? await seedMembershipId(tx, community.communityId, flow.memberId) : null;
+      return { community, flow, path: `/${community.communitySlug}/${flow.collectionSlug}`, membershipId };
     }),
   );
 }

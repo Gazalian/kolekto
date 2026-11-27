@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { signInAsNewUser } from "./helpers/auth.ts";
+import { sidebarLink } from "./helpers/nav.ts";
 
 /**
  * Milestone 1 in a real browser: a community defines how it identifies its own
@@ -19,22 +20,27 @@ test.describe.configure({ timeout: 180_000 });
 test("configure member identity, add members, and handle duplicates", async ({ page }) => {
   await signInAsNewUser(page, "e2e-members");
 
-  await page.getByRole("link", { name: "+ New community" }).click();
+  // "+ New community" before the communities-page redesign, "New community" after it.
+  await page.getByRole("link", { name: /^(\+ )?New community$/ }).click();
   await page.waitForLoadState("networkidle");
   await page.getByLabel("Community name").fill(`E2E Member Identity ${Date.now()}`);
   await page.getByLabel("Type").selectOption("university_association");
   await page.getByRole("button", { name: "Create community" }).click();
   await expect(page).toHaveURL(/\/c\//);
 
-  await page.getByRole("link", { name: "Members" }).click();
+  await sidebarLink(page, "Members").click();
   await page.waitForLoadState("networkidle");
 
   // ── The community's own identity scheme ───────────────────────────────────
-  await page.getByRole("button", { name: "Member profile" }).click();
-  await page.getByLabel("Prefix").fill("KWASU/");
+  await page.getByRole("button", { name: "IDs & access" }).click();
+  await page.getByLabel("Member ID prefix", { exact: true }).fill("KWASU/");
   await expect(page.getByText("KWASU/0001")).toBeVisible();
-  await page.getByRole("button", { name: "Save ID format" }).click();
+  await page.getByRole("button", { name: "Save member ID format" }).click();
   await expect(page.getByText("Member ID format saved.")).toBeVisible();
+  await page.getByRole("button", { name: "Close" }).click();
+  await expect(page.locator("dialog[open]")).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Member profile" }).click();
 
   await page.getByRole("button", { name: "Add field" }).click();
   await page.getByLabel("Label").fill("Matric number");

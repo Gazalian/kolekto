@@ -4,6 +4,8 @@ export * from "./write.ts";
 export * from "./payments.ts";
 export * from "./contributors.ts";
 export * from "./collection-money.ts";
+export * from "./community-overview.ts";
+export * from "./membership.ts";
 export * from "./bank-accounts.ts";
 export * from "./withdrawal-controls.ts";
 export * from "./public-read.ts";

@@ -117,9 +117,13 @@ select is_empty(
       -- 2026-11-18: settle_withdrawal_transfer sets a WITHDRAWAL to paid from
       -- a Paystack transfer, and guard_withdrawal only READS old.status
       -- (decided in 63_bank_accounts_and_transfers.sql).
+      -- 2026-11-22: community_collection_figures only COUNTS paid withdrawals
+      -- for the community overview report; it is STABLE and writes nothing
+      -- (decided in 73_community_overview.sql, which asserts no row changes).
       and p.proname not in ('block_manual_paid_status', 'complete_payment_capture', 'create_payment_attempt',
                             'complete_withdrawal', 'collection_reconciliation_checks', 'platform_reconciliation',
-                            'payment_reminder_member_state', 'settle_withdrawal_transfer', 'guard_withdrawal')
+                            'payment_reminder_member_state', 'settle_withdrawal_transfer', 'guard_withdrawal',
+                            'community_collection_figures')
     order by 1
   $$,
   'no function other than the payment capture path sets an obligation to paid — money is the only route (CASH-02, SEC-20a)'

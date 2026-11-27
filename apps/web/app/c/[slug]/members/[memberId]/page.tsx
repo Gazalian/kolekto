@@ -1,12 +1,16 @@
-import type {
-  AuditLog,
-  Community,
-  Member,
-  MemberAttributeDefinition,
-  MemberAttributeValue,
-  MemberGroup,
+import {
+  communityMembershipIdSummary,
+  getMembershipIdSettings,
+  type AuditLog,
+  type Community,
+  type Member,
+  type MemberAttributeDefinition,
+  type MemberAttributeValue,
+  type MemberGroup,
 } from "@kolekto/db";
 import { notFound } from "next/navigation";
+import { requireCallerContext } from "../../../../../lib/caller.ts";
+import { displayMembershipId } from "../../../../../lib/membership-id-server.ts";
 import { getCommunityAccess, hasPermission } from "../../../../../lib/permissions.ts";
 import { createClient } from "../../../../../lib/supabase/server.ts";
 import { MemberDetailClient } from "./MemberDetailClient.tsx";
@@ -54,6 +58,23 @@ export default async function MemberDetailPage({
         .limit(50),
     ]);
 
+  // Membership ID (Part F; M9b2a). Owner decision D5: the FULL ID only for the
+  // owner and officers holding membership.issue_ids (re-checked in SQL by
+  // app.get_member_membership_id). Officers who can see contact details but
+  // not manage IDs see the masked form (app.community_membership_id_summary).
+  const canViewContact = hasPermission(access, "member.view_contact");
+  const canManageIds = hasPermission(access, "membership.issue_ids");
+  const caller = await requireCallerContext();
+  const maskedOnly = async () => {
+    const summary = await communityMembershipIdSummary(caller, c.id).catch(() => null);
+    const row = summary?.get(member.id);
+    return row ? { fullId: null, masked: row.masked, issuedAt: row.issuedAt } : null;
+  };
+  const [membershipId, idSettings] = await Promise.all([
+    canManageIds ? displayMembershipId(caller, member.id) : canViewContact ? maskedOnly() : Promise.resolve(null),
+    getMembershipIdSettings(caller, c.id).catch(() => null),
+  ]);
+
   const valuesByDefinition = new Map(
     ((values ?? []) as MemberAttributeValue[]).map((value) => [value.definition_id, value.value_text]),
   );
@@ -72,6 +93,16 @@ export default async function MemberDetailPage({
       canEdit={hasPermission(access, "member.edit")}
       canArchive={hasPermission(access, "member.archive")}
       canManageGroups={hasPermission(access, "group.manage")}
+      membership={
+        canViewContact || hasPermission(access, "membership.issue_ids") || hasPermission(access, "member.suspend")
+          ? {
+              membershipId,
+              idsEnabled: idSettings?.enabled === true,
+              canIssue: hasPermission(access, "membership.issue_ids"),
+              canSuspend: hasPermission(access, "member.suspend"),
+            }
+          : null
+      }
     />
   );
 }

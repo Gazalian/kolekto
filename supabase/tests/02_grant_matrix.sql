@@ -62,10 +62,27 @@ select bag_eq(
   $$ values ('get_public_collection'), ('get_public_collection_tiers'),
             ('get_public_collection_fields'), ('redeem_invite_link'),
             ('get_public_invite'), ('get_public_collection_items'),
-            -- M7: contributor self-identification. Both are read-only, scoped
-            -- to one collection's audience, and neither can list anybody.
+            -- M7: contributor self-identification. Read-only, scoped to one
+            -- collection's audience; cannot list anybody.
             -- app.resolve_collection_audience, which CAN, stays ungranted.
-            ('find_collection_member'), ('get_collection_member_context') $$,
+            -- 2026-11-23 (20261123130000, owner decision D4): anon loses
+            -- find_collection_member (search by name, email or phone). A
+            -- member is reached only by an exact membership ID, through the
+            -- pass functions below (proved in 77_member_id_lookup.sql).
+            ('get_collection_member_context'),
+            ('membership_pass_summary'), ('confirm_membership_pass'),
+            -- 2026-11-22 (20261122140000, owner decision D-J): the public
+            -- community page. Read-only whitelisted fields of a PUBLISHED
+            -- community, and only its visibility = 'public' collections; no
+            -- members, officers, balances or link-only / members-only
+            -- collections (proved in 74_public_community_and_avatar.sql).
+            ('get_public_community'), ('get_public_community_collections'),
+            -- 2026-11-23 (20261123100100, owner decisions Q9/Q10/Q14): a
+            -- contributor (no account) checks a membership ID for one
+            -- collection. Rate-limited, one generic answer, never returns a
+            -- name, code or contact; the grant check re-verifies everything
+            -- live (proved in 76_membership_access.sql).
+            ('validate_membership_id'), ('resolve_membership_access_grant') $$,
   'anon can execute exactly the whitelisted public-collection-page functions plus redeem_invite_link (MEM-05)'
 );
 

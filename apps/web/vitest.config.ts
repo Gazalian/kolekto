@@ -8,6 +8,9 @@ import { defineConfig } from "vitest/config";
  * never a lack of tests that mocked the database).
  */
 export default defineConfig({
+  // tsconfig says `jsx: "preserve"` for Next; tests that render a client
+  // component to static markup need the JSX compiled instead.
+  oxc: { jsx: { runtime: "automatic" } },
   test: {
     // Plus the pure data modules that live beside the routes they describe —
     // the export catalogue is one, and it is worth pinning where it is read.
